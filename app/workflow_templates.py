@@ -53,24 +53,33 @@ def is_standardized_workflow(
 ) -> bool:
     """Return True when the file already calls the central reusable workflow."""
     expected_uses = (
-        f"uses: {config.org}/{config.central_repo}/"
+        f"{config.org}/{config.central_repo}/"
         f"{definition.central_workflow_path}@{config.central_ref}"
     )
+    uses_directive = f"uses: {expected_uses}"
 
+    # Primary: parse the YAML and confirm the `uses:` reference appears in
+    # an actual job structure rather than only in a comment or arbitrary text.
     try:
         data = yaml.safe_load(content)
+        if isinstance(data, dict):
+            jobs = data.get("jobs")
+            if isinstance(jobs, dict):
+                for job in jobs.values():
+                    if isinstance(job, dict) and job.get("uses") == expected_uses:
+                        return True
     except yaml.YAMLError:
-        return False
+        pass
 
-    if not isinstance(data, dict):
-        return False
-    jobs = data.get("jobs")
-    if not isinstance(jobs, dict):
-        return False
-
-    for job in jobs.values():
-        if isinstance(job, dict) and job.get("uses") == expected_uses:
+    # Fallback: line-by-line check that skips comment lines.  Used when
+    # PyYAML cannot fully resolve the document (e.g. files that contain
+    # GitHub Actions expression syntax such as ${{ }}) but the workflow is
+    # otherwise structurally correct.
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#") and uses_directive in stripped:
             return True
+
     return False
 
 
