@@ -66,7 +66,9 @@ def main() -> None:
                 client, DEFAULT_CONFIG, repository, dry_run=args.dry_run
             )
             name = f"{result.repository.owner}/{result.repository.repo}"
-            if result.skipped_reason:
+            if result.skipped_reason == "dry-run" and result.changed_files:
+                print(f"{name}: would update {', '.join(result.changed_files)}")
+            elif result.skipped_reason:
                 print(f"{name}: skipped ({result.skipped_reason})")
             elif not result.changed_files:
                 print(f"{name}: already standardized")

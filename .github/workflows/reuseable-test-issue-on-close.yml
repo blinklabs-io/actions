@@ -25,6 +25,7 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           ISSUE_TITLE: ${{ inputs.issue_title }}
         run: |
+          safe_title=${ISSUE_TITLE//::/%3A%3A}
           echo "Issue Number: $ISSUE_NUMBER"
-          echo "Title: $ISSUE_TITLE"
+          echo "Title: $safe_title"
           echo "Workflow triggered successfully when issue was closed."

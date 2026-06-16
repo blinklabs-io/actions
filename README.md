@@ -6,39 +6,34 @@ This repository contains reusable GitHub Actions workflows and a Python GitHub A
 
 - Python ≥ 3.9
 - `github3.py==4.0.1` — GitHub REST API client
-- `GitPython==3.1.47` — reads central workflow templates from the local git repository
+- `GitPython==3.1.48` — reads central workflow templates from the local git repository
 - `PyYAML==6.0.3` — parses existing workflow files for drift detection
 
 ## Reusable workflows
 
 Central workflow templates live in `.github/workflows` and are called from downstream repositories via `workflow_call`.
 
-- `.github/workflows/ci-dockerfile.yml` — shared Buildx + registry login + GHA cache pipeline.
-- `.github/workflows/update-issue-on-close.yml` — applies labels and a comment when an issue is closed.
+- `.github/workflows/reuseable-test-issue-on-close.yml` — shared issue-close test trigger.
+- `.github/workflows/reuseable-set-project-closed-date.yml` — writes the issue closed date to a GitHub Project field.
 
 Example downstream wrapper (generated automatically by the app):
 
 ```yaml
-name: CI Dockerfile
+name: Test Issue Close Trigger
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+  issues:
+    types:
+      - closed
 
 jobs:
-  ci-dockerfile:
-    uses: blinklabs-io/actions/.github/workflows/ci-dockerfile.yml@main
+  test:
+    uses: blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main
     permissions:
       contents: read
-      packages: write
     with:
-      context: .
-      dockerfile: Dockerfile
-      image_name: ${{ github.repository }}
-      push_image: false
-    secrets: inherit
+      issue_number: ${{ github.event.issue.number }}
+      issue_title: ${{ github.event.issue.title }}
 ```
 
 ## GitHub App — how it works
@@ -52,7 +47,7 @@ The app reconciles drift in three ways:
 For each repository with drift the app:
 1. Creates (or reuses) a branch `blinklabs/standardize-ci-YYYY-MM-DD`.
 2. Writes standardized workflow wrapper files under `.github/workflows`.
-3. Opens a pull request titled `Standardize CI workflows`.
+3. Reports the branch name so a repository owner can open and review a pull request manually.
 
 The `actions` repository itself is always skipped.
 
@@ -60,7 +55,6 @@ The `actions` repository itself is always skipped.
 
 Repository permissions:
 - `Contents`: read and write
-- `Pull requests`: read and write
 - `Metadata`: read
 
 Webhook events to subscribe:

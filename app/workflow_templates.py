@@ -52,11 +52,26 @@ def is_standardized_workflow(
     content: str, definition: WorkflowDefinition, config: StandardizerConfig
 ) -> bool:
     """Return True when the file already calls the central reusable workflow."""
-    marker = (
+    expected_uses = (
         f"uses: {config.org}/{config.central_repo}/"
         f"{definition.central_workflow_path}@{config.central_ref}"
     )
-    return marker in content
+
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError:
+        return False
+
+    if not isinstance(data, dict):
+        return False
+    jobs = data.get("jobs")
+    if not isinstance(jobs, dict):
+        return False
+
+    for job in jobs.values():
+        if isinstance(job, dict) and job.get("uses") == expected_uses:
+            return True
+    return False
 
 
 def find_workflow_for_definition(

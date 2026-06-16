@@ -63,7 +63,7 @@ def list_installation_repositories(gh: github3.GitHub) -> list[RepositoryRef]:
             params={"per_page": 100, "page": page},
         )
         if not response.ok:
-            break
+            response.raise_for_status()
         data = response.json()
         batch: list[dict] = data.get("repositories", [])
         if not batch:
@@ -145,7 +145,7 @@ class OctokitRepositoryClient:
             contents = repo.directory_contents(
                 ".github/workflows", ref=repository.default_branch
             )
-        except Exception:
+        except github3.exceptions.NotFoundError:
             return []
 
         if not contents:
@@ -168,7 +168,7 @@ class OctokitRepositoryClient:
                             content=file_obj.decoded_content.decode("utf-8"),
                         )
                     )
-            except Exception:
+            except github3.exceptions.NotFoundError:
                 continue
 
         return files
@@ -208,7 +208,7 @@ class OctokitRepositoryClient:
                 existing_file = repo.file_contents(path, ref=branch)
                 if existing_file is not None:
                     existing_sha = existing_file.sha
-            except Exception:
+            except github3.exceptions.NotFoundError:
                 existing_sha = None
 
         if existing_sha:

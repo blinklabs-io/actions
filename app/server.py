@@ -28,6 +28,7 @@ from .reconciler import reconcile_repository
 from .types import RepositoryRef
 
 _DRY_RUN: bool = os.environ.get("DRY_RUN", "false").lower() == "true"
+_MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
 _app: Any = None  # github3.GitHubApp, set at start_server()
 
 
@@ -63,7 +64,19 @@ class _WebhookHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
 
     def _handle_webhook(self) -> None:
-        content_length = int(self.headers.get("Content-Length", 0))
+        try:
+            content_length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self._send_json(400, {"error": "Invalid Content-Length header."})
+            return
+
+        if content_length < 0:
+            self._send_json(400, {"error": "Invalid Content-Length header."})
+            return
+        if content_length > _MAX_WEBHOOK_BODY_BYTES:
+            self._send_json(413, {"error": "Webhook payload too large."})
+            return
+
         body = self.rfile.read(content_length)
 
         signature = self.headers.get("x-hub-signature-256", "")
@@ -123,6 +136,10 @@ def _handle_push(payload: dict) -> None:
     if repo_data.get("archived") or repo_data.get("disabled"):
         return
 
+    default_branch = repo_data.get("default_branch", "main")
+    if payload.get("ref") != f"refs/heads/{default_branch}":
+        return
+
     installation_id = (payload.get("installation") or {}).get("id")
     if not installation_id:
         return
@@ -130,7 +147,7 @@ def _handle_push(payload: dict) -> None:
     repository = RepositoryRef(
         owner=repo_data["owner"]["login"],
         repo=repo_data["name"],
-        default_branch=repo_data.get("default_branch", "main"),
+        default_branch=default_branch,
     )
 
     try:
@@ -138,10 +155,14 @@ def _handle_push(payload: dict) -> None:
         client = OctokitRepositoryClient(gh)
         result = reconcile_repository(client, DEFAULT_CONFIG, repository, dry_run=_DRY_RUN)
         if result.changed_files:
+            suffix = (
+                "dry run, would update files"
+                if result.skipped_reason == "dry-run"
+                else f"open a PR from branch '{result.branch_name}'"
+            )
             print(
                 f"Reconciled {repository.owner}/{repository.repo}: "
-                f"{', '.join(result.changed_files)} — "
-                f"open a PR from branch '{result.branch_name}'"
+                f"{', '.join(result.changed_files)} — {suffix}"
             )
     except Exception as exc:  # noqa: BLE001
         print(f"Error reconciling {repository.owner}/{repository.repo}: {exc}")

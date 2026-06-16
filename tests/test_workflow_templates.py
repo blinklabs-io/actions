@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 import yaml
 
 from app.config import DEFAULT_CONFIG
@@ -83,6 +82,28 @@ class TestIsStandardizedWorkflow:
         content = generate_standard_workflow(DEFAULT_CONFIG.workflows[0], DEFAULT_CONFIG)
         content = content.replace("@main", "@v1")
         assert not is_standardized_workflow(
+            content, DEFAULT_CONFIG.workflows[0], DEFAULT_CONFIG
+        )
+
+    def test_returns_false_when_reference_only_appears_in_comment(self):
+        content = (
+            "name: Test Issue Close Trigger\n"
+            "on:\n  issues:\n    types: [closed]\n"
+            "# uses: blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main\n"
+            "jobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        assert not is_standardized_workflow(
+            content, DEFAULT_CONFIG.workflows[0], DEFAULT_CONFIG
+        )
+
+    def test_returns_true_for_equivalent_yaml_formatting(self):
+        content = (
+            "name: Test Issue Close Trigger\n"
+            "on: {issues: {types: [closed]}}\n"
+            "jobs:\n"
+            "  test: {uses: blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main}\n"
+        )
+        assert is_standardized_workflow(
             content, DEFAULT_CONFIG.workflows[0], DEFAULT_CONFIG
         )
 

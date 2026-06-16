@@ -88,8 +88,7 @@ class TestReconcileRepository:
         result = reconcile_repository(client, DEFAULT_CONFIG, _REPO)
         assert result.branch_name is not None
         assert result.branch_name.startswith("blinklabs/standardize-ci-")
-        # No automatic PR
-        assert not hasattr(result, "pull_request_url") or True  # field removed
+        assert not hasattr(result, "pull_request_url")
 
     def test_writes_all_changed_files(self):
         client = FakeRepositoryClient([])
