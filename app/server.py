@@ -28,7 +28,7 @@ from .reconciler import reconcile_repository
 from .types import RepositoryRef
 
 _DRY_RUN: bool = os.environ.get("DRY_RUN", "false").lower() == "true"
-_MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
+_MAX_WEBHOOK_BODY_BYTES = 25 * 1024 * 1024
 _app: Any = None  # github3.GitHubApp, set at start_server()
 
 

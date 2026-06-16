@@ -63,7 +63,10 @@ def list_installation_repositories(gh: github3.GitHub) -> list[RepositoryRef]:
             params={"per_page": 100, "page": page},
         )
         if not response.ok:
-            response.raise_for_status()
+            raise RuntimeError(
+                "Failed to list installation repositories: "
+                f"{response.status_code} {response.text[:200]}"
+            )
         data = response.json()
         batch: list[dict] = data.get("repositories", [])
         if not batch:
