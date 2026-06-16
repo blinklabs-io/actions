@@ -1,0 +1,53 @@
+name: Reusable Set Project Closed Date
+
+on:
+  workflow_call:
+    inputs:
+      project_url:
+        description: Full URL of the GitHub Project to update (e.g. https://github.com/orgs/blinklabs-io/projects/11).
+        required: true
+        type: string
+      closed_date_field:
+        description: Name of the date field to write in the project.
+        required: false
+        type: string
+        default: "Closed Date"
+      closed_at:
+        description: ISO-8601 timestamp of when the issue was closed. Defaults to today when empty.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      project_pat:
+        description: Personal access token with project write access (e.g. ORG_PROJECT_PAT).
+        required: true
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  set-date:
+    name: Set closed date on project
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve closed date
+        id: when
+        shell: bash
+        run: |
+          ts='${{ inputs.closed_at }}'
+          if [ -z "$ts" ] || [ "$ts" = "null" ]; then
+            d=$(date -u +%F)
+          else
+            d=$(date -u -d "$ts" +%F)
+          fi
+          echo "date=$d" >> "$GITHUB_OUTPUT"
+          echo "Closed date -> $d"
+
+      - name: Update Closed Date field
+        uses: nipe0324/update-project-v2-item-field@c4af58452d1c5a788c1ea4f20e073fa722ec4a6b
+        with:
+          project-url: ${{ inputs.project_url }}
+          github-token: ${{ secrets.project_pat }}
+          field-name: ${{ inputs.closed_date_field }}
+          field-value: ${{ steps.when.outputs.date }}
