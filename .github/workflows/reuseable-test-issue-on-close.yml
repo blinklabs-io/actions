@@ -1,0 +1,31 @@
+name: Reusable Test Issue Close Trigger
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        description: Closed issue number.
+        required: true
+        type: number
+      issue_title:
+        description: Title of the closed issue.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Print closed issue info
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print closed issue info
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_TITLE: ${{ inputs.issue_title }}
+        run: |
+          safe_title=${ISSUE_TITLE//::/%3A%3A}
+          echo "Issue Number: $ISSUE_NUMBER"
+          echo "Title: $safe_title"
+          echo "Workflow triggered successfully when issue was closed."
