@@ -1,0 +1,16 @@
+# Generated automatically by org-governance-bot. Do not edit manually.
+name: "[[ .WorkflowName ]]"
+
+on:
+  issues:
+    types:
+      - closed
+  workflow_dispatch:
+
+jobs:
+  orchestrate:
+    uses: [[ .ReusableWorkflow ]]
+    with:
+[[- range $key, $value := .Params ]]
+      [[ $key ]]: [[ $value ]]
+[[- end ]]

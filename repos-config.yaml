@@ -1,0 +1,28 @@
+repositories:
+  - name: blinklabs-io/test-reusable-ghactions
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    teams:
+      - name: core
+        permission: write
+      - name: ops
+        permission: admin
+    branch_protection:
+      - branch: main
+        required_status_checks: []
+        bypass_pull_request: true  # Allows the GitHub App to push changes directly
+    workflows:
+      - destination_file: issue-close-test.yaml
+        workflow_name: "Issue Close Test"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@feat/github-app-workflow-standardization"
+        params:
+          issue_number: "${{ github.event.issue.number }}"
+          issue_title: "${{ github.event.issue.title }}"
+      - destination_file: set-project-closed-date.yaml
+        workflow_name: "Set Project Closed Date"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@feat/github-app-workflow-standardization"
+        params:
+          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
+          closed_date_field: "Closed Date"
+          closed_at: "${{ github.event.issue.closed_at }}"

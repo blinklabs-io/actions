@@ -1,0 +1,35 @@
+name: Central Governance Sync Engine
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'repos-config.yaml'
+  workflow_dispatch:      # Trigger manually to run the sync
+
+jobs:
+  orchestrate-governance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Controller Code
+        uses: actions/checkout@v4
+
+      - name: Authenticate via GitHub App
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GOVERNANCE_APP_ID }}
+          private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+
+      - name: Set up Go runtime
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Resolve Dependencies
+        run: go mod tidy
+
+      - name: Run Engine Execution Loop
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: go run ./app
