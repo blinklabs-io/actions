@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
@@ -146,6 +145,14 @@ func syncCollaborators(ctx context.Context, client *github.Client, owner, repo s
 }
 
 func syncWorkflows(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig) {
+	// Fetch repo info once to get the actual default branch name.
+	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		fmt.Printf("  Error getting repo info: %v\n", err)
+		return
+	}
+	defaultBranch := repoInfo.GetDefaultBranch()
+
 	// Use [[ ]] as template delimiters so GitHub Actions ${{ }} expressions
 	// inside param values are emitted verbatim.
 	tmpl, err := template.New("workflow.tmpl").Delims("[[", "]]").ParseFiles("templates/workflow.tmpl")
@@ -166,10 +173,9 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 		fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
 
 		if err == nil {
-			// File exists — decode and compare
-			rawEncoded, _ := fileContent.GetContent()
-			decoded, _ := base64.StdEncoding.DecodeString(strings.ReplaceAll(rawEncoded, "\n", ""))
-			if string(decoded) == string(desiredContent) {
+			// File exists — GetContent() already returns the decoded string.
+			existingContent, decErr := fileContent.GetContent()
+			if decErr == nil && existingContent == string(desiredContent) {
 				fmt.Printf("✅ Workflow file %s matches perfectly. Skipping push.\n", wf.DestinationFile)
 				continue
 			}
@@ -178,18 +184,22 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 				Message: github.String(fmt.Sprintf("chore: central update of %s", wf.DestinationFile)),
 				Content: desiredContent,
 				SHA:     fileContent.SHA,
-				Branch:  github.String("main"),
+				Branch:  github.String(defaultBranch),
 			}
-			_, _, _ = client.Repositories.UpdateFile(ctx, owner, repo, path, opts)
+			if _, _, updateErr := client.Repositories.UpdateFile(ctx, owner, repo, path, opts); updateErr != nil {
+				fmt.Printf("  Error updating %s: %v\n", wf.DestinationFile, updateErr)
+			}
 		} else {
 			// File does not exist — create it
 			fmt.Printf("  Creating missing workflow file %s...\n", wf.DestinationFile)
 			opts := &github.RepositoryContentFileOptions{
 				Message: github.String(fmt.Sprintf("chore: provision %s", wf.DestinationFile)),
 				Content: desiredContent,
-				Branch:  github.String("main"),
+				Branch:  github.String(defaultBranch),
 			}
-			_, _, _ = client.Repositories.CreateFile(ctx, owner, repo, path, opts)
+			if _, _, createErr := client.Repositories.CreateFile(ctx, owner, repo, path, opts); createErr != nil {
+				fmt.Printf("  Error creating %s: %v\n", wf.DestinationFile, createErr)
+			}
 		}
 	}
 }
