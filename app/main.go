@@ -43,6 +43,9 @@ type BranchProtection struct {
 	RequiredStatusChecks           []string `yaml:"required_status_checks"`
 	RequireUpToDate                bool     `yaml:"require_up_to_date"`
 	BypassPullRequest              bool     `yaml:"bypass_pull_request"`
+	BypassActorsUsers              []string `yaml:"bypass_actors_users"`
+	BypassActorsTeams              []string `yaml:"bypass_actors_teams"`
+	BypassActorsApps               []string `yaml:"bypass_actors_apps"`
 	RequiredApprovingReviewCount   int      `yaml:"required_approving_review_count"`
 	DismissStaleReviews            bool     `yaml:"dismiss_stale_reviews"`
 	RequireCodeOwnerReviews        bool     `yaml:"require_code_owner_reviews"`
@@ -169,11 +172,19 @@ func syncBranchProtection(ctx context.Context, client *github.Client, owner, rep
 		}
 
 		if !bp.BypassPullRequest {
-			req.RequiredPullRequestReviews = &github.PullRequestReviewsEnforcementRequest{
+			prReq := &github.PullRequestReviewsEnforcementRequest{
 				RequiredApprovingReviewCount: bp.RequiredApprovingReviewCount,
 				DismissStaleReviews:          bp.DismissStaleReviews,
 				RequireCodeOwnerReviews:      bp.RequireCodeOwnerReviews,
 			}
+			if len(bp.BypassActorsUsers) > 0 || len(bp.BypassActorsTeams) > 0 || len(bp.BypassActorsApps) > 0 {
+				prReq.BypassPullRequestAllowancesRequest = &github.BypassPullRequestAllowancesRequest{
+					Users: bp.BypassActorsUsers,
+					Teams: bp.BypassActorsTeams,
+					Apps:  bp.BypassActorsApps,
+				}
+			}
+			req.RequiredPullRequestReviews = prReq
 		}
 
 		// Drift check: skip update if current state already matches desired.
@@ -222,14 +233,29 @@ func syncBranchProtection(ctx context.Context, client *github.Client, owner, rep
 				currentApprovals := 0
 				currentDismiss := false
 				currentCodeOwner := false
+				var currentBypassUsers, currentBypassTeams, currentBypassApps []string
 				if r := current.GetRequiredPullRequestReviews(); r != nil {
 					currentApprovals = r.RequiredApprovingReviewCount
 					currentDismiss = r.DismissStaleReviews
 					currentCodeOwner = r.RequireCodeOwnerReviews
+					if b := r.BypassPullRequestAllowances; b != nil {
+						for _, u := range b.Users {
+							currentBypassUsers = append(currentBypassUsers, u.GetLogin())
+						}
+						for _, t := range b.Teams {
+							currentBypassTeams = append(currentBypassTeams, t.GetSlug())
+						}
+						for _, a := range b.Apps {
+							currentBypassApps = append(currentBypassApps, a.GetSlug())
+						}
+					}
 				}
 				prReviewsMatch = currentApprovals == bp.RequiredApprovingReviewCount &&
 					currentDismiss == bp.DismissStaleReviews &&
-					currentCodeOwner == bp.RequireCodeOwnerReviews
+					currentCodeOwner == bp.RequireCodeOwnerReviews &&
+					statusChecksEqual(currentBypassUsers, bp.BypassActorsUsers) &&
+					statusChecksEqual(currentBypassTeams, bp.BypassActorsTeams) &&
+					statusChecksEqual(currentBypassApps, bp.BypassActorsApps)
 			}
 
 			if hasPR == wantsPR &&
@@ -247,11 +273,15 @@ func syncBranchProtection(ctx context.Context, client *github.Client, owner, rep
 			}
 		}
 
-		fmt.Printf("  Updating branch protection on %s...\n", bp.Branch)
-		if _, _, updateErr := client.Repositories.UpdateBranchProtection(ctx, owner, repo, bp.Branch, req); updateErr != nil {
-			return fmt.Errorf("branch %s: update protection: %w", bp.Branch, updateErr)
+		action := "Updating"
+		if getErr != nil {
+			action = "Creating"
 		}
-		fmt.Printf("✅ Branch protection updated on %s\n", bp.Branch)
+		fmt.Printf("  %s branch protection on %s...\n", action, bp.Branch)
+		if _, _, updateErr := client.Repositories.UpdateBranchProtection(ctx, owner, repo, bp.Branch, req); updateErr != nil {
+			return fmt.Errorf("branch %s: %s protection: %w", bp.Branch, action, updateErr)
+		}
+		fmt.Printf("✅ Branch protection %s on %s\n", action, bp.Branch)
 	}
 	return nil
 }

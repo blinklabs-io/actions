@@ -11,7 +11,11 @@ repositories:
       - branch: main
         required_status_checks: []
         require_up_to_date: false
-        bypass_pull_request: true  # Allows the GitHub App to push workflow files directly
+        bypass_pull_request: false
+        bypass_actors_users: []
+        bypass_actors_teams: []
+        bypass_actors_apps:
+          - blinklabs-governance  # GitHub App allowed to push directly without PR
         required_approving_review_count: 1
         dismiss_stale_reviews: true
         require_code_owner_reviews: false
