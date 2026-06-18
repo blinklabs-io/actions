@@ -11,7 +11,16 @@ repositories:
     branch_protection:
       - branch: main
         required_status_checks: []
+        require_up_to_date: false
         bypass_pull_request: true  # Allows the GitHub App to push changes directly
+        required_approving_review_count: 0
+        dismiss_stale_reviews: false
+        enforce_admins: false
+        require_linear_history: false
+        required_conversation_resolution: false
+        allow_force_pushes: false
+        allow_deletions: false
+        lock_branch: false
     workflows:
       - destination_file: issue-close-test.yaml
         workflow_name: "Issue Close Test"

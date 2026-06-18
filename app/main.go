@@ -44,9 +44,18 @@ type TeamConfig struct {
 }
 
 type BranchProtection struct {
-	Branch               string   `yaml:"branch"`
-	RequiredStatusChecks []string `yaml:"required_status_checks"`
-	BypassPullRequest    bool     `yaml:"bypass_pull_request"`
+	Branch                         string   `yaml:"branch"`
+	RequiredStatusChecks           []string `yaml:"required_status_checks"`
+	RequireUpToDate                bool     `yaml:"require_up_to_date"`
+	BypassPullRequest              bool     `yaml:"bypass_pull_request"`
+	RequiredApprovingReviewCount   int      `yaml:"required_approving_review_count"`
+	DismissStaleReviews            bool     `yaml:"dismiss_stale_reviews"`
+	EnforceAdmins                  bool     `yaml:"enforce_admins"`
+	RequireLinearHistory           bool     `yaml:"require_linear_history"`
+	RequiredConversationResolution bool     `yaml:"required_conversation_resolution"`
+	AllowForcePushes               bool     `yaml:"allow_force_pushes"`
+	AllowDeletions                 bool     `yaml:"allow_deletions"`
+	LockBranch                     bool     `yaml:"lock_branch"`
 }
 
 type WorkflowConfig struct {
@@ -92,6 +101,7 @@ func main() {
 		// Observe-Compare-Act loop per repo
 		syncRepoSettings(ctx, client, owner, repoName, repo.Settings)
 		syncCollaborators(ctx, client, owner, repoName, repo.Collaborators)
+		syncBranchProtection(ctx, client, owner, repoName, repo.BranchProtection)
 		syncWorkflows(ctx, client, owner, repoName, repo.Workflows)
 	}
 }
@@ -112,6 +122,117 @@ func parseRepoString(fullName string) (string, string) {
 // ---------------------------------------------------------------------------
 // Sync functions
 // ---------------------------------------------------------------------------
+
+func syncBranchProtection(ctx context.Context, client *github.Client, owner, repo string, protections []BranchProtection) {
+	for _, bp := range protections {
+		// Build desired protection request
+		req := &github.ProtectionRequest{
+			EnforceAdmins:                  bp.EnforceAdmins,
+			Restrictions:                   nil,
+			RequireLinearHistory:           github.Bool(bp.RequireLinearHistory),
+			AllowForcePushes:               github.Bool(bp.AllowForcePushes),
+			AllowDeletions:                 github.Bool(bp.AllowDeletions),
+			RequiredConversationResolution: github.Bool(bp.RequiredConversationResolution),
+			LockBranch:                     github.Bool(bp.LockBranch),
+		}
+
+		if len(bp.RequiredStatusChecks) > 0 {
+			req.RequiredStatusChecks = &github.RequiredStatusChecks{
+				Strict:   bp.RequireUpToDate,
+				Contexts: &bp.RequiredStatusChecks,
+			}
+		}
+
+		if !bp.BypassPullRequest {
+			req.RequiredPullRequestReviews = &github.PullRequestReviewsEnforcementRequest{
+				RequiredApprovingReviewCount: bp.RequiredApprovingReviewCount,
+				DismissStaleReviews:          bp.DismissStaleReviews,
+			}
+		}
+
+		// Observe current state
+		current, _, err := client.Repositories.GetBranchProtection(ctx, owner, repo, bp.Branch)
+		if err == nil {
+			hasPR := current.GetRequiredPullRequestReviews() != nil
+			wantsPR := !bp.BypassPullRequest
+
+			var currentChecks []string
+			currentStrict := false
+			if c := current.GetRequiredStatusChecks(); c != nil {
+				if c.Contexts != nil {
+					currentChecks = *c.Contexts
+				}
+				currentStrict = c.Strict
+			}
+
+			currentApprovals := 0
+			currentDismiss := false
+			if r := current.GetRequiredPullRequestReviews(); r != nil {
+				currentApprovals = r.RequiredApprovingReviewCount
+				currentDismiss = r.DismissStaleReviews
+			}
+
+			currentEnforceAdmins := false
+			if ea := current.GetEnforceAdmins(); ea != nil {
+				currentEnforceAdmins = ea.Enabled
+			}
+			currentAllowForcePushes := false
+			if afp := current.GetAllowForcePushes(); afp != nil {
+				currentAllowForcePushes = afp.Enabled
+			}
+			currentAllowDeletions := false
+			if ad := current.GetAllowDeletions(); ad != nil {
+				currentAllowDeletions = ad.Enabled
+			}
+			currentLinear := false
+			if rl := current.GetRequireLinearHistory(); rl != nil {
+				currentLinear = rl.Enabled
+			}
+			currentConvRes := false
+			if cr := current.GetRequiredConversationResolution(); cr != nil {
+				currentConvRes = cr.Enabled
+			}
+			currentLock := false
+			if lb := current.GetLockBranch(); lb != nil {
+				currentLock = lb.GetEnabled()
+			}
+
+			if hasPR == wantsPR &&
+				stringSlicesEqual(currentChecks, bp.RequiredStatusChecks) &&
+				currentStrict == bp.RequireUpToDate &&
+				currentApprovals == bp.RequiredApprovingReviewCount &&
+				currentDismiss == bp.DismissStaleReviews &&
+				currentEnforceAdmins == bp.EnforceAdmins &&
+				currentAllowForcePushes == bp.AllowForcePushes &&
+				currentAllowDeletions == bp.AllowDeletions &&
+				currentLinear == bp.RequireLinearHistory &&
+				currentConvRes == bp.RequiredConversationResolution &&
+				currentLock == bp.LockBranch {
+				fmt.Printf("✅ Branch protection on %s already matches desired state.\n", bp.Branch)
+				continue
+			}
+		}
+
+		fmt.Printf("  Updating branch protection on %s...\n", bp.Branch)
+		if _, _, updateErr := client.Repositories.UpdateBranchProtection(ctx, owner, repo, bp.Branch, req); updateErr != nil {
+			fmt.Printf("  Error updating branch protection on %s: %v\n", bp.Branch, updateErr)
+		} else {
+			fmt.Printf("✅ Branch protection updated on %s\n", bp.Branch)
+		}
+	}
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
 
 func syncRepoSettings(ctx context.Context, client *github.Client, owner, repo string, settings RepoSettings) {
 	current, _, err := client.Repositories.Get(ctx, owner, repo)
