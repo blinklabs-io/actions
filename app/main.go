@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -44,6 +45,7 @@ type BranchProtection struct {
 	BypassPullRequest              bool     `yaml:"bypass_pull_request"`
 	RequiredApprovingReviewCount   int      `yaml:"required_approving_review_count"`
 	DismissStaleReviews            bool     `yaml:"dismiss_stale_reviews"`
+	RequireCodeOwnerReviews        bool     `yaml:"require_code_owner_reviews"`
 	EnforceAdmins                  bool     `yaml:"enforce_admins"`
 	RequireLinearHistory           bool     `yaml:"require_linear_history"`
 	RequiredConversationResolution bool     `yaml:"required_conversation_resolution"`
@@ -95,7 +97,10 @@ func main() {
 		// Observe-Compare-Act loop per repo
 		syncRepoSettings(ctx, client, owner, repoName, repo.Settings)
 		syncCollaborators(ctx, client, owner, repoName, repo.Collaborators)
-		syncBranchProtection(ctx, client, owner, repoName, repo.BranchProtection)
+		if err := syncBranchProtection(ctx, client, owner, repoName, repo.BranchProtection); err != nil {
+			fmt.Printf("Error syncing branch protection for %s/%s: %v\n", owner, repoName, err)
+			os.Exit(1)
+		}
 		syncWorkflows(ctx, client, owner, repoName, repo.Workflows)
 	}
 }
@@ -117,17 +122,43 @@ func parseRepoString(fullName string) (string, string) {
 // Sync functions
 // ---------------------------------------------------------------------------
 
-func syncBranchProtection(ctx context.Context, client *github.Client, owner, repo string, protections []BranchProtection) {
+func syncBranchProtection(ctx context.Context, client *github.Client, owner, repo string, protections []BranchProtection) error {
 	for _, bp := range protections {
-		// Build desired protection request
+		// Observe current state first so unmodeled settings can be preserved.
+		current, _, getErr := client.Repositories.GetBranchProtection(ctx, owner, repo, bp.Branch)
+
+		// Build desired protection request.
 		req := &github.ProtectionRequest{
 			EnforceAdmins:                  bp.EnforceAdmins,
-			Restrictions:                   nil,
 			RequireLinearHistory:           github.Bool(bp.RequireLinearHistory),
 			AllowForcePushes:               github.Bool(bp.AllowForcePushes),
 			AllowDeletions:                 github.Bool(bp.AllowDeletions),
 			RequiredConversationResolution: github.Bool(bp.RequiredConversationResolution),
 			LockBranch:                     github.Bool(bp.LockBranch),
+		}
+
+		// Preserve existing push restrictions to avoid silently clearing them
+		// on every unrelated update. The GitHub API replaces the full protection
+		// object on PUT, so omitting Restrictions would remove all push rules.
+		if getErr == nil && current.Restrictions != nil {
+			r := current.Restrictions
+			userLogins := make([]string, 0, len(r.Users))
+			for _, u := range r.Users {
+				userLogins = append(userLogins, u.GetLogin())
+			}
+			teamSlugs := make([]string, 0, len(r.Teams))
+			for _, t := range r.Teams {
+				teamSlugs = append(teamSlugs, t.GetSlug())
+			}
+			appSlugs := make([]string, 0, len(r.Apps))
+			for _, a := range r.Apps {
+				appSlugs = append(appSlugs, a.GetSlug())
+			}
+			req.Restrictions = &github.BranchRestrictionsRequest{
+				Users: userLogins,
+				Teams: teamSlugs,
+				Apps:  appSlugs,
+			}
 		}
 
 		if len(bp.RequiredStatusChecks) > 0 {
@@ -141,12 +172,12 @@ func syncBranchProtection(ctx context.Context, client *github.Client, owner, rep
 			req.RequiredPullRequestReviews = &github.PullRequestReviewsEnforcementRequest{
 				RequiredApprovingReviewCount: bp.RequiredApprovingReviewCount,
 				DismissStaleReviews:          bp.DismissStaleReviews,
+				RequireCodeOwnerReviews:      bp.RequireCodeOwnerReviews,
 			}
 		}
 
-		// Observe current state
-		current, _, err := client.Repositories.GetBranchProtection(ctx, owner, repo, bp.Branch)
-		if err == nil {
+		// Drift check: skip update if current state already matches desired.
+		if getErr == nil {
 			hasPR := current.GetRequiredPullRequestReviews() != nil
 			wantsPR := !bp.BypassPullRequest
 
@@ -157,13 +188,6 @@ func syncBranchProtection(ctx context.Context, client *github.Client, owner, rep
 					currentChecks = *c.Contexts
 				}
 				currentStrict = c.Strict
-			}
-
-			currentApprovals := 0
-			currentDismiss := false
-			if r := current.GetRequiredPullRequestReviews(); r != nil {
-				currentApprovals = r.RequiredApprovingReviewCount
-				currentDismiss = r.DismissStaleReviews
 			}
 
 			currentEnforceAdmins := false
@@ -191,11 +215,27 @@ func syncBranchProtection(ctx context.Context, client *github.Client, owner, rep
 				currentLock = lb.GetEnabled()
 			}
 
+			// Only check PR-review subfields when PR reviews are desired;
+			// when bypassed those fields are not sent in the request.
+			prReviewsMatch := true
+			if wantsPR {
+				currentApprovals := 0
+				currentDismiss := false
+				currentCodeOwner := false
+				if r := current.GetRequiredPullRequestReviews(); r != nil {
+					currentApprovals = r.RequiredApprovingReviewCount
+					currentDismiss = r.DismissStaleReviews
+					currentCodeOwner = r.RequireCodeOwnerReviews
+				}
+				prReviewsMatch = currentApprovals == bp.RequiredApprovingReviewCount &&
+					currentDismiss == bp.DismissStaleReviews &&
+					currentCodeOwner == bp.RequireCodeOwnerReviews
+			}
+
 			if hasPR == wantsPR &&
-				stringSlicesEqual(currentChecks, bp.RequiredStatusChecks) &&
+				statusChecksEqual(currentChecks, bp.RequiredStatusChecks) &&
 				currentStrict == bp.RequireUpToDate &&
-				currentApprovals == bp.RequiredApprovingReviewCount &&
-				currentDismiss == bp.DismissStaleReviews &&
+				prReviewsMatch &&
 				currentEnforceAdmins == bp.EnforceAdmins &&
 				currentAllowForcePushes == bp.AllowForcePushes &&
 				currentAllowDeletions == bp.AllowDeletions &&
@@ -209,19 +249,27 @@ func syncBranchProtection(ctx context.Context, client *github.Client, owner, rep
 
 		fmt.Printf("  Updating branch protection on %s...\n", bp.Branch)
 		if _, _, updateErr := client.Repositories.UpdateBranchProtection(ctx, owner, repo, bp.Branch, req); updateErr != nil {
-			fmt.Printf("  Error updating branch protection on %s: %v\n", bp.Branch, updateErr)
-		} else {
-			fmt.Printf("✅ Branch protection updated on %s\n", bp.Branch)
+			return fmt.Errorf("branch %s: update protection: %w", bp.Branch, updateErr)
 		}
+		fmt.Printf("✅ Branch protection updated on %s\n", bp.Branch)
 	}
+	return nil
 }
 
-func stringSlicesEqual(a, b []string) bool {
+// statusChecksEqual reports whether two context slices contain the same set of
+// check names, independent of order (GitHub may return them in any sequence).
+func statusChecksEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
+	ac := make([]string, len(a))
+	bc := make([]string, len(b))
+	copy(ac, a)
+	copy(bc, b)
+	sort.Strings(ac)
+	sort.Strings(bc)
+	for i := range ac {
+		if ac[i] != bc[i] {
 			return false
 		}
 	}
