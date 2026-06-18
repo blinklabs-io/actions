@@ -2,6 +2,10 @@ repositories:
   - name: blinklabs-io/test-reusable-ghactions
     settings:
       delete_branch_on_merge: true
+    # Direct per-user collaborator access — currently none.
+    # Note: org-level team access (Core/write, Ops/admin, PMs/maintain,
+    # Docs/write) is managed at the organization level and is intentionally
+    # out of scope for this governance engine.
     collaborators: []
     branch_protection:
       - branch: main
