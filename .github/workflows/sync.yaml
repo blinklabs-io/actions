@@ -14,6 +14,75 @@ jobs:
       - name: Checkout Controller Code
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
+      - name: Set up Go runtime
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+
+      # Scope the token only to the repos listed in repos-config.yaml rather
+      # than the whole org, reducing the blast radius if the token is leaked.
+      - name: Resolve target repositories from config
+        id: target-repos
+        run: |
+          config_parser=$(mktemp "${TMPDIR:-/tmp}/repos-config-parser-XXXXXX.go")
+          trap 'rm -f "$config_parser"' EXIT
+          cat > "$config_parser" <<'EOF'
+          package main
+
+          import (
+            "fmt"
+            "os"
+            "strings"
+
+            "gopkg.in/yaml.v3"
+          )
+
+          type config struct {
+            Repositories []struct {
+              Name string `yaml:"name"`
+            } `yaml:"repositories"`
+          }
+
+          func main() {
+            raw, err := os.ReadFile("repos-config.yaml")
+            if err != nil {
+              fmt.Fprintf(os.Stderr, "failed to read repos-config.yaml: %v\n", err)
+              os.Exit(1)
+            }
+
+            var cfg config
+            if err := yaml.Unmarshal(raw, &cfg); err != nil {
+              fmt.Fprintf(os.Stderr, "failed to parse repos-config.yaml: %v\n", err)
+              os.Exit(1)
+            }
+
+            if len(cfg.Repositories) == 0 {
+              fmt.Fprintln(os.Stderr, "repos-config.yaml must define at least one repository")
+              os.Exit(1)
+            }
+
+            repos := make([]string, 0, len(cfg.Repositories))
+            for i, repo := range cfg.Repositories {
+              name := strings.TrimSpace(repo.Name)
+              if name == "" {
+                fmt.Fprintf(os.Stderr, "repos-config.yaml repository at index %d is missing name\n", i)
+                os.Exit(1)
+              }
+              repos = append(repos, name)
+            }
+
+            fmt.Println(strings.Join(repos, "\n"))
+          }
+          EOF
+          repos=$(go run "$config_parser")
+          if [ -z "$repos" ]; then
+            echo "No target repositories resolved from repos-config.yaml" >&2
+            exit 1
+          fi
+          echo "list<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$repos"    >> "$GITHUB_OUTPUT"
+          echo "EOF"       >> "$GITHUB_OUTPUT"
+
       - name: Authenticate via GitHub App
         id: generate-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -21,11 +90,7 @@ jobs:
           client-id: ${{ secrets.GOVERNANCE_APP_CLIENT_ID }}
           private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-
-      - name: Set up Go runtime
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: '1.26'
+          repositories: ${{ steps.target-repos.outputs.list }}
 
       - name: Resolve Dependencies
         run: go mod tidy
