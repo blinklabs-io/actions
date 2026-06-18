@@ -38,9 +38,11 @@ func TestParseRepoString_Valid(t *testing.T) {
 // Each sub-test re-runs the test binary with TEST_INVALID_REPO set so that
 // parseRepoString is called with the bad value and os.Exit(1) is expected.
 func TestParseRepoString_Invalid(t *testing.T) {
-	// When running as the subprocess, call parseRepoString and return.
-	if val := os.Getenv("TEST_INVALID_REPO"); val != "" {
-		parseRepoString(val)
+	// When running as the subprocess, call parseRepoString with the provided
+	// value and return. TEST_INVALID_REPO_SET=1 is the subprocess trigger so
+	// that an empty TEST_INVALID_REPO value is handled correctly.
+	if os.Getenv("TEST_INVALID_REPO_SET") == "1" {
+		parseRepoString(os.Getenv("TEST_INVALID_REPO"))
 		return
 	}
 
@@ -55,7 +57,10 @@ func TestParseRepoString_Invalid(t *testing.T) {
 		input := input
 		t.Run(input, func(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=TestParseRepoString_Invalid")
-			cmd.Env = append(os.Environ(), "TEST_INVALID_REPO="+input)
+			cmd.Env = append(os.Environ(),
+				"TEST_INVALID_REPO_SET=1",
+				"TEST_INVALID_REPO="+input,
+			)
 			err := cmd.Run()
 			if err == nil {
 				t.Errorf("parseRepoString(%q): expected non-zero exit, but process succeeded", input)

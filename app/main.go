@@ -24,7 +24,6 @@ type RepoConfig struct {
 	Name             string             `yaml:"name"`
 	Settings         RepoSettings       `yaml:"settings"`
 	Collaborators    []Collaborator     `yaml:"collaborators"`
-	Teams            []TeamConfig       `yaml:"teams"`
 	BranchProtection []BranchProtection `yaml:"branch_protection"`
 	Workflows        []WorkflowConfig   `yaml:"workflows"`
 }
@@ -35,11 +34,6 @@ type RepoSettings struct {
 
 type Collaborator struct {
 	Username   string `yaml:"username"`
-	Permission string `yaml:"permission"`
-}
-
-type TeamConfig struct {
-	Name       string `yaml:"name"`
 	Permission string `yaml:"permission"`
 }
 

@@ -3,11 +3,6 @@ repositories:
     settings:
       delete_branch_on_merge: true
     collaborators: []
-    teams:
-      - name: core
-        permission: write
-      - name: ops
-        permission: admin
     branch_protection:
       - branch: main
         required_status_checks: []
