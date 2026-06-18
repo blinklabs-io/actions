@@ -15,13 +15,13 @@ repositories:
     workflows:
       - destination_file: issue-close-test.yaml
         workflow_name: "Issue Close Test"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@feat/github-app-workflow-standardization"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
         params:
           issue_number: "${{ github.event.issue.number }}"
           issue_title: "${{ github.event.issue.title }}"
       - destination_file: set-project-closed-date.yaml
         workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@feat/github-app-workflow-standardization"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
         params:
           project_url: "https://github.com/orgs/blinklabs-io/projects/11"
           closed_date_field: "Closed Date"
