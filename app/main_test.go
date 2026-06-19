@@ -214,9 +214,15 @@ func TestWorkflowTemplate_ExplicitSecrets(t *testing.T) {
 		t.Fatalf("unexpected template parse error: %v", err)
 	}
 
-	wf := WorkflowConfig{
+	triggersYAML, err := renderTriggers(nil) // default: issues.closed + workflow_dispatch
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
 		WorkflowName:     "Set Project Closed Date",
 		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main",
+		TriggersYAML:     triggersYAML,
 		Params: map[string]string{
 			"project_url": "https://github.com/orgs/blinklabs-io/projects/11",
 		},
@@ -226,7 +232,7 @@ func TestWorkflowTemplate_ExplicitSecrets(t *testing.T) {
 	}
 
 	var rendered bytes.Buffer
-	if err := tmpl.Execute(&rendered, wf); err != nil {
+	if err := tmpl.Execute(&rendered, data); err != nil {
 		t.Fatalf("unexpected template execution error: %v", err)
 	}
 	out := rendered.String()
@@ -235,5 +241,99 @@ func TestWorkflowTemplate_ExplicitSecrets(t *testing.T) {
 	}
 	if strings.Contains(out, "secrets: inherit") {
 		t.Fatalf("rendered workflow should not inherit all secrets:\n%s", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// renderTriggers
+// ---------------------------------------------------------------------------
+
+func TestRenderTriggers_Default(t *testing.T) {
+	got, err := renderTriggers(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "  issues:") {
+		t.Errorf("default triggers missing issues block:\n%s", got)
+	}
+	if !strings.Contains(got, "  workflow_dispatch:") {
+		t.Errorf("default triggers missing workflow_dispatch:\n%s", got)
+	}
+	// nil values must not appear as "null"
+	if strings.Contains(got, "null") {
+		t.Errorf("triggers YAML must not contain 'null':\n%s", got)
+	}
+}
+
+func TestRenderTriggers_PullRequestPush(t *testing.T) {
+	triggers := map[string]interface{}{
+		"pull_request": nil,
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*"},
+		},
+	}
+	got, err := renderTriggers(triggers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "  pull_request:") {
+		t.Errorf("missing pull_request trigger:\n%s", got)
+	}
+	if !strings.Contains(got, "  push:") {
+		t.Errorf("missing push trigger:\n%s", got)
+	}
+	if strings.Contains(got, "null") {
+		t.Errorf("triggers YAML must not contain 'null':\n%s", got)
+	}
+}
+
+func TestWorkflowTemplate_ConfigurableTriggers(t *testing.T) {
+	tmpl, err := template.New("workflow.tmpl").Delims("[[", "]]").ParseFiles("../templates/workflow.tmpl")
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"pull_request": nil,
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "go-test",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main",
+		TriggersYAML:     triggersYAML,
+		Permissions: map[string]string{
+			"contents": "read",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+	if !strings.Contains(out, "  pull_request:") {
+		t.Fatalf("rendered workflow missing pull_request trigger:\n%s", out)
+	}
+	if !strings.Contains(out, "  push:") {
+		t.Fatalf("rendered workflow missing push trigger:\n%s", out)
+	}
+	// with: block must not appear when Params is nil
+	if strings.Contains(out, "    with:") {
+		t.Fatalf("rendered workflow should not have 'with:' when params are empty:\n%s", out)
+	}
+	// permissions block must appear when Permissions is set
+	if !strings.Contains(out, "permissions:") {
+		t.Fatalf("rendered workflow missing permissions block:\n%s", out)
+	}
+	if !strings.Contains(out, "  contents: read") {
+		t.Fatalf("rendered workflow missing permissions entry:\n%s", out)
 	}
 }

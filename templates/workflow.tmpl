@@ -2,10 +2,13 @@
 name: "[[ .WorkflowName ]]"
 
 on:
-  issues:
-    types:
-      - closed
-  workflow_dispatch:
+[[ .TriggersYAML ]]
+[[- if .Permissions ]]
+
+permissions:
+[[- range $k, $v := .Permissions ]]
+  [[ $k ]]: [[ $v ]]
+[[- end ]][[- end ]]
 
 jobs:
   orchestrate:
@@ -14,9 +17,9 @@ jobs:
     secrets:
 [[- range $key, $value := .Secrets ]]
       [[ $key ]]: ${{ secrets.[[ $value ]] }}
-[[- end ]]
-[[- end ]]
+[[- end ]][[- end ]]
+[[- if .Params ]]
     with:
 [[- range $key, $value := .Params ]]
       [[ $key ]]: [[ $value ]]
-[[- end ]]
+[[- end ]][[- end ]]
