@@ -62,6 +62,7 @@ type WorkflowConfig struct {
 	WorkflowName     string            `yaml:"workflow_name"`
 	ReusableWorkflow string            `yaml:"reusable_workflow"`
 	Params           map[string]string `yaml:"params"`
+	Secrets          map[string]string `yaml:"secrets"`
 }
 
 // ---------------------------------------------------------------------------

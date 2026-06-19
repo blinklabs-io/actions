@@ -10,7 +10,12 @@ on:
 jobs:
   orchestrate:
     uses: [[ .ReusableWorkflow ]]
-    secrets: inherit
+[[- if .Secrets ]]
+    secrets:
+[[- range $key, $value := .Secrets ]]
+      [[ $key ]]: ${{ secrets.[[ $value ]] }}
+[[- end ]]
+[[- end ]]
     with:
 [[- range $key, $value := .Params ]]
       [[ $key ]]: [[ $value ]]
