@@ -58,11 +58,23 @@ type BranchProtection struct {
 }
 
 type WorkflowConfig struct {
-	DestinationFile  string            `yaml:"destination_file"`
-	WorkflowName     string            `yaml:"workflow_name"`
-	ReusableWorkflow string            `yaml:"reusable_workflow"`
-	Params           map[string]string `yaml:"params"`
-	Secrets          map[string]string `yaml:"secrets"`
+	DestinationFile  string                 `yaml:"destination_file"`
+	WorkflowName     string                 `yaml:"workflow_name"`
+	ReusableWorkflow string                 `yaml:"reusable_workflow"`
+	Triggers         map[string]interface{} `yaml:"triggers"`
+	Permissions      map[string]string      `yaml:"permissions"`
+	Params           map[string]string      `yaml:"params"`
+	Secrets          map[string]string      `yaml:"secrets"`
+}
+
+// templateData is the value passed into the workflow template.
+type templateData struct {
+	WorkflowName     string
+	ReusableWorkflow string
+	Params           map[string]string
+	Secrets          map[string]string
+	Permissions      map[string]string
+	TriggersYAML     string
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +299,36 @@ func syncBranchProtection(ctx context.Context, client *github.Client, owner, rep
 	return nil
 }
 
+// renderTriggers marshals the triggers map to an indented YAML block suitable
+// for embedding under the `on:` key. When triggers is nil/empty it defaults to
+// the canonical issues.closed + workflow_dispatch pair.
+func renderTriggers(triggers map[string]interface{}) (string, error) {
+	if len(triggers) == 0 {
+		triggers = map[string]interface{}{
+			"issues": map[string]interface{}{
+				"types": []string{"closed"},
+			},
+			"workflow_dispatch": nil,
+		}
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(triggers); err != nil {
+		return "", err
+	}
+	_ = enc.Close()
+	raw := strings.TrimRight(buf.String(), "\n")
+	// yaml.v3 encodes nil values as "null"; GitHub Actions expects bare keys.
+	raw = strings.ReplaceAll(raw, ": null", ":")
+	// Indent every line by 2 spaces so it nests correctly under `on:`.
+	lines := strings.Split(raw, "\n")
+	for i, l := range lines {
+		lines[i] = "  " + l
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
 // statusChecksEqual reports whether two context slices contain the same set of
 // check names, independent of order (GitHub may return them in any sequence).
 func statusChecksEqual(a, b []string) bool {
@@ -356,8 +398,21 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 	}
 
 	for _, wf := range workflows {
+		triggersYAML, tErr := renderTriggers(wf.Triggers)
+		if tErr != nil {
+			fmt.Printf("  renderTriggers error for %s: %v\n", wf.DestinationFile, tErr)
+			continue
+		}
+		data := templateData{
+			WorkflowName:     wf.WorkflowName,
+			ReusableWorkflow: wf.ReusableWorkflow,
+			Params:           wf.Params,
+			Secrets:          wf.Secrets,
+			Permissions:      wf.Permissions,
+			TriggersYAML:     triggersYAML,
+		}
 		var buf bytes.Buffer
-		if err := tmpl.Execute(&buf, wf); err != nil {
+		if err := tmpl.Execute(&buf, data); err != nil {
 			fmt.Printf("  Template execution error for %s: %v\n", wf.DestinationFile, err)
 			continue
 		}
