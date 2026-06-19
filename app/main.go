@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -24,7 +25,6 @@ type RepoConfig struct {
 	Name             string             `yaml:"name"`
 	Settings         RepoSettings       `yaml:"settings"`
 	Collaborators    []Collaborator     `yaml:"collaborators"`
-	Teams            []TeamConfig       `yaml:"teams"`
 	BranchProtection []BranchProtection `yaml:"branch_protection"`
 	Workflows        []WorkflowConfig   `yaml:"workflows"`
 }
@@ -38,15 +38,23 @@ type Collaborator struct {
 	Permission string `yaml:"permission"`
 }
 
-type TeamConfig struct {
-	Name       string `yaml:"name"`
-	Permission string `yaml:"permission"`
-}
-
 type BranchProtection struct {
-	Branch               string   `yaml:"branch"`
-	RequiredStatusChecks []string `yaml:"required_status_checks"`
-	BypassPullRequest    bool     `yaml:"bypass_pull_request"`
+	Branch                         string   `yaml:"branch"`
+	RequiredStatusChecks           []string `yaml:"required_status_checks"`
+	RequireUpToDate                bool     `yaml:"require_up_to_date"`
+	BypassPullRequest              bool     `yaml:"bypass_pull_request"`
+	BypassActorsUsers              []string `yaml:"bypass_actors_users"`
+	BypassActorsTeams              []string `yaml:"bypass_actors_teams"`
+	BypassActorsApps               []string `yaml:"bypass_actors_apps"`
+	RequiredApprovingReviewCount   int      `yaml:"required_approving_review_count"`
+	DismissStaleReviews            bool     `yaml:"dismiss_stale_reviews"`
+	RequireCodeOwnerReviews        bool     `yaml:"require_code_owner_reviews"`
+	EnforceAdmins                  bool     `yaml:"enforce_admins"`
+	RequireLinearHistory           bool     `yaml:"require_linear_history"`
+	RequiredConversationResolution bool     `yaml:"required_conversation_resolution"`
+	AllowForcePushes               bool     `yaml:"allow_force_pushes"`
+	AllowDeletions                 bool     `yaml:"allow_deletions"`
+	LockBranch                     bool     `yaml:"lock_branch"`
 }
 
 type WorkflowConfig struct {
@@ -92,6 +100,10 @@ func main() {
 		// Observe-Compare-Act loop per repo
 		syncRepoSettings(ctx, client, owner, repoName, repo.Settings)
 		syncCollaborators(ctx, client, owner, repoName, repo.Collaborators)
+		if err := syncBranchProtection(ctx, client, owner, repoName, repo.BranchProtection); err != nil {
+			fmt.Printf("Error syncing branch protection for %s/%s: %v\n", owner, repoName, err)
+			os.Exit(1)
+		}
 		syncWorkflows(ctx, client, owner, repoName, repo.Workflows)
 	}
 }
@@ -112,6 +124,187 @@ func parseRepoString(fullName string) (string, string) {
 // ---------------------------------------------------------------------------
 // Sync functions
 // ---------------------------------------------------------------------------
+
+func syncBranchProtection(ctx context.Context, client *github.Client, owner, repo string, protections []BranchProtection) error {
+	for _, bp := range protections {
+		// Observe current state first so unmodeled settings can be preserved.
+		current, _, getErr := client.Repositories.GetBranchProtection(ctx, owner, repo, bp.Branch)
+
+		// Build desired protection request.
+		req := &github.ProtectionRequest{
+			EnforceAdmins:                  bp.EnforceAdmins,
+			RequireLinearHistory:           github.Bool(bp.RequireLinearHistory),
+			AllowForcePushes:               github.Bool(bp.AllowForcePushes),
+			AllowDeletions:                 github.Bool(bp.AllowDeletions),
+			RequiredConversationResolution: github.Bool(bp.RequiredConversationResolution),
+			LockBranch:                     github.Bool(bp.LockBranch),
+		}
+
+		// Preserve existing push restrictions to avoid silently clearing them
+		// on every unrelated update. The GitHub API replaces the full protection
+		// object on PUT, so omitting Restrictions would remove all push rules.
+		if getErr == nil && current.Restrictions != nil {
+			r := current.Restrictions
+			userLogins := make([]string, 0, len(r.Users))
+			for _, u := range r.Users {
+				userLogins = append(userLogins, u.GetLogin())
+			}
+			teamSlugs := make([]string, 0, len(r.Teams))
+			for _, t := range r.Teams {
+				teamSlugs = append(teamSlugs, t.GetSlug())
+			}
+			appSlugs := make([]string, 0, len(r.Apps))
+			for _, a := range r.Apps {
+				appSlugs = append(appSlugs, a.GetSlug())
+			}
+			req.Restrictions = &github.BranchRestrictionsRequest{
+				Users: userLogins,
+				Teams: teamSlugs,
+				Apps:  appSlugs,
+			}
+		}
+
+		if len(bp.RequiredStatusChecks) > 0 {
+			req.RequiredStatusChecks = &github.RequiredStatusChecks{
+				Strict:   bp.RequireUpToDate,
+				Contexts: &bp.RequiredStatusChecks,
+			}
+		}
+
+		if !bp.BypassPullRequest {
+			prReq := &github.PullRequestReviewsEnforcementRequest{
+				RequiredApprovingReviewCount: bp.RequiredApprovingReviewCount,
+				DismissStaleReviews:          bp.DismissStaleReviews,
+				RequireCodeOwnerReviews:      bp.RequireCodeOwnerReviews,
+			}
+			if len(bp.BypassActorsUsers) > 0 || len(bp.BypassActorsTeams) > 0 || len(bp.BypassActorsApps) > 0 {
+				prReq.BypassPullRequestAllowancesRequest = &github.BypassPullRequestAllowancesRequest{
+					Users: bp.BypassActorsUsers,
+					Teams: bp.BypassActorsTeams,
+					Apps:  bp.BypassActorsApps,
+				}
+			}
+			req.RequiredPullRequestReviews = prReq
+		}
+
+		// Drift check: skip update if current state already matches desired.
+		if getErr == nil {
+			hasPR := current.GetRequiredPullRequestReviews() != nil
+			wantsPR := !bp.BypassPullRequest
+
+			var currentChecks []string
+			currentStrict := false
+			if c := current.GetRequiredStatusChecks(); c != nil {
+				if c.Contexts != nil {
+					currentChecks = *c.Contexts
+				}
+				currentStrict = c.Strict
+			}
+
+			currentEnforceAdmins := false
+			if ea := current.GetEnforceAdmins(); ea != nil {
+				currentEnforceAdmins = ea.Enabled
+			}
+			currentAllowForcePushes := false
+			if afp := current.GetAllowForcePushes(); afp != nil {
+				currentAllowForcePushes = afp.Enabled
+			}
+			currentAllowDeletions := false
+			if ad := current.GetAllowDeletions(); ad != nil {
+				currentAllowDeletions = ad.Enabled
+			}
+			currentLinear := false
+			if rl := current.GetRequireLinearHistory(); rl != nil {
+				currentLinear = rl.Enabled
+			}
+			currentConvRes := false
+			if cr := current.GetRequiredConversationResolution(); cr != nil {
+				currentConvRes = cr.Enabled
+			}
+			currentLock := false
+			if lb := current.GetLockBranch(); lb != nil {
+				currentLock = lb.GetEnabled()
+			}
+
+			// Only check PR-review subfields when PR reviews are desired;
+			// when bypassed those fields are not sent in the request.
+			prReviewsMatch := true
+			if wantsPR {
+				currentApprovals := 0
+				currentDismiss := false
+				currentCodeOwner := false
+				var currentBypassUsers, currentBypassTeams, currentBypassApps []string
+				if r := current.GetRequiredPullRequestReviews(); r != nil {
+					currentApprovals = r.RequiredApprovingReviewCount
+					currentDismiss = r.DismissStaleReviews
+					currentCodeOwner = r.RequireCodeOwnerReviews
+					if b := r.BypassPullRequestAllowances; b != nil {
+						for _, u := range b.Users {
+							currentBypassUsers = append(currentBypassUsers, u.GetLogin())
+						}
+						for _, t := range b.Teams {
+							currentBypassTeams = append(currentBypassTeams, t.GetSlug())
+						}
+						for _, a := range b.Apps {
+							currentBypassApps = append(currentBypassApps, a.GetSlug())
+						}
+					}
+				}
+				prReviewsMatch = currentApprovals == bp.RequiredApprovingReviewCount &&
+					currentDismiss == bp.DismissStaleReviews &&
+					currentCodeOwner == bp.RequireCodeOwnerReviews &&
+					statusChecksEqual(currentBypassUsers, bp.BypassActorsUsers) &&
+					statusChecksEqual(currentBypassTeams, bp.BypassActorsTeams) &&
+					statusChecksEqual(currentBypassApps, bp.BypassActorsApps)
+			}
+
+			if hasPR == wantsPR &&
+				statusChecksEqual(currentChecks, bp.RequiredStatusChecks) &&
+				currentStrict == bp.RequireUpToDate &&
+				prReviewsMatch &&
+				currentEnforceAdmins == bp.EnforceAdmins &&
+				currentAllowForcePushes == bp.AllowForcePushes &&
+				currentAllowDeletions == bp.AllowDeletions &&
+				currentLinear == bp.RequireLinearHistory &&
+				currentConvRes == bp.RequiredConversationResolution &&
+				currentLock == bp.LockBranch {
+				fmt.Printf("✅ Branch protection on %s already matches desired state.\n", bp.Branch)
+				continue
+			}
+		}
+
+		action := "Updating"
+		if getErr != nil {
+			action = "Creating"
+		}
+		fmt.Printf("  %s branch protection on %s...\n", action, bp.Branch)
+		if _, _, updateErr := client.Repositories.UpdateBranchProtection(ctx, owner, repo, bp.Branch, req); updateErr != nil {
+			return fmt.Errorf("branch %s: %s protection: %w", bp.Branch, action, updateErr)
+		}
+		fmt.Printf("✅ Branch protection %s on %s\n", action, bp.Branch)
+	}
+	return nil
+}
+
+// statusChecksEqual reports whether two context slices contain the same set of
+// check names, independent of order (GitHub may return them in any sequence).
+func statusChecksEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ac := make([]string, len(a))
+	bc := make([]string, len(b))
+	copy(ac, a)
+	copy(bc, b)
+	sort.Strings(ac)
+	sort.Strings(bc)
+	for i := range ac {
+		if ac[i] != bc[i] {
+			return false
+		}
+	}
+	return true
+}
 
 func syncRepoSettings(ctx context.Context, client *github.Client, owner, repo string, settings RepoSettings) {
 	current, _, err := client.Repositories.Get(ctx, owner, repo)
