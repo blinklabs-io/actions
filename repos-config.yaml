@@ -1,3 +1,22 @@
+# Shared branch-protection defaults — referenced via YAML merge key below.
+branch_protection_defaults: &branch_protection_defaults
+  required_status_checks: []
+  require_up_to_date: false
+  bypass_pull_request: false
+  bypass_actors_users: []
+  bypass_actors_teams: []
+  bypass_actors_apps:
+    - blinklabs-governance
+  required_approving_review_count: 1
+  dismiss_stale_reviews: true
+  require_code_owner_reviews: false
+  enforce_admins: false
+  require_linear_history: false
+  required_conversation_resolution: false
+  allow_force_pushes: false
+  allow_deletions: false
+  lock_branch: false
+
 repositories:
   - name: blinklabs-io/tx-submit-api
     settings:
@@ -7,22 +26,7 @@ repositories:
       - branch: main
         # required_status_checks will be updated after the first PR run
         # confirms the generated workflow check names (orchestrate / <job>).
-        required_status_checks: []
-        require_up_to_date: false
-        bypass_pull_request: false
-        bypass_actors_users: []
-        bypass_actors_teams: []
-        bypass_actors_apps:
-          - blinklabs-governance
-        required_approving_review_count: 1
-        dismiss_stale_reviews: true
-        require_code_owner_reviews: false
-        enforce_admins: false
-        require_linear_history: false
-        required_conversation_resolution: false
-        allow_force_pushes: false
-        allow_deletions: false
-        lock_branch: false
+        <<: *branch_protection_defaults
     workflows:
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
@@ -127,22 +131,7 @@ repositories:
     collaborators: []
     branch_protection:
       - branch: main
-        required_status_checks: []
-        require_up_to_date: false
-        bypass_pull_request: false
-        bypass_actors_users: []
-        bypass_actors_teams: []
-        bypass_actors_apps:
-          - blinklabs-governance
-        required_approving_review_count: 1
-        dismiss_stale_reviews: true
-        require_code_owner_reviews: false
-        enforce_admins: false
-        require_linear_history: false
-        required_conversation_resolution: false
-        allow_force_pushes: false
-        allow_deletions: false
-        lock_branch: false
+        <<: *branch_protection_defaults
     workflows:
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
