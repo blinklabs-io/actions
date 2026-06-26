@@ -394,3 +394,108 @@ repositories:
           project_url: "https://github.com/orgs/blinklabs-io/projects/11"
           closed_date_field: "Closed Date"
           closed_at: "${{ github.event.issue.closed_at }}"
+
+  - name: blinklabs-io/cardano-node-api
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: go-test.yml
+        workflow_name: "go-test"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+
+      - destination_file: golangci-lint.yml
+        workflow_name: "golangci-lint"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+
+      - destination_file: nilaway.yml
+        workflow_name: "nilaway"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          include-pkgs: "github.com/blinklabs-io/cardano-node-api"
+
+      - destination_file: ci-docker.yml
+        workflow_name: "Docker CI"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        triggers:
+          pull_request:
+            branches: [main]
+            paths:
+              - Dockerfile
+              - cmd/**
+              - docs/**
+              - internal/**
+              - go.*
+              - .github/workflows/ci-docker.yml
+        params:
+          image-name: "blinklabs-io/cardano-node-api"
+
+      - destination_file: publish.yml
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        triggers:
+          push:
+            branches: [main]
+            tags: ['v*.*.*']
+        permissions:
+          actions: write
+          attestations: write
+          checks: write
+          contents: write
+          id-token: write
+          packages: write
+          statuses: write
+        secrets:
+          docker-password: DOCKER_PASSWORD
+        params:
+          binary-name: "cardano-node-api"
+          docker-image: "blinklabs/cardano-node-api"
+          description: "HTTP API over the Cardano Node UNIX socket"
+
+      - destination_file: test-issue-on-close.yml
+        workflow_name: "Test Issue Close Trigger"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
+        triggers:
+          issues:
+            types: [closed]
+        params:
+          issue_number: "${{ github.event.issue.number }}"
+          issue_title: "${{ github.event.issue.title }}"
+
+      - destination_file: update-issue-on-close.yml
+        workflow_name: "Set Project Closed Date"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
+        triggers:
+          issues:
+            types: [closed]
+          workflow_dispatch:
+        secrets:
+          project_pat: ORG_PROJECT_PAT
+        params:
+          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
+          closed_date_field: "Closed Date"
+          closed_at: "${{ github.event.issue.closed_at }}"
