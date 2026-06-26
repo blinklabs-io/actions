@@ -446,9 +446,11 @@ repositories:
             branches: [main]
             paths:
               - Dockerfile
+              - Makefile
               - cmd/**
               - docs/**
               - internal/**
+              - openapi/**
               - go.*
               - .github/workflows/ci-docker.yml
         params:
