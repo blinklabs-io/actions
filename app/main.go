@@ -391,7 +391,18 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 
 	// Use [[ ]] as template delimiters so GitHub Actions ${{ }} expressions
 	// inside param values are emitted verbatim.
-	tmpl, err := template.New("workflow.tmpl").Delims("[[", "]]").ParseFiles("templates/workflow.tmpl")
+	//
+	// quoteForYAML wraps values that look like JSON arrays (start with "[") in
+	// YAML single-quotes so they are parsed as strings rather than sequences.
+	funcMap := template.FuncMap{
+		"quoteForYAML": func(s string) string {
+			if strings.HasPrefix(strings.TrimSpace(s), "[") {
+				return "'" + s + "'"
+			}
+			return s
+		},
+	}
+	tmpl, err := template.New("workflow.tmpl").Delims("[[", "]]").Funcs(funcMap).ParseFiles("templates/workflow.tmpl")
 	if err != nil {
 		fmt.Printf("  Template compilation error: %v\n", err)
 		return

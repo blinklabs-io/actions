@@ -21,5 +21,5 @@ jobs:
 [[- if .Params ]]
     with:
 [[- range $key, $value := .Params ]]
-      [[ $key ]]: [[ $value ]]
+      [[ $key ]]: [[ $value | quoteForYAML ]]
 [[- end ]][[- end ]]
