@@ -8,9 +8,10 @@ on:
         required: true
         type: string
       docker-image:
-        description: Docker Hub image name (e.g. blinklabs/tx-submit-api).
-        required: true
+        description: Docker Hub image name (e.g. blinklabs/tx-submit-api). Leave empty to skip Docker Hub and publish to GHCR only.
+        required: false
         type: string
+        default: ""
       description:
         description: Short description for the Docker Hub repository.
         required: false
@@ -21,10 +22,15 @@ on:
         required: false
         type: string
         default: "1.25.x"
+      binary-os-matrix:
+        description: JSON array of OS targets for binary builds (e.g. '["linux","darwin"]').
+        required: false
+        type: string
+        default: '["linux","darwin","freebsd","windows"]'
     secrets:
       docker-password:
-        description: Docker Hub access token.
-        required: true
+        description: Docker Hub access token. Required when docker-image is set.
+        required: false
 
 concurrency: ${{ github.ref }}
 
@@ -62,7 +68,7 @@ jobs:
   build-binaries:
     strategy:
       matrix:
-        os: [linux, darwin, freebsd, windows]
+        os: ${{ fromJson(inputs.binary-os-matrix) }}
         arch: [amd64, arm64]
     runs-on: ubuntu-latest
     needs: [create-draft-release]
@@ -125,6 +131,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4 https://github.com/docker/setup-buildx-action/releases/tag/v4
       - name: Login to Docker Hub
+        if: inputs.docker-image != ''
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4 https://github.com/docker/login-action/releases/tag/v4
         with:
           username: blinklabs
@@ -139,7 +146,7 @@ jobs:
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6 https://github.com/docker/metadata-action/releases/tag/v6
         with:
           images: |
-            ${{ inputs.docker-image }}
+            ${{ inputs.docker-image != '' && inputs.docker-image || '' }}
             ghcr.io/${{ github.repository }}
           tags: |
             # Only version, no revision
@@ -157,6 +164,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
       - name: Attest Docker Hub image
+        if: inputs.docker-image != ''
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0 https://github.com/actions/attest/releases/tag/v4.1.0
         with:
           subject-name: index.docker.io/${{ inputs.docker-image }}
@@ -169,6 +177,7 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
       - name: Docker Hub Description
+        if: inputs.docker-image != ''
         uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5 https://github.com/peter-evans/dockerhub-description/releases/tag/v5
         with:
           username: blinklabs
