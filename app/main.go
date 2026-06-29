@@ -399,6 +399,18 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 			if strings.HasPrefix(strings.TrimSpace(s), "[") {
 				return "'" + s + "'"
 			}
+			// Multiline values: render as an indented block scalar (|-).
+			// The "with:" key is at 4-space indent, param keys at 6 spaces,
+			// so block content sits at 8 spaces.
+			if strings.Contains(s, "\n") {
+				trimmed := strings.TrimRight(s, "\n")
+				lines := strings.Split(trimmed, "\n")
+				result := "|-"
+				for _, line := range lines {
+					result += "\n        " + line
+				}
+				return result
+			}
 			return s
 		},
 	}
