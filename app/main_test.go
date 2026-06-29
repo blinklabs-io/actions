@@ -11,6 +11,31 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// newWorkflowTemplate creates a *template.Template with the same FuncMap and
+// delimiters used by syncWorkflows, so template-rendering tests match
+// production output exactly.
+func newWorkflowTemplate(t *testing.T) (*template.Template, error) {
+	t.Helper()
+	funcMap := template.FuncMap{
+		"quoteForYAML": func(s string) string {
+			if strings.HasPrefix(strings.TrimSpace(s), "[") {
+				return "'" + s + "'"
+			}
+			if strings.Contains(s, "\n") {
+				trimmed := strings.TrimRight(s, "\n")
+				lines := strings.Split(trimmed, "\n")
+				result := "|-"
+				for _, line := range lines {
+					result += "\n        " + line
+				}
+				return result
+			}
+			return s
+		},
+	}
+	return template.New("workflow.tmpl").Delims("[[", "]]").Funcs(funcMap).ParseFiles("../templates/workflow.tmpl")
+}
+
 // ---------------------------------------------------------------------------
 // parseRepoString
 // ---------------------------------------------------------------------------
@@ -209,7 +234,7 @@ repositories:
 }
 
 func TestWorkflowTemplate_ExplicitSecrets(t *testing.T) {
-	tmpl, err := template.New("workflow.tmpl").Delims("[[", "]]").ParseFiles("../templates/workflow.tmpl")
+	tmpl, err := newWorkflowTemplate(t)
 	if err != nil {
 		t.Fatalf("unexpected template parse error: %v", err)
 	}
@@ -289,7 +314,7 @@ func TestRenderTriggers_PullRequestPush(t *testing.T) {
 }
 
 func TestWorkflowTemplate_ConfigurableTriggers(t *testing.T) {
-	tmpl, err := template.New("workflow.tmpl").Delims("[[", "]]").ParseFiles("../templates/workflow.tmpl")
+	tmpl, err := newWorkflowTemplate(t)
 	if err != nil {
 		t.Fatalf("unexpected template parse error: %v", err)
 	}
@@ -335,5 +360,115 @@ func TestWorkflowTemplate_ConfigurableTriggers(t *testing.T) {
 	}
 	if !strings.Contains(out, "  contents: read") {
 		t.Fatalf("rendered workflow missing permissions entry:\n%s", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// docker-openvpn: schedule trigger + enable-trivy-scan
+// ---------------------------------------------------------------------------
+
+// TestRenderTriggers_WithSchedule verifies that a schedule cron entry is
+// correctly rendered inside the on: block without "null" and with proper
+// indentation.
+func TestRenderTriggers_WithSchedule(t *testing.T) {
+	triggers := map[string]interface{}{
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*.*.*"},
+		},
+		"schedule": []interface{}{
+			map[string]interface{}{"cron": "0 0 * * 1"},
+		},
+	}
+	got, err := renderTriggers(triggers)
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+	if !strings.Contains(got, "  schedule:") {
+		t.Errorf("missing schedule key in triggers output:\n%s", got)
+	}
+	if !strings.Contains(got, "cron:") {
+		t.Errorf("missing cron key in triggers output:\n%s", got)
+	}
+	if !strings.Contains(got, "0 0 * * 1") {
+		t.Errorf("missing cron value in triggers output:\n%s", got)
+	}
+	if strings.Contains(got, "null") {
+		t.Errorf("triggers YAML must not contain 'null':\n%s", got)
+	}
+}
+
+// TestWorkflowTemplate_OpenvpnPublish verifies the full rendered publish
+// wrapper for docker-openvpn: schedule trigger, security-events permission,
+// enable-trivy-scan param, and docker-image/ghcr-image params.
+func TestWorkflowTemplate_OpenvpnPublish(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*.*.*"},
+		},
+		"schedule": []interface{}{
+			map[string]interface{}{"cron": "0 0 * * 1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "publish",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main",
+		TriggersYAML:     triggersYAML,
+		Permissions: map[string]string{
+			"contents":        "write",
+			"packages":        "write",
+			"security-events": "write",
+		},
+		Secrets: map[string]string{
+			"docker-password": "DOCKER_PASSWORD",
+		},
+		Params: map[string]string{
+			"docker-image":      "blinklabs/openvpn",
+			"ghcr-image":        "blinklabs-io/openvpn",
+			"description":       "Simple OpenVPN image",
+			"enable-trivy-scan": "true",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct {
+		desc    string
+		contain string
+	}{
+		{"schedule trigger", "schedule:"},
+		{"cron value", "0 0 * * 1"},
+		{"push trigger", "push:"},
+		{"security-events permission", "security-events: write"},
+		{"docker-image param", "docker-image: blinklabs/openvpn"},
+		{"ghcr-image param", "ghcr-image: blinklabs-io/openvpn"},
+		{"description param", "description: Simple OpenVPN image"},
+		{"enable-trivy-scan param", "enable-trivy-scan: true"},
+		{"docker-password secret", "docker-password: ${{ secrets.DOCKER_PASSWORD }}"},
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"reuseable ref", "reuseable-publish-docker.yml@main"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+	// enable-trivy-scan must NOT be wrapped in single quotes (it's a plain bool string)
+	if strings.Contains(out, "'true'") {
+		t.Errorf("enable-trivy-scan should not be single-quoted:\n%s", out)
 	}
 }
