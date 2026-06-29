@@ -21,6 +21,18 @@ on:
         required: false
         type: string
         default: "./README.md"
+      build-args:
+        description: |
+          Newline-separated list of Docker build arguments (ARG=VALUE).
+          Passed verbatim to docker/build-push-action build-args.
+        required: false
+        type: string
+        default: ""
+      enable-attestation:
+        description: Attest the built Docker Hub and GHCR images with build provenance.
+        required: false
+        type: boolean
+        default: false
     secrets:
       docker-password:
         description: Docker Hub access token.
@@ -34,6 +46,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3 https://github.com/actions/checkout/releases/tag/v6.0.3
         with:
@@ -64,6 +78,7 @@ jobs:
             type=match,pattern=v(.*),group=1
             type=ref,event=branch
       - name: Build and push images
+        id: push
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7 https://github.com/docker/build-push-action/releases/tag/v7
         with:
           context: .
@@ -71,6 +86,21 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ inputs.build-args }}
+      - name: Attest Docker Hub image
+        if: inputs.enable-attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
+        with:
+          subject-name: index.docker.io/${{ inputs.docker-image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Attest GHCR image
+        if: inputs.enable-attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
+        with:
+          subject-name: ghcr.io/${{ inputs.ghcr-image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
       - name: Update Docker Hub description
         if: inputs.description != ''
         uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5 https://github.com/peter-evans/dockerhub-description/releases/tag/v5
