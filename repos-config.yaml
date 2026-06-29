@@ -690,6 +690,18 @@ repositories:
         triggers:
           pull_request:
 
+      - destination_file: ci-docker.yml
+        workflow_name: "Docker CI"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        triggers:
+          pull_request:
+            branches: [main]
+            paths:
+              - Dockerfile
+              - .github/workflows/ci-docker.yml
+        params:
+          image-name: "blinklabs-io/minio"
+
       - destination_file: publish.yml
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main"
@@ -706,7 +718,7 @@ repositories:
           docker-password: DOCKER_PASSWORD
         params:
           docker-image: "blinklabs/minio"
-          ghcr-image: "blinklabs-io/docker-minio"
+          ghcr-image: "blinklabs-io/minio"
           description: "Wrapper image for https://hub.docker.com/r/minio/minio"
           enable-attestation: "true"
           build-args: |
