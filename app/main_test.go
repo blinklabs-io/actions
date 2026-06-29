@@ -472,3 +472,54 @@ func TestWorkflowTemplate_OpenvpnPublish(t *testing.T) {
 		t.Errorf("enable-trivy-scan should not be single-quoted:\n%s", out)
 	}
 }
+
+// TestWorkflowTemplate_MultilineBuildArgs verifies that a multiline build-args
+// param is rendered using the |- block scalar with correct 8-space indentation,
+// covering the strings.Contains(s, "\\n") path in quoteForYAML.
+func TestWorkflowTemplate_MultilineBuildArgs(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"push": map[string]interface{}{"branches": []interface{}{"main"}},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "publish",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main",
+		TriggersYAML:     triggersYAML,
+		Secrets:          map[string]string{"docker-password": "DOCKER_PASSWORD"},
+		Params: map[string]string{
+			"docker-image": "blinklabs/minio",
+			"ghcr-image":   "blinklabs-io/minio",
+			"build-args":   "VERSION=${{ github.ref_name }}\nCOMMIT_HASH=${{ github.sha }}",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	// Multiline value must render as a YAML block scalar
+	if !strings.Contains(out, "build-args: |−") && !strings.Contains(out, "build-args: |-") {
+		t.Errorf("multiline build-args must render with |- block scalar:\n%s", out)
+	}
+	// Each line must be indented 8 spaces under the with: key
+	if !strings.Contains(out, "        VERSION=${{ github.ref_name }}") {
+		t.Errorf("build-args first line not correctly indented:\n%s", out)
+	}
+	if !strings.Contains(out, "        COMMIT_HASH=${{ github.sha }}") {
+		t.Errorf("build-args second line not correctly indented:\n%s", out)
+	}
+	// Must NOT be single-quoted (would break YAML block scalar)
+	if strings.Contains(out, "'VERSION") {
+		t.Errorf("multiline build-args must not be single-quoted:\n%s", out)
+	}
+}

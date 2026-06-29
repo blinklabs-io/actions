@@ -109,8 +109,10 @@ jobs:
           push-to-registry: true
       - name: Extract first tag
         if: inputs.enable-trivy-scan
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1 | rev | cut -d: -f1 | rev)
+          FIRST_TAG=$(echo "$META_TAGS" | head -n1 | rev | cut -d: -f1 | rev)
           echo "FIRST_TAG=$FIRST_TAG" >> "$GITHUB_ENV"
       - name: Run Trivy vulnerability scanner
         if: inputs.enable-trivy-scan
