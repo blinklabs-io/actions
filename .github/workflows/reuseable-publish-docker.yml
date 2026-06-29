@@ -33,6 +33,11 @@ on:
         required: false
         type: boolean
         default: false
+      enable-trivy-scan:
+        description: Run Trivy vulnerability scanner on the pushed GHCR image and upload SARIF results to GitHub Security tab.
+        required: false
+        type: boolean
+        default: false
     secrets:
       docker-password:
         description: Docker Hub access token.
@@ -48,6 +53,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3 https://github.com/actions/checkout/releases/tag/v6.0.3
         with:
@@ -101,6 +107,28 @@ jobs:
           subject-name: ghcr.io/${{ inputs.ghcr-image }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+      - name: Extract first tag
+        if: inputs.enable-trivy-scan
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          FIRST_TAG=$(echo "$META_TAGS" | head -n1 | rev | cut -d: -f1 | rev)
+          echo "FIRST_TAG=$FIRST_TAG" >> "$GITHUB_ENV"
+      - name: Run Trivy vulnerability scanner
+        if: inputs.enable-trivy-scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0
+        with:
+          scan-type: 'image'
+          scan-ref: 'ghcr.io/${{ inputs.ghcr-image }}:${{ env.FIRST_TAG }}'
+          format: 'sarif'
+          output: 'trivy-results-${{ env.FIRST_TAG }}.sarif'
+          ignore-unfixed: true
+          severity: 'HIGH,CRITICAL'
+      - name: Upload Trivy scan results to GitHub Security tab
+        if: always() && inputs.enable-trivy-scan
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.36.2
+        with:
+          sarif_file: 'trivy-results-${{ env.FIRST_TAG }}.sarif'
       - name: Update Docker Hub description
         if: inputs.description != ''
         uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5 https://github.com/peter-evans/dockerhub-description/releases/tag/v5
@@ -118,7 +146,7 @@ jobs:
       contents: write
     needs: [build-and-push-image]
     steps:
-      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> $GITHUB_ENV"
+      - run: "echo \"RELEASE_TAG=${GITHUB_REF#refs/tags/}\" >> \"$GITHUB_ENV\""
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 https://github.com/actions/github-script/releases/tag/v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
