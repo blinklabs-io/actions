@@ -364,6 +364,9 @@ repositories:
         permissions:
           contents: write
           packages: write
+          id-token: write
+          attestations: write
+          security-events: write
         secrets:
           docker-password: DOCKER_PASSWORD
         params:
@@ -645,6 +648,9 @@ repositories:
         permissions:
           contents: write
           packages: write
+          id-token: write
+          attestations: write
+          security-events: write
         secrets:
           docker-password: DOCKER_PASSWORD
         params:
@@ -714,6 +720,7 @@ repositories:
           packages: write
           id-token: write
           attestations: write
+          security-events: write
         secrets:
           docker-password: DOCKER_PASSWORD
         params:
@@ -787,6 +794,8 @@ repositories:
         permissions:
           contents: write
           packages: write
+          id-token: write
+          attestations: write
           security-events: write
         secrets:
           docker-password: DOCKER_PASSWORD
