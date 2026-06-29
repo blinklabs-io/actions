@@ -495,8 +495,8 @@ func TestWorkflowTemplate_MultilineBuildArgs(t *testing.T) {
 		TriggersYAML:     triggersYAML,
 		Secrets:          map[string]string{"docker-password": "DOCKER_PASSWORD"},
 		Params: map[string]string{
-			"docker-image": "blinklabs/minio",
-			"ghcr-image":   "blinklabs-io/minio",
+			"docker-image": "blinklabs/example",
+			"ghcr-image":   "blinklabs-io/example",
 			"build-args":   "VERSION=${{ github.ref_name }}\nCOMMIT_HASH=${{ github.sha }}",
 		},
 	}
