@@ -31,6 +31,10 @@ on:
         description: Docker Hub access token.
         required: true
 
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-amd64:
     runs-on: ubuntu-latest
@@ -240,6 +244,8 @@ jobs:
           tags: |
             # Only version, no revision
             type=match,pattern=v(.*)-(.*),group=1
+            # Plain semver tag (no revision suffix, e.g. v1.2.3)
+            type=semver,pattern={{version}}
 
       - id: meta-ghcr
         name: Metadata - GHCR
@@ -268,6 +274,8 @@ jobs:
           tags: |
             # Only version, no revision
             type=match,pattern=v(.*)-(.*),group=1
+            # Plain semver tag (no revision suffix, e.g. v1.2.3)
+            type=semver,pattern={{version}}
 
       # Create and push manifests to GHCR
 
