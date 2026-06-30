@@ -427,6 +427,8 @@ func TestWorkflowTemplate_OpenvpnPublish(t *testing.T) {
 		Permissions: map[string]string{
 			"contents":        "write",
 			"packages":        "write",
+			"id-token":        "write",
+			"attestations":    "write",
 			"security-events": "write",
 		},
 		Secrets: map[string]string{
@@ -454,6 +456,8 @@ func TestWorkflowTemplate_OpenvpnPublish(t *testing.T) {
 		{"cron value", "0 0 * * 1"},
 		{"push trigger", "push:"},
 		{"security-events permission", "security-events: write"},
+		{"id-token permission", "id-token: write"},
+		{"attestations permission", "attestations: write"},
 		{"docker-image param", "docker-image: blinklabs/openvpn"},
 		{"ghcr-image param", "ghcr-image: blinklabs-io/openvpn"},
 		{"description param", "description: Simple OpenVPN image"},
