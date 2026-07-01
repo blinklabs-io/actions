@@ -996,7 +996,7 @@ repositories:
               - 'config/**'
               - .github/workflows/ci-docker.yml
         params:
-          image-name: "blinklabs-io/cardano-wallet"
+          image-name: "blinklabs/cardano-wallet"
 
       - destination_file: publish.yml
         workflow_name: "publish"
@@ -1031,7 +1031,9 @@ repositories:
         triggers:
           issues:
             types: [closed]
-          workflow_dispatch:
+        permissions:
+          contents: read
+          issues: read
         secrets:
           project_pat: ORG_PROJECT_PAT
         params:
