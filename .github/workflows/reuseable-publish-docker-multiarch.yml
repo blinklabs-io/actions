@@ -26,6 +26,13 @@ on:
         required: false
         type: string
         default: "./README.md"
+      build-target:
+        description: >
+          Dockerfile build target (stage name) passed as --target to both arch
+          build jobs. Leave empty to build the default (last) stage.
+        required: false
+        type: string
+        default: ""
       prerelease-pattern:
         description: >
           Substring that, when present in the tag name, marks it as a pre-release.
@@ -102,6 +109,7 @@ jobs:
         with:
           context: .
           push: true
+          target: ${{ inputs.build-target }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/tmp/.buildx-cache
@@ -181,6 +189,7 @@ jobs:
         with:
           context: .
           push: true
+          target: ${{ inputs.build-target }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/tmp/.buildx-cache

@@ -941,6 +941,7 @@ repositories:
           docker-image: "blinklabs/cardano-node"
           ghcr-image: "blinklabs-io/cardano-node"
           description: "Cardano Node built from source on Debian"
+          build-target: "cardano-node"
           prerelease-pattern: "-pre-"
 
       - destination_file: test-issue-on-close.yml
