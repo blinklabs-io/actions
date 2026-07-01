@@ -290,6 +290,71 @@ func TestRenderTriggers_Default(t *testing.T) {
 	}
 }
 
+func TestRenderMatrix_Empty(t *testing.T) {
+	got, err := renderMatrix(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("empty matrix should render empty string, got %q", got)
+	}
+}
+
+func TestWorkflowTemplate_Matrix(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"pull_request": map[string]interface{}{
+			"branches": []interface{}{"main", "release/**"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+	matrixYAML, err := renderMatrix(map[string]interface{}{
+		"image": []interface{}{"cardano-node", "cardano-tracer", "cardano-submit-api"},
+	})
+	if err != nil {
+		t.Fatalf("renderMatrix error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "Docker CI",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main",
+		TriggersYAML:     triggersYAML,
+		MatrixYAML:       matrixYAML,
+		Params: map[string]string{
+			"image-name":   "blinklabs-io/${{ matrix.image }}",
+			"build-target": "${{ matrix.image }}",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []string{
+		"strategy:",
+		"matrix:",
+		"image:",
+		"- cardano-node",
+		"- cardano-tracer",
+		"- cardano-submit-api",
+		"image-name: blinklabs-io/${{ matrix.image }}",
+		"build-target: ${{ matrix.image }}",
+	}
+	for _, check := range checks {
+		if !strings.Contains(out, check) {
+			t.Fatalf("rendered workflow missing %q:\n%s", check, out)
+		}
+	}
+}
+
 func TestRenderTriggers_PullRequestPush(t *testing.T) {
 	triggers := map[string]interface{}{
 		"pull_request": nil,

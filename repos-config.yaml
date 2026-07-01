@@ -921,9 +921,11 @@ repositories:
               - 'bin/**'
               - 'config/**'
               - .github/workflows/ci-docker.yml
+        matrix:
+          image: [cardano-node, cardano-tracer, cardano-submit-api]
         params:
-          image-name: "blinklabs-io/cardano-node"
-          build-target: "cardano-node"
+          image-name: "blinklabs-io/${{ matrix.image }}"
+          build-target: "${{ matrix.image }}"
 
       - destination_file: publish.yml
         workflow_name: "publish"
