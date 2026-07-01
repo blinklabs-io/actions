@@ -62,6 +62,7 @@ type WorkflowConfig struct {
 	WorkflowName     string                 `yaml:"workflow_name"`
 	ReusableWorkflow string                 `yaml:"reusable_workflow"`
 	Triggers         map[string]interface{} `yaml:"triggers"`
+	Matrix           map[string]interface{} `yaml:"matrix"`
 	Permissions      map[string]string      `yaml:"permissions"`
 	Params           map[string]string      `yaml:"params"`
 	Secrets          map[string]string      `yaml:"secrets"`
@@ -74,6 +75,7 @@ type templateData struct {
 	Params           map[string]string
 	Secrets          map[string]string
 	Permissions      map[string]string
+	MatrixYAML       string
 	TriggersYAML     string
 }
 
@@ -329,6 +331,27 @@ func renderTriggers(triggers map[string]interface{}) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
+// renderMatrix marshals an optional strategy.matrix block for wrapper jobs.
+// When matrix is nil/empty, the template omits the strategy block entirely.
+func renderMatrix(matrix map[string]interface{}) (string, error) {
+	if len(matrix) == 0 {
+		return "", nil
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(matrix); err != nil {
+		return "", err
+	}
+	_ = enc.Close()
+	raw := strings.TrimRight(buf.String(), "\n")
+	lines := strings.Split(raw, "\n")
+	for i, l := range lines {
+		lines[i] = "        " + l
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
 // statusChecksEqual reports whether two context slices contain the same set of
 // check names, independent of order (GitHub may return them in any sequence).
 func statusChecksEqual(a, b []string) bool {
@@ -426,12 +449,18 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 			fmt.Printf("  renderTriggers error for %s: %v\n", wf.DestinationFile, tErr)
 			continue
 		}
+		matrixYAML, mErr := renderMatrix(wf.Matrix)
+		if mErr != nil {
+			fmt.Printf("  renderMatrix error for %s: %v\n", wf.DestinationFile, mErr)
+			continue
+		}
 		data := templateData{
 			WorkflowName:     wf.WorkflowName,
 			ReusableWorkflow: wf.ReusableWorkflow,
 			Params:           wf.Params,
 			Secrets:          wf.Secrets,
 			Permissions:      wf.Permissions,
+			MatrixYAML:       matrixYAML,
 			TriggersYAML:     triggersYAML,
 		}
 		var buf bytes.Buffer

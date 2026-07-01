@@ -12,6 +12,11 @@ permissions:
 
 jobs:
   orchestrate:
+[[- if .MatrixYAML ]]
+    strategy:
+      matrix:
+[[ .MatrixYAML ]]
+[[- end ]]
     uses: [[ .ReusableWorkflow ]]
 [[- if .Secrets ]]
     secrets:
