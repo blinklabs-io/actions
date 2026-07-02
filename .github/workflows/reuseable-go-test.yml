@@ -33,4 +33,12 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
       - name: go-test
-        run: go test ${{ inputs.test-flags }} ./...
+        env:
+          TEST_FLAGS: ${{ inputs.test-flags }}
+        run: |
+          if [ -n "$TEST_FLAGS" ]; then
+            read -r -a _flags <<< "$TEST_FLAGS"
+            go test "${_flags[@]}" ./...
+          else
+            go test ./...
+          fi

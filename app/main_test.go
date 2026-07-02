@@ -702,8 +702,8 @@ func TestWorkflowTemplate_NilawayOptionalIncludePkgs(t *testing.T) {
 }
 
 // TestWorkflowTemplate_DockerWireguardPublish validates the full publish wrapper
-// for docker-wireguard: binary-compress (plain string), binary-os-matrix
-// (single-quoted JSON array), and multiline build-args (block scalar).
+// for docker-wireguard: binary-compress (rendered as unquoted boolean true),
+// binary-os-matrix (single-quoted JSON array), and multiline build-args (block scalar).
 func TestWorkflowTemplate_DockerWireguardPublish(t *testing.T) {
 	tmpl, err := newWorkflowTemplate(t)
 	if err != nil {
