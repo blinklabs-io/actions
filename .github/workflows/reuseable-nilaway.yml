@@ -4,9 +4,10 @@ on:
   workflow_call:
     inputs:
       include-pkgs:
-        description: Package prefix passed to -include-pkgs (e.g. github.com/blinklabs-io/tx-submit-api).
-        required: true
+        description: Package prefix passed to -include-pkgs (e.g. github.com/blinklabs-io/tx-submit-api). Leave empty to run nilaway against all packages.
+        required: false
         type: string
+        default: ""
       go-version:
         description: Go toolchain version to use.
         required: false
@@ -33,4 +34,9 @@ jobs:
       - name: run nilaway
         env:
           INCLUDE_PKGS: ${{ inputs.include-pkgs }}
-        run: nilaway -include-pkgs "$INCLUDE_PKGS" ./...
+        run: |
+          if [ -n "$INCLUDE_PKGS" ]; then
+            nilaway -include-pkgs "$INCLUDE_PKGS" ./...
+          else
+            nilaway ./...
+          fi
