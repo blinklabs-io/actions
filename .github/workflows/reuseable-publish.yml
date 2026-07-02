@@ -27,6 +27,18 @@ on:
         required: false
         type: string
         default: '["linux","darwin","freebsd","windows"]'
+      binary-compress:
+        description: >
+          When set to "true", the release binary is packed into a .tar.gz archive
+          before uploading. Defaults to empty (upload binary directly).
+        required: false
+        type: string
+        default: ""
+      build-args:
+        description: Build ARG values to pass to Docker build (multi-line KEY=VALUE pairs).
+        required: false
+        type: string
+        default: ""
     secrets:
       docker-password:
         description: Docker Hub access token. Required when docker-image is set.
@@ -96,11 +108,19 @@ jobs:
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          _filename=${{ inputs.binary-name }}-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}
+          _binary_src=${{ inputs.binary-name }}
+          _base=${{ inputs.binary-name }}-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}
           if [[ ${{ matrix.os }} == windows ]]; then
-            _filename=${_filename}.exe
+            _binary_src=${_binary_src}.exe
+            _base=${_base}.exe
           fi
-          cp ${{ inputs.binary-name }} ${_filename}
+          if [[ "${{ inputs.binary-compress }}" == "true" ]]; then
+            _filename=${_base}.tar.gz
+            tar czf ${_filename} ${_binary_src}
+          else
+            _filename=${_base}
+            cp ${_binary_src} ${_filename}
+          fi
           curl --fail \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/octet-stream" \
@@ -166,6 +186,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ inputs.build-args }}
       - name: Attest Docker Hub image
         if: inputs.docker-image != ''
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0 https://github.com/actions/attest/releases/tag/v4.1.0
