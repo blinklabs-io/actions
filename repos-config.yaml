@@ -1292,6 +1292,9 @@ repositories:
           issues:
             types: [closed]
           workflow_dispatch:
+        permissions:
+          contents: read
+          issues: read
         secrets:
           project_pat: ORG_PROJECT_PAT
         params:

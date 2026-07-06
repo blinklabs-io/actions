@@ -813,7 +813,7 @@ func TestWorkflowTemplate_DockerHydraNodeCI(t *testing.T) {
 
 	data := templateData{
 		WorkflowName:     "Docker CI",
-		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@feat-use-actions-reuseable-workflow",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main",
 		TriggersYAML:     triggersYAML,
 		Params: map[string]string{
 			"image-name": "blinklabs-io/hydra-node",
@@ -829,7 +829,7 @@ func TestWorkflowTemplate_DockerHydraNodeCI(t *testing.T) {
 	checks := []struct{ desc, contain string }{
 		{"governance header", "# Generated automatically by org-governance-bot"},
 		{"workflow name", `name: "Docker CI"`},
-		{"reusable ref", "reuseable-ci-docker-multiarch.yml@feat-use-actions-reuseable-workflow"},
+		{"reusable ref", "reuseable-ci-docker-multiarch.yml@main"},
 		{"pull_request trigger", "pull_request:"},
 		{"branches filter", "branches:"},
 		{"main branch", "- main"},
@@ -872,7 +872,7 @@ func TestWorkflowTemplate_DockerHydraNodePublish(t *testing.T) {
 
 	data := templateData{
 		WorkflowName:     "publish",
-		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@feat-use-actions-reuseable-workflow",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main",
 		TriggersYAML:     triggersYAML,
 		Permissions: map[string]string{
 			"contents": "write",
@@ -896,9 +896,12 @@ func TestWorkflowTemplate_DockerHydraNodePublish(t *testing.T) {
 	checks := []struct{ desc, contain string }{
 		{"governance header", "# Generated automatically by org-governance-bot"},
 		{"workflow name", `name: "publish"`},
-		{"reusable ref", "reuseable-publish-docker-multiarch.yml@feat-use-actions-reuseable-workflow"},
+		{"reusable ref", "reuseable-publish-docker-multiarch.yml@main"},
 		{"push trigger", "push:"},
+		{"branches filter", "branches:"},
+		{"main branch", "- main"},
 		{"tags filter", "tags:"},
+		{"tags value", "- v*.*.*"},
 		{"docker-password secret", "docker-password: ${{ secrets.DOCKER_PASSWORD }}"},
 		{"contents permission", "contents: write"},
 		{"packages permission", "packages: write"},
