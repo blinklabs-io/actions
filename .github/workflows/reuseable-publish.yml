@@ -27,6 +27,16 @@ on:
         required: false
         type: string
         default: '["linux","darwin","freebsd","windows"]'
+      binary-compress:
+        description: When true, the release binary is packed into a .tar.gz archive before uploading.
+        required: false
+        type: boolean
+        default: false
+      build-args:
+        description: Build ARG values to pass to Docker build (multi-line KEY=VALUE pairs).
+        required: false
+        type: string
+        default: ""
     secrets:
       docker-password:
         description: Docker Hub access token. Required when docker-image is set.
@@ -92,24 +102,42 @@ jobs:
         with:
           go-version: ${{ inputs.go-version }}
       - name: Build binary
-        run: GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} make build
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+        run: GOOS="$MATRIX_OS" GOARCH="$MATRIX_ARCH" make build
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          BINARY_NAME: ${{ inputs.binary-name }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          BINARY_COMPRESS: ${{ inputs.binary-compress }}
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         run: |
-          _filename=${{ inputs.binary-name }}-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}
-          if [[ ${{ matrix.os }} == windows ]]; then
-            _filename=${_filename}.exe
+          _binary_src="$BINARY_NAME"
+          _base="${BINARY_NAME}-${RELEASE_TAG}-${MATRIX_OS}-${MATRIX_ARCH}"
+          if [[ "$MATRIX_OS" == "windows" ]]; then
+            _binary_src="${_binary_src}.exe"
+            _base="${_base}.exe"
           fi
-          cp ${{ inputs.binary-name }} ${_filename}
+          if [[ "$BINARY_COMPRESS" == "true" ]]; then
+            _filename="${_base}.tar.gz"
+            tar czf "${_filename}" "${_binary_src}"
+          else
+            _filename="${_base}"
+            cp "${_binary_src}" "${_filename}"
+          fi
+          echo "RELEASE_ASSET_FILENAME=${_filename}" >> "$GITHUB_ENV"
           curl --fail \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Authorization: token $GITHUB_TOKEN" \
             -H "Content-Type: application/octet-stream" \
-            --data-binary @${_filename} \
-            https://uploads.github.com/repos/${{ github.repository }}/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}
+            --data-binary @"${_filename}" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${_filename}"
       - name: Attest binary
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0 https://github.com/actions/attest/releases/tag/v4.1.0
         with:
-          subject-path: '${{ inputs.binary-name }}'
+          subject-path: '${{ env.RELEASE_ASSET_FILENAME || inputs.binary-name }}'
 
   build-images:
     runs-on: ubuntu-latest
@@ -166,6 +194,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ inputs.build-args }}
       - name: Attest Docker Hub image
         if: inputs.docker-image != ''
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0 https://github.com/actions/attest/releases/tag/v4.1.0

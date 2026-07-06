@@ -592,3 +592,193 @@ func TestWorkflowTemplate_MultilineBuildArgs(t *testing.T) {
 		t.Errorf("multiline build-args must not be single-quoted:\n%s", out)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// docker-wireguard: test-flags, optional include-pkgs, binary-compress
+// ---------------------------------------------------------------------------
+
+// TestWorkflowTemplate_GoTestWithFlags verifies that test-flags is rendered
+// as a plain unquoted string (not a JSON array) in the with: block, and that
+// the empty-string default produces no with: key at all (caller omits it).
+func TestWorkflowTemplate_GoTestWithFlags(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"pull_request": nil,
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	// With test-flags: -race
+	data := templateData{
+		WorkflowName:     "go-test",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@feat/docker-wireguard-governance",
+		TriggersYAML:     triggersYAML,
+		Params: map[string]string{
+			"go-versions": `["1.25.x"]`,
+			"test-flags":  "-race",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "go-test"`},
+		{"reusable ref", "reuseable-go-test.yml@feat/docker-wireguard-governance"},
+		{"go-versions single-quoted array", `go-versions: '["1.25.x"]'`},
+		{"test-flags unquoted", "test-flags: -race"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+	// test-flags must NOT be single-quoted (it's a plain string, not a JSON array)
+	if strings.Contains(out, "test-flags: '-race'") {
+		t.Errorf("test-flags must not be single-quoted:\n%s", out)
+	}
+}
+
+// TestWorkflowTemplate_NilawayOptionalIncludePkgs verifies that include-pkgs
+// renders as a plain unquoted string, matching the docker-wireguard governance
+// entry (omitting it for a nil-params caller is not exercised here — that is
+// covered by the existing TestWorkflowConfig_EmptyParams test).
+func TestWorkflowTemplate_NilawayOptionalIncludePkgs(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"pull_request": nil,
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "nilaway",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@feat/docker-wireguard-governance",
+		TriggersYAML:     triggersYAML,
+		Params: map[string]string{
+			"include-pkgs": "github.com/blinklabs-io/docker-wireguard",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "nilaway"`},
+		{"reusable ref", "reuseable-nilaway.yml@feat/docker-wireguard-governance"},
+		{"include-pkgs unquoted", "include-pkgs: github.com/blinklabs-io/docker-wireguard"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+}
+
+// TestWorkflowTemplate_DockerWireguardPublish validates the full publish wrapper
+// for docker-wireguard: binary-compress (rendered as unquoted boolean true),
+// binary-os-matrix (single-quoted JSON array), and multiline build-args (block scalar).
+func TestWorkflowTemplate_DockerWireguardPublish(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*.*.*"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "publish",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@feat/docker-wireguard-governance",
+		TriggersYAML:     triggersYAML,
+		Permissions: map[string]string{
+			"actions":      "write",
+			"attestations": "write",
+			"checks":       "write",
+			"contents":     "write",
+			"id-token":     "write",
+			"packages":     "write",
+			"statuses":     "write",
+		},
+		Secrets: map[string]string{"docker-password": "DOCKER_PASSWORD"},
+		Params: map[string]string{
+			"binary-name":      "wg-peer-api",
+			"binary-compress":  "true",
+			"binary-os-matrix": `["linux"]`,
+			"docker-image":     "blinklabs/wireguard",
+			"description":      "WireGuard VPN container with JWT-authenticated peer API",
+			"go-version":       "1.25.x",
+			"build-args":       "VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}\nCOMMIT_HASH=${{ github.sha }}",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "publish"`},
+		{"reusable ref", "reuseable-publish.yml@feat/docker-wireguard-governance"},
+		{"docker-password secret", "docker-password: ${{ secrets.DOCKER_PASSWORD }}"},
+		{"permissions actions", "actions: write"},
+		{"permissions id-token", "id-token: write"},
+		{"binary-name unquoted", "binary-name: wg-peer-api"},
+		{"binary-compress unquoted true", "binary-compress: true"},
+		{"binary-os-matrix single-quoted", `binary-os-matrix: '["linux"]'`},
+		{"docker-image unquoted", "docker-image: blinklabs/wireguard"},
+		{"go-version unquoted", "go-version: 1.25.x"},
+		{"description unquoted", "description: WireGuard VPN container with JWT-authenticated peer API"},
+		{"build-args block scalar", "build-args: |-"},
+		{"build-args VERSION line indented", "        VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}"},
+		{"build-args COMMIT_HASH line indented", "        COMMIT_HASH=${{ github.sha }}"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+	// binary-compress must not be single-quoted
+	if strings.Contains(out, "binary-compress: 'true'") {
+		t.Errorf("binary-compress must not be single-quoted:\n%s", out)
+	}
+	// binary-os-matrix must be single-quoted (it starts with "[")
+	if !strings.Contains(out, `binary-os-matrix: '["linux"]'`) {
+		t.Errorf("binary-os-matrix must be single-quoted JSON array:\n%s", out)
+	}
+}

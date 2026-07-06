@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: '["1.25.x","1.26.x"]'
+      test-flags:
+        description: Extra flags to pass to `go test` (e.g. "-race").
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -28,4 +33,12 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
       - name: go-test
-        run: go test ./...
+        env:
+          TEST_FLAGS: ${{ inputs.test-flags }}
+        run: |
+          if [ -n "$TEST_FLAGS" ]; then
+            read -r -a _flags <<< "$TEST_FLAGS"
+            go test "${_flags[@]}" ./...
+          else
+            go test ./...
+          fi
