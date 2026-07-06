@@ -782,3 +782,138 @@ func TestWorkflowTemplate_DockerWireguardPublish(t *testing.T) {
 		t.Errorf("binary-os-matrix must be single-quoted JSON array:\n%s", out)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// docker-hydra-node: multiarch CI + multiarch publish with prerelease-pattern
+// ---------------------------------------------------------------------------
+
+// TestWorkflowTemplate_DockerHydraNodeCI validates the ci-docker multiarch
+// wrapper for docker-hydra-node: paths filter, image-name param, and the
+// reuseable-ci-docker-multiarch.yml reusable ref.
+func TestWorkflowTemplate_DockerHydraNodeCI(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"pull_request": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"paths": []interface{}{
+				"Dockerfile",
+				"bin/**",
+				"config/**",
+				".github/workflows/ci-docker.yml",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "Docker CI",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@feat-use-actions-reuseable-workflow",
+		TriggersYAML:     triggersYAML,
+		Params: map[string]string{
+			"image-name": "blinklabs-io/hydra-node",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "Docker CI"`},
+		{"reusable ref", "reuseable-ci-docker-multiarch.yml@feat-use-actions-reuseable-workflow"},
+		{"pull_request trigger", "pull_request:"},
+		{"branches filter", "branches:"},
+		{"main branch", "- main"},
+		{"paths filter", "paths:"},
+		{"Dockerfile path", "- Dockerfile"},
+		{"bin path", "- bin/**"},
+		{"config path", "- config/**"},
+		{"ci-docker path", "- .github/workflows/ci-docker.yml"},
+		{"image-name param", "image-name: blinklabs-io/hydra-node"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+	// image-name must not be single-quoted (plain string, not JSON array)
+	if strings.Contains(out, "image-name: 'blinklabs-io/hydra-node'") {
+		t.Errorf("image-name must not be single-quoted:\n%s", out)
+	}
+}
+
+// TestWorkflowTemplate_DockerHydraNodePublish validates the publish-docker-multiarch
+// wrapper for docker-hydra-node: docker-image, ghcr-image, description, and
+// prerelease-pattern params rendered as plain unquoted strings.
+func TestWorkflowTemplate_DockerHydraNodePublish(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*.*.*"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "publish",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@feat-use-actions-reuseable-workflow",
+		TriggersYAML:     triggersYAML,
+		Permissions: map[string]string{
+			"contents": "write",
+			"packages": "write",
+		},
+		Secrets: map[string]string{"docker-password": "DOCKER_PASSWORD"},
+		Params: map[string]string{
+			"docker-image":       "blinklabs/hydra-node",
+			"ghcr-image":         "blinklabs-io/hydra-node",
+			"description":        "Hydra Node built from source on Debian",
+			"prerelease-pattern": "-pre-",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "publish"`},
+		{"reusable ref", "reuseable-publish-docker-multiarch.yml@feat-use-actions-reuseable-workflow"},
+		{"push trigger", "push:"},
+		{"tags filter", "tags:"},
+		{"docker-password secret", "docker-password: ${{ secrets.DOCKER_PASSWORD }}"},
+		{"contents permission", "contents: write"},
+		{"packages permission", "packages: write"},
+		{"docker-image param", "docker-image: blinklabs/hydra-node"},
+		{"ghcr-image param", "ghcr-image: blinklabs-io/hydra-node"},
+		{"description param", "description: Hydra Node built from source on Debian"},
+		{"prerelease-pattern param", "prerelease-pattern: -pre-"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+	// prerelease-pattern must not be single-quoted (plain string, not JSON array)
+	if strings.Contains(out, "prerelease-pattern: '-pre-'") {
+		t.Errorf("prerelease-pattern must not be single-quoted:\n%s", out)
+	}
+}
