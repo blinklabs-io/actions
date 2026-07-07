@@ -1375,3 +1375,78 @@ func TestWorkflowTemplate_DockerHaskellPublish(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkflowTemplate_DockerCardanoConfigsPublish validates the publish wrapper
+// for docker-cardano-configs: the trigger accepts both semver-style release
+// tags and date/revision release tags such as v20260707-1.
+func TestWorkflowTemplate_DockerCardanoConfigsPublish(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags": []interface{}{
+				"v*.*.*",
+				"v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]",
+				"v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9]",
+				"v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9]",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "publish",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main",
+		TriggersYAML:     triggersYAML,
+		Permissions: map[string]string{
+			"contents":        "write",
+			"packages":        "write",
+			"id-token":        "write",
+			"attestations":    "write",
+			"security-events": "write",
+		},
+		Secrets: map[string]string{"docker-password": "DOCKER_PASSWORD"},
+		Params: map[string]string{
+			"docker-image": "blinklabs/cardano-configs",
+			"ghcr-image":   "blinklabs-io/cardano-configs",
+			"description":  "Configuration files for named Cardano blockchain networks",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "publish"`},
+		{"reusable ref", "reuseable-publish-docker.yml@main"},
+		{"push trigger", "push:"},
+		{"branches filter", "branches:"},
+		{"main branch", "- main"},
+		{"tags filter", "tags:"},
+		{"semver-style tag glob", "- v*.*.*"},
+		{"date revision tag glob one digit", "- v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]"},
+		{"date revision tag glob two digits", "- v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9]"},
+		{"date revision tag glob three digits", "- v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9]"},
+		{"docker-password secret", "docker-password: ${{ secrets.DOCKER_PASSWORD }}"},
+		{"contents permission", "contents: write"},
+		{"packages permission", "packages: write"},
+		{"docker-image param", "docker-image: blinklabs/cardano-configs"},
+		{"ghcr-image param", "ghcr-image: blinklabs-io/cardano-configs"},
+		{"description param", "description: Configuration files for named Cardano blockchain networks"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+}
