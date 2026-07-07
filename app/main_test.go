@@ -1264,6 +1264,193 @@ func TestWorkflowTemplate_DockerMithrilClientPublish(t *testing.T) {
 	}
 }
 
+// TestWorkflowTemplate_DockerHaskellCI validates the CI wrapper for
+// docker-haskell: uses reuseable-ci-docker-multiarch.yml with a
+// pull_request trigger scoped to Dockerfile/ci-docker.yml paths.
+func TestWorkflowTemplate_DockerHaskellCI(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"pull_request": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"paths":    []interface{}{"Dockerfile", ".github/workflows/ci-docker.yml"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "Docker CI",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main",
+		TriggersYAML:     triggersYAML,
+		Params: map[string]string{
+			"image-name": "blinklabs-io/haskell",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "Docker CI"`},
+		{"reusable ref", "reuseable-ci-docker-multiarch.yml@main"},
+		{"pull_request trigger", "pull_request:"},
+		{"branch main", "- main"},
+		{"path Dockerfile", "- Dockerfile"},
+		{"path ci-docker.yml", "- .github/workflows/ci-docker.yml"},
+		{"image-name unquoted", "image-name: blinklabs-io/haskell"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+}
+
+// TestWorkflowTemplate_DockerHaskellPublish validates the publish wrapper for
+// docker-haskell: uses reuseable-publish-docker-multiarch.yml with push
+// triggers (no schedule), contents/packages write permissions, and the
+// Docker Hub + GHCR image names.
+func TestWorkflowTemplate_DockerHaskellPublish(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*.*.*"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "publish",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main",
+		TriggersYAML:     triggersYAML,
+		Permissions: map[string]string{
+			"contents": "write",
+			"packages": "write",
+		},
+		Secrets: map[string]string{"docker-password": "DOCKER_PASSWORD"},
+		Params: map[string]string{
+			"docker-image": "blinklabs/haskell",
+			"ghcr-image":   "blinklabs-io/haskell",
+			"description":  "GHC and Cabal built on Debian for Cardano",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "publish"`},
+		{"reusable ref", "reuseable-publish-docker-multiarch.yml@main"},
+		{"docker-password secret", "docker-password: ${{ secrets.DOCKER_PASSWORD }}"},
+		{"permissions contents", "contents: write"},
+		{"permissions packages", "packages: write"},
+		{"push trigger", "push:"},
+		{"docker-image unquoted", "docker-image: blinklabs/haskell"},
+		{"ghcr-image unquoted", "ghcr-image: blinklabs-io/haskell"},
+		{"description unquoted", "description: GHC and Cabal built on Debian for Cardano"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+}
+
+// TestWorkflowTemplate_DockerCardanoConfigsPublish validates the publish wrapper
+// for docker-cardano-configs: the trigger accepts both semver-style release
+// tags and date/revision release tags such as v20260707-1.
+func TestWorkflowTemplate_DockerCardanoConfigsPublish(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags": []interface{}{
+				"v*.*.*",
+				"v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]",
+				"v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9]",
+				"v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9]",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "publish",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main",
+		TriggersYAML:     triggersYAML,
+		Permissions: map[string]string{
+			"contents":        "write",
+			"packages":        "write",
+			"id-token":        "write",
+			"attestations":    "write",
+			"security-events": "write",
+		},
+		Secrets: map[string]string{"docker-password": "DOCKER_PASSWORD"},
+		Params: map[string]string{
+			"docker-image": "blinklabs/cardano-configs",
+			"ghcr-image":   "blinklabs-io/cardano-configs",
+			"description":  "Configuration files for named Cardano blockchain networks",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "publish"`},
+		{"reusable ref", "reuseable-publish-docker.yml@main"},
+		{"push trigger", "push:"},
+		{"branches filter", "branches:"},
+		{"main branch", "- main"},
+		{"tags filter", "tags:"},
+		{"semver-style tag glob", "- v*.*.*"},
+		{"date revision tag glob one digit", "- v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]"},
+		{"date revision tag glob two digits", "- v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9]"},
+		{"date revision tag glob three digits", "- v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9]"},
+		{"docker-password secret", "docker-password: ${{ secrets.DOCKER_PASSWORD }}"},
+		{"contents permission", "contents: write"},
+		{"packages permission", "packages: write"},
+		{"docker-image param", "docker-image: blinklabs/cardano-configs"},
+		{"ghcr-image param", "ghcr-image: blinklabs-io/cardano-configs"},
+		{"description param", "description: Configuration files for named Cardano blockchain networks"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+}
+
 // TestWorkflowTemplate_DockerCardanoDBSyncCI validates the CI wrapper for
 // docker-cardano-db-sync: uses reuseable-ci-docker-multiarch.yml with a
 // pull_request trigger scoped to Dockerfile/bin/config/ci-docker.yml paths.
