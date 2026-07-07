@@ -1263,3 +1263,119 @@ func TestWorkflowTemplate_DockerMithrilClientPublish(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkflowTemplate_DockerCardanoDBSyncCI validates the CI wrapper for
+// docker-cardano-db-sync: uses reuseable-ci-docker-multiarch.yml with a
+// pull_request trigger scoped to Dockerfile/bin/config/ci-docker.yml paths.
+func TestWorkflowTemplate_DockerCardanoDBSyncCI(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"pull_request": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"paths":    []interface{}{"Dockerfile", "bin/**", "config/**", ".github/workflows/ci-docker.yml"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "Docker CI",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main",
+		TriggersYAML:     triggersYAML,
+		Params: map[string]string{
+			"image-name": "blinklabs-io/cardano-db-sync",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "Docker CI"`},
+		{"reusable ref", "reuseable-ci-docker-multiarch.yml@main"},
+		{"pull_request trigger", "pull_request:"},
+		{"branch main", "- main"},
+		{"path Dockerfile", "- Dockerfile"},
+		{"path bin", "- bin/**"},
+		{"path config", "- config/**"},
+		{"path ci-docker.yml", "- .github/workflows/ci-docker.yml"},
+		{"image-name unquoted", "image-name: blinklabs-io/cardano-db-sync"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+}
+
+// TestWorkflowTemplate_DockerCardanoDBSyncPublish validates the publish wrapper
+// for docker-cardano-db-sync: uses reuseable-publish-docker-multiarch.yml with
+// push triggers, prerelease handling, contents/packages write permissions, and
+// the Docker Hub + GHCR image names.
+func TestWorkflowTemplate_DockerCardanoDBSyncPublish(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+
+	triggersYAML, err := renderTriggers(map[string]interface{}{
+		"push": map[string]interface{}{
+			"branches": []interface{}{"main"},
+			"tags":     []interface{}{"v*.*.*"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderTriggers error: %v", err)
+	}
+
+	data := templateData{
+		WorkflowName:     "publish",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main",
+		TriggersYAML:     triggersYAML,
+		Permissions: map[string]string{
+			"contents": "write",
+			"packages": "write",
+		},
+		Secrets: map[string]string{"docker-password": "DOCKER_PASSWORD"},
+		Params: map[string]string{
+			"docker-image":       "blinklabs/cardano-db-sync",
+			"ghcr-image":         "blinklabs-io/cardano-db-sync",
+			"description":        "Cardano DB-sync built from source on Debian",
+			"prerelease-pattern": "-pre-",
+		},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	out := rendered.String()
+
+	checks := []struct{ desc, contain string }{
+		{"governance header", "# Generated automatically by org-governance-bot"},
+		{"workflow name", `name: "publish"`},
+		{"reusable ref", "reuseable-publish-docker-multiarch.yml@main"},
+		{"docker-password secret", "docker-password: ${{ secrets.DOCKER_PASSWORD }}"},
+		{"permissions contents", "contents: write"},
+		{"permissions packages", "packages: write"},
+		{"push trigger", "push:"},
+		{"docker-image unquoted", "docker-image: blinklabs/cardano-db-sync"},
+		{"ghcr-image unquoted", "ghcr-image: blinklabs-io/cardano-db-sync"},
+		{"description unquoted", "description: Cardano DB-sync built from source on Debian"},
+		{"prerelease-pattern unquoted", "prerelease-pattern: -pre-"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(out, c.contain) {
+			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+}
