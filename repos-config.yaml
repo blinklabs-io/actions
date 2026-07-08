@@ -1047,10 +1047,6 @@ repositories:
           closed_at: "${{ github.event.issue.closed_at }}"
 
   - name: blinklabs-io/docker-cardano-db-sync
-    # image-name: blinklabs-io/cardano-db-sync
-    # docker-image: blinklabs/cardano-db-sync
-    # ghcr-image: blinklabs-io/cardano-db-sync
-    # description: "Cardano DB-sync built from source on Debian"
     settings:
       delete_branch_on_merge: true
     collaborators: []
@@ -1084,7 +1080,8 @@ repositories:
         triggers:
           push:
             branches: [main]
-            tags: ['v*.*.*']
+            # cardano-db-sync uses quadruple versioning (e.g. v13.7.1.0-1)
+            tags: ['v*.*.*.*']
         permissions:
           contents: write
           packages: write

@@ -1517,7 +1517,8 @@ func TestWorkflowTemplate_DockerCardanoDBSyncPublish(t *testing.T) {
 	triggersYAML, err := renderTriggers(map[string]interface{}{
 		"push": map[string]interface{}{
 			"branches": []interface{}{"main"},
-			"tags":     []interface{}{"v*.*.*"},
+			// cardano-db-sync uses quadruple versioning (e.g. v13.7.1.0-1)
+			"tags": []interface{}{"v*.*.*.*"},
 		},
 	})
 	if err != nil {
@@ -1555,6 +1556,7 @@ func TestWorkflowTemplate_DockerCardanoDBSyncPublish(t *testing.T) {
 		{"permissions contents", "contents: write"},
 		{"permissions packages", "packages: write"},
 		{"push trigger", "push:"},
+		{"quadruple-version tag glob", "- v*.*.*.*"},
 		{"docker-image unquoted", "docker-image: blinklabs/cardano-db-sync"},
 		{"ghcr-image unquoted", "ghcr-image: blinklabs-io/cardano-db-sync"},
 		{"description unquoted", "description: Cardano DB-sync built from source on Debian"},
