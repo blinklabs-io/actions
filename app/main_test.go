@@ -1658,6 +1658,7 @@ func TestWorkflowTemplate_DockerKupoPublish(t *testing.T) {
 		Params: map[string]string{
 			"docker-image":       "blinklabs/kupo",
 			"ghcr-image":         "blinklabs-io/kupo",
+			"description":        "Kupo built from source on Debian",
 			"build-target":       "kupo",
 			"prerelease-pattern": "-pre-",
 		},
@@ -1680,6 +1681,7 @@ func TestWorkflowTemplate_DockerKupoPublish(t *testing.T) {
 		{"triple-version tag glob", "- v*.*.*"},
 		{"docker-image unquoted", "docker-image: blinklabs/kupo"},
 		{"ghcr-image unquoted", "ghcr-image: blinklabs-io/kupo"},
+		{"description param", "description: Kupo built from source on Debian"},
 		{"build-target unquoted", "build-target: kupo"},
 		{"prerelease-pattern unquoted", "prerelease-pattern: -pre-"},
 	}

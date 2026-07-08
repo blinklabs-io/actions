@@ -1710,6 +1710,7 @@ repositories:
         params:
           docker-image: "blinklabs/kupo"
           ghcr-image: "blinklabs-io/kupo"
+          description: "Kupo built from source on Debian"
           build-target: "kupo"
           prerelease-pattern: "-pre-"
 
