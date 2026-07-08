@@ -1665,3 +1665,77 @@ repositories:
           project_url: "https://github.com/orgs/blinklabs-io/projects/11"
           closed_date_field: "Closed Date"
           closed_at: "${{ github.event.issue.closed_at }}"
+
+  - name: blinklabs-io/docker-kupo
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: ci-docker.yml
+        workflow_name: "Docker CI"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
+        triggers:
+          pull_request:
+            branches: [main, 'release/**']
+            paths:
+              - Dockerfile
+              - 'bin/**'
+              - 'config/**'
+              - .github/workflows/ci-docker.yml
+        params:
+          image-name: "blinklabs-io/kupo"
+          build-target: "kupo"
+
+      - destination_file: publish.yml
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
+        triggers:
+          push:
+            branches: [main]
+            tags: ['v*.*.*']
+        permissions:
+          contents: write
+          packages: write
+        secrets:
+          docker-password: DOCKER_PASSWORD
+        params:
+          docker-image: "blinklabs/kupo"
+          ghcr-image: "blinklabs-io/kupo"
+          build-target: "kupo"
+          prerelease-pattern: "-pre-"
+
+      - destination_file: test-issue-on-close.yml
+        workflow_name: "Test Issue Close Trigger"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
+        triggers:
+          issues:
+            types: [closed]
+        params:
+          issue_number: "${{ github.event.issue.number }}"
+          issue_title: "${{ github.event.issue.title }}"
+
+      - destination_file: update-issue-on-close.yml
+        workflow_name: "Set Project Closed Date"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
+        triggers:
+          issues:
+            types: [closed]
+          workflow_dispatch:
+        permissions:
+          contents: read
+          issues: read
+        secrets:
+          project_pat: ORG_PROJECT_PAT
+        params:
+          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
+          closed_date_field: "Closed Date"
+          closed_at: "${{ github.event.issue.closed_at }}"
