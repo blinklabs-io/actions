@@ -417,22 +417,14 @@ jobs:
             fi
           done
 
-      - name: Extract first GHCR tag
-        if: inputs.enable-trivy-scan
-        env:
-          GHCR_TAGS: ${{ steps.meta-ghcr.outputs.tags }}
-        run: |
-          FIRST_TAG=$(echo "$GHCR_TAGS" | head -n1 | rev | cut -d: -f1 | rev)
-          echo "FIRST_TAG=$FIRST_TAG" >> "$GITHUB_ENV"
-
       - name: Run Trivy vulnerability scanner
         if: inputs.enable-trivy-scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0
         with:
           scan-type: 'image'
-          scan-ref: 'ghcr.io/${{ inputs.ghcr-image }}:${{ env.FIRST_TAG }}'
+          scan-ref: 'ghcr.io/${{ inputs.ghcr-image }}:${{ steps.meta-ghcr.outputs.version }}'
           format: 'sarif'
-          output: 'trivy-results-${{ env.FIRST_TAG }}.sarif'
+          output: 'trivy-results.sarif'
           ignore-unfixed: true
           severity: 'HIGH,CRITICAL'
 
@@ -440,7 +432,7 @@ jobs:
         if: always() && inputs.enable-trivy-scan
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.36.2
         with:
-          sarif_file: 'trivy-results-${{ env.FIRST_TAG }}.sarif'
+          sarif_file: 'trivy-results.sarif'
 
       - name: Update Docker Hub description
         if: inputs.description != ''
