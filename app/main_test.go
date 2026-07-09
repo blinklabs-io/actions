@@ -487,7 +487,7 @@ func TestWorkflowTemplate_OpenvpnPublish(t *testing.T) {
 
 	data := templateData{
 		WorkflowName:     "publish",
-		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main",
 		TriggersYAML:     triggersYAML,
 		Permissions: map[string]string{
 			"contents":        "write",
@@ -529,7 +529,7 @@ func TestWorkflowTemplate_OpenvpnPublish(t *testing.T) {
 		{"enable-trivy-scan param", "enable-trivy-scan: true"},
 		{"docker-password secret", "docker-password: ${{ secrets.DOCKER_PASSWORD }}"},
 		{"governance header", "# Generated automatically by org-governance-bot"},
-		{"reuseable ref", "reuseable-publish-docker.yml@main"},
+		{"reuseable ref", "reuseable-publish-docker-multiarch.yml@main"},
 	}
 	for _, c := range checks {
 		if !strings.Contains(out, c.contain) {
@@ -1402,7 +1402,7 @@ func TestWorkflowTemplate_DockerCardanoConfigsPublish(t *testing.T) {
 
 	data := templateData{
 		WorkflowName:     "publish",
-		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main",
 		TriggersYAML:     triggersYAML,
 		Permissions: map[string]string{
 			"contents":        "write",
@@ -1428,7 +1428,7 @@ func TestWorkflowTemplate_DockerCardanoConfigsPublish(t *testing.T) {
 	checks := []struct{ desc, contain string }{
 		{"governance header", "# Generated automatically by org-governance-bot"},
 		{"workflow name", `name: "publish"`},
-		{"reusable ref", "reuseable-publish-docker.yml@main"},
+		{"reusable ref", "reuseable-publish-docker-multiarch.yml@main"},
 		{"push trigger", "push:"},
 		{"branches filter", "branches:"},
 		{"main branch", "- main"},

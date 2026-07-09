@@ -344,7 +344,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -356,7 +356,7 @@ repositories:
 
       - destination_file: publish.yml
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
         triggers:
           push:
             branches: [main]
@@ -627,7 +627,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -640,7 +640,7 @@ repositories:
 
       - destination_file: publish.yml
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
         triggers:
           push:
             branches: [main]
@@ -702,7 +702,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -714,7 +714,7 @@ repositories:
 
       - destination_file: publish.yml
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
         triggers:
           push:
             branches: [main]
@@ -776,7 +776,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -788,7 +788,7 @@ repositories:
 
       - destination_file: publish.yml
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
         triggers:
           push:
             branches: [main]

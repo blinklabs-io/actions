@@ -42,6 +42,28 @@ on:
         required: false
         type: string
         default: ""
+      build-args:
+        description: |
+          Newline-separated list of Docker build arguments (ARG=VALUE).
+          Passed verbatim to docker/build-push-action build-args in both the
+          amd64 and arm64 build jobs.
+        required: false
+        type: string
+        default: ""
+      enable-attestation:
+        description: >
+          Attest the built Docker Hub and GHCR images with build provenance.
+          Attestation is performed per-architecture in each native build job.
+        required: false
+        type: boolean
+        default: false
+      enable-trivy-scan:
+        description: >
+          Run Trivy vulnerability scanner on the pushed multi-arch GHCR image and
+          upload SARIF results to the GitHub Security tab.
+        required: false
+        type: boolean
+        default: false
     secrets:
       docker-password:
         description: Docker Hub access token.
@@ -57,6 +79,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
         with:
@@ -105,11 +129,13 @@ jobs:
             type=semver,pattern={{version}}
 
       - name: push
+        id: push
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0 https://github.com/docker/build-push-action/releases/tag/v7.2.0
         with:
           context: .
           push: true
           target: ${{ inputs.build-target }}
+          build-args: ${{ inputs.build-args }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/tmp/.buildx-cache
@@ -132,11 +158,29 @@ jobs:
             docker pull "$t" && docker push "$t"
           done
 
+      - name: Attest Docker Hub image (amd64)
+        if: inputs.enable-attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
+        with:
+          subject-name: index.docker.io/${{ inputs.docker-image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest GHCR image (amd64)
+        if: inputs.enable-attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
+        with:
+          subject-name: ghcr.io/${{ inputs.ghcr-image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
   build-arm64:
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
         with:
@@ -185,11 +229,13 @@ jobs:
             type=semver,pattern={{version}}
 
       - name: push
+        id: push
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0 https://github.com/docker/build-push-action/releases/tag/v7.2.0
         with:
           context: .
           push: true
           target: ${{ inputs.build-target }}
+          build-args: ${{ inputs.build-args }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/tmp/.buildx-cache
@@ -208,12 +254,29 @@ jobs:
             docker pull "$t" && docker push "$t"
           done
 
+      - name: Attest Docker Hub image (arm64)
+        if: inputs.enable-attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
+        with:
+          subject-name: index.docker.io/${{ inputs.docker-image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest GHCR image (arm64)
+        if: inputs.enable-attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
+        with:
+          subject-name: ghcr.io/${{ inputs.ghcr-image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
   multi-arch-manifest:
     runs-on: ubuntu-latest
     needs: [build-amd64, build-arm64]
     permissions:
       contents: read
       packages: write
+      security-events: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 https://github.com/actions/checkout/releases/tag/v7.0.0
         with:
@@ -353,6 +416,31 @@ jobs:
                 "${t}-amd64" "${t}-arm64v8"
             fi
           done
+
+      - name: Extract first GHCR tag
+        if: inputs.enable-trivy-scan
+        env:
+          GHCR_TAGS: ${{ steps.meta-ghcr.outputs.tags }}
+        run: |
+          FIRST_TAG=$(echo "$GHCR_TAGS" | head -n1 | rev | cut -d: -f1 | rev)
+          echo "FIRST_TAG=$FIRST_TAG" >> "$GITHUB_ENV"
+
+      - name: Run Trivy vulnerability scanner
+        if: inputs.enable-trivy-scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0
+        with:
+          scan-type: 'image'
+          scan-ref: 'ghcr.io/${{ inputs.ghcr-image }}:${{ env.FIRST_TAG }}'
+          format: 'sarif'
+          output: 'trivy-results-${{ env.FIRST_TAG }}.sarif'
+          ignore-unfixed: true
+          severity: 'HIGH,CRITICAL'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        if: always() && inputs.enable-trivy-scan
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.36.2
+        with:
+          sarif_file: 'trivy-results-${{ env.FIRST_TAG }}.sarif'
 
       - name: Update Docker Hub description
         if: inputs.description != ''
