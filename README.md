@@ -83,7 +83,7 @@ The engine requires a single environment variable:
 
 | Variable | Description |
 |---|---|
-| `GH_TOKEN` | **Required.** A token with `contents: write` and `administration`/`metadata` access to the managed repositories. In CI this is the scoped GitHub App token minted by `sync.yaml`. |
+| `GH_TOKEN` | **Required.** A token with `contents: write`, `workflows: write`, and `administration`/`metadata` access to the managed repositories. `workflows: write` is required because the engine writes files under `.github/workflows`, which GitHub gates behind the separate Workflows permission. In CI this is the scoped GitHub App token minted by `sync.yaml`. |
 
 The sync workflow additionally reads these repository secrets:
 
@@ -163,7 +163,8 @@ repositories:
 ```
 
 To onboard or change a repository, edit `repos-config.yaml` and push to `main`.
-The sync workflow reconciles the affected repositories automatically. The
+Each reconciliation run processes **every** managed repository (all configured
+and discovered targets), not only the ones touched by the edit. The
 `actions` repository manages other repositories and is not part of the managed
 set.
 
@@ -192,7 +193,9 @@ repository's default branch. A repository opts in by committing a marker at
 # .blinklabs/profile.yml — lives in the managed repository, not here.
 profile: docker-standard
 vars:
-  image: blinklabs-io/example
+  # Basename only — the profile prepends the registry namespace (e.g.
+  # `blinklabs-io/` and `blinklabs/`), so do not include it here.
+  image: example
   description: Example service image
 # Optional per-workflow overrides, same schema as repos-config.yaml.
 overrides:
@@ -210,7 +213,7 @@ without a valid marker (missing file or missing `profile`) are skipped.
 
 ```bash
 # Format, vet, and test
-gofmt -l app/
+gofmt -w app/
 go vet ./...
 go test ./... -count=1
 

@@ -14,6 +14,14 @@ on:
     # discovery is disabled too.
     - cron: '0 6 * * *'
 
+# Serialize reconciliation runs. The engine writes workflow files directly to
+# each managed repository's default branch, so two concurrent runs (e.g. a
+# scheduled run overlapping a push or manual dispatch) could race on the same
+# files. Never cancel an in-flight run midway through reconciliation.
+concurrency:
+  group: governance-sync
+  cancel-in-progress: false
+
 jobs:
   orchestrate-governance:
     runs-on: ubuntu-latest
@@ -49,7 +57,8 @@ jobs:
 
           type config struct {
             Discovery struct {
-              Enabled bool `yaml:"enabled"`
+              Enabled      bool   `yaml:"enabled"`
+              Organization string `yaml:"organization"`
             } `yaml:"discovery"`
             Repositories []struct {
               Name string `yaml:"name"`
@@ -82,9 +91,17 @@ jobs:
             defer out.Close()
 
             // Discovery mode: emit an empty list so the App token is scoped to
-            // the whole installation, which is required to list org repos and
-            // write to marker-discovered repositories.
+            // the whole installation, and emit the discovery organization as
+            // the token owner so listing markers and writing to discovered
+            // repositories is authorized even when the discovery org differs
+            // from this controller repository's owner.
             if cfg.Discovery.Enabled {
+              org := strings.TrimSpace(cfg.Discovery.Organization)
+              if org == "" {
+                fmt.Fprintln(os.Stderr, "discovery.enabled is true but discovery.organization is empty")
+                os.Exit(1)
+              }
+              fmt.Fprintf(out, "owner=%s\n", org)
               fmt.Fprint(out, "list<<REPOS_EOF\nREPOS_EOF\n")
               return
             }
@@ -115,7 +132,7 @@ jobs:
         with:
           client-id: ${{ secrets.GOVERNANCE_APP_CLIENT_ID }}
           private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
+          owner: ${{ steps.target-repos.outputs.owner || github.repository_owner }}
           repositories: ${{ steps.target-repos.outputs.list }}
 
       - name: Resolve Dependencies

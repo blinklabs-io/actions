@@ -423,10 +423,12 @@ func isNotFound(err error) bool {
 
 // discoverRepositories enumerates the organization's repositories and returns a
 // RepoConfig for each non-archived repository that contains a valid profile
-// marker file. Repositories without a marker are skipped silently; a repository
-// whose marker fails to parse is skipped with a warning so one bad marker cannot
-// halt the whole run. When d.Topic is set, only repositories carrying that topic
-// are considered.
+// marker file. Repositories without a marker (404) are skipped silently; a
+// repository whose marker fails to parse is skipped with a warning so one bad
+// marker cannot halt the whole run. Any other error reading a marker (e.g. 403,
+// 500, network) is propagated so the run does not silently leave repositories
+// unmanaged. When d.Topic is set, only repositories carrying that topic are
+// considered.
 func discoverRepositories(ctx context.Context, client discoveryClient, d Discovery) ([]RepoConfig, error) {
 	if d.Organization == "" {
 		return nil, errors.New("discovery enabled but no organization configured")
@@ -460,7 +462,14 @@ func discoverRepositories(ctx context.Context, client discoveryClient, d Discove
 				if isNotFound(err) {
 					continue
 				}
-				fmt.Printf("  ⚠️ discovery: reading marker for %s: %v\n", fullName, err)
+				// A non-404 failure means we cannot tell whether the repo is
+				// managed; fail loudly rather than silently leaving it stale.
+				return nil, fmt.Errorf("read marker for %s: %w", fullName, err)
+			}
+			if content == nil {
+				// marker_path resolved to a directory (or otherwise has no file
+				// content); GetContent would panic, so treat it as no marker.
+				fmt.Printf("  ⚠️ discovery: marker path for %s is not a file; skipping\n", fullName)
 				continue
 			}
 			decoded, err := content.GetContent()
@@ -495,17 +504,28 @@ func hasTopic(topics []string, want string) bool {
 // mergeDiscovered appends discovered repositories to cfg.Repositories. A
 // repository already listed explicitly in repos-config.yaml takes precedence and
 // the discovered entry is skipped, so teams can migrate to markers incrementally
-// while pinning special cases in the central config.
+// while pinning special cases in the central config. Repository names are
+// compared case-insensitively because GitHub owner/repo slugs are
+// case-insensitive. A discovered marker naming an unknown profile is skipped
+// with a warning rather than aborting the whole run, so a typo in one newly
+// onboarded repository cannot block governance for every repository; explicit
+// config still fails fast in expandProfiles.
 func mergeDiscovered(cfg *Config, discovered []RepoConfig) {
-	explicit := make(map[string]bool, len(cfg.Repositories))
+	seen := make(map[string]bool, len(cfg.Repositories))
 	for _, r := range cfg.Repositories {
-		explicit[r.Name] = true
+		seen[strings.ToLower(r.Name)] = true
 	}
 	for _, r := range discovered {
-		if explicit[r.Name] {
+		key := strings.ToLower(r.Name)
+		if seen[key] {
 			fmt.Printf("  discovery: %s is pinned in repos-config.yaml; skipping marker\n", r.Name)
 			continue
 		}
+		if _, ok := cfg.Profiles[r.Profile]; !ok {
+			fmt.Printf("  ⚠️ discovery: %s references unknown profile %q; skipping\n", r.Name, r.Profile)
+			continue
+		}
+		seen[key] = true
 		cfg.Repositories = append(cfg.Repositories, r)
 	}
 }

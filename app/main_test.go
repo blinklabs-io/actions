@@ -2186,9 +2186,13 @@ func TestParseMarker(t *testing.T) {
 // fakeDiscovery is an in-memory discoveryClient for tests: it serves a fixed
 // repository list and a marker-content lookup keyed by "owner/repo". A missing
 // key yields a GitHub 404, mirroring a repository without a marker file.
+// serverErr entries return a non-404 error; dirMarkers entries return nil file
+// content (as GitHub does when the path is a directory).
 type fakeDiscovery struct {
-	repos   []*github.Repository
-	markers map[string]string
+	repos      []*github.Repository
+	markers    map[string]string
+	serverErr  map[string]bool
+	dirMarkers map[string]bool
 }
 
 func (f *fakeDiscovery) ListByOrg(_ context.Context, _ string, _ *github.RepositoryListByOrgOptions) ([]*github.Repository, *github.Response, error) {
@@ -2196,7 +2200,16 @@ func (f *fakeDiscovery) ListByOrg(_ context.Context, _ string, _ *github.Reposit
 }
 
 func (f *fakeDiscovery) GetContents(_ context.Context, owner, repo, _ string, _ *github.RepositoryContentGetOptions) (*github.RepositoryContent, []*github.RepositoryContent, *github.Response, error) {
-	content, ok := f.markers[owner+"/"+repo]
+	key := owner + "/" + repo
+	if f.serverErr[key] {
+		resp := &github.Response{Response: &http.Response{StatusCode: http.StatusInternalServerError}}
+		return nil, nil, resp, &github.ErrorResponse{Response: &http.Response{StatusCode: http.StatusInternalServerError}}
+	}
+	if f.dirMarkers[key] {
+		// A directory path yields directory entries and nil file content.
+		return nil, []*github.RepositoryContent{}, &github.Response{}, nil
+	}
+	content, ok := f.markers[key]
 	if !ok {
 		resp := &github.Response{Response: &http.Response{StatusCode: http.StatusNotFound}}
 		return nil, nil, resp, &github.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}}
@@ -2295,8 +2308,44 @@ func TestDiscoverRepositories_NoOrganization(t *testing.T) {
 	}
 }
 
+func TestDiscoverRepositories_ServerErrorIsFatal(t *testing.T) {
+	fake := &fakeDiscovery{
+		repos:     []*github.Repository{ghRepo("blinklabs-io", "docker-foo", false)},
+		serverErr: map[string]bool{"blinklabs-io/docker-foo": true},
+	}
+	if _, err := discoverRepositories(context.Background(), fake, Discovery{
+		Enabled:      true,
+		Organization: "blinklabs-io",
+	}); err == nil {
+		t.Error("expected a non-404 marker read error to be propagated")
+	}
+}
+
+func TestDiscoverRepositories_DirectoryMarkerSkipped(t *testing.T) {
+	fake := &fakeDiscovery{
+		repos: []*github.Repository{
+			ghRepo("blinklabs-io", "docker-foo", false),
+			ghRepo("blinklabs-io", "docker-dir", false),
+		},
+		markers:    map[string]string{"blinklabs-io/docker-foo": "profile: docker-standard\n"},
+		dirMarkers: map[string]bool{"blinklabs-io/docker-dir": true},
+	}
+	got, err := discoverRepositories(context.Background(), fake, Discovery{
+		Enabled:      true,
+		Organization: "blinklabs-io",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := discoveredNames(got)
+	if len(names) != 1 || names[0] != "blinklabs-io/docker-foo" {
+		t.Fatalf("expected only docker-foo (directory marker skipped), got %v", names)
+	}
+}
+
 func TestMergeDiscovered_ExplicitWins(t *testing.T) {
 	cfg := Config{
+		Profiles: map[string]Profile{"docker-standard": {}},
 		Repositories: []RepoConfig{
 			{Name: "blinklabs-io/docker-foo", Profile: "docker-standard", Vars: map[string]string{"image": "pinned"}},
 		},
@@ -2319,5 +2368,38 @@ func TestMergeDiscovered_ExplicitWins(t *testing.T) {
 	}
 	if foo == nil || foo.Vars["image"] != "pinned" {
 		t.Errorf("explicit config should win over discovered marker, got %+v", foo)
+	}
+}
+
+func TestMergeDiscovered_UnknownProfileSkipped(t *testing.T) {
+	cfg := Config{
+		Profiles: map[string]Profile{"docker-standard": {}},
+	}
+	discovered := []RepoConfig{
+		{Name: "blinklabs-io/docker-good", Profile: "docker-standard"},
+		{Name: "blinklabs-io/docker-typo", Profile: "docker-standrd"}, // typo
+	}
+	mergeDiscovered(&cfg, discovered)
+
+	names := discoveredNames(cfg.Repositories)
+	if len(names) != 1 || names[0] != "blinklabs-io/docker-good" {
+		t.Fatalf("expected only docker-good (unknown profile skipped), got %v", names)
+	}
+}
+
+func TestMergeDiscovered_CaseInsensitiveDedup(t *testing.T) {
+	cfg := Config{
+		Profiles: map[string]Profile{"docker-standard": {}},
+		Repositories: []RepoConfig{
+			{Name: "blinklabs-io/Docker-Foo", Profile: "docker-standard"},
+		},
+	}
+	discovered := []RepoConfig{
+		{Name: "blinklabs-io/docker-foo", Profile: "docker-standard"}, // same repo, different case
+	}
+	mergeDiscovered(&cfg, discovered)
+
+	if len(cfg.Repositories) != 1 {
+		t.Fatalf("expected case-insensitive dedup to keep 1 repo, got %v", discoveredNames(cfg.Repositories))
 	}
 }
