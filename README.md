@@ -16,7 +16,7 @@ generated workflow wrapper files directly on that repository's default branch.
 
 ## Repository layout
 
-```
+```text
 app/
   main.go        # Governance engine: reads repos-config.yaml and reconciles each repo
   main_test.go   # Unit tests (config parsing + workflow template rendering)
@@ -88,11 +88,54 @@ The sync workflow additionally reads these repository secrets:
 
 ## Managing repositories
 
-Each repository is described declaratively in `repos-config.yaml`:
+Most repositories are described using a **profile** — a reusable bundle of
+settings, collaborators, branch protection, and workflows defined once under
+`profiles:` and shared across many repos. A repository then only supplies the
+profile name plus its own `vars` (and, rarely, `overrides`):
+
+```yaml
+profiles:
+  docker-standard:
+    settings:
+      delete_branch_on_merge: true
+    branch_protection:
+      - branch: main
+        required_status_checks: []
+    workflows:
+      - destination_file: ci-docker.yml
+        workflow_name: "Docker CI"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
+        triggers:
+          pull_request:
+            branches: [main]
+        params:
+          image-name: "blinklabs-io/${image}"
+
+repositories:
+  # Profile-based: inherits everything from docker-standard, supplies only vars.
+  - name: blinklabs-io/example
+    profile: docker-standard
+    vars:
+      image: example
+      description: "Example image"
+    # Optional: patch individual profile workflows (keyed by destination_file).
+    # overrides:
+    #   ci-docker.yml:
+    #     params:
+    #       image-name: "blinklabs-io/custom"
+```
+
+Profile-based repositories inherit `settings`, `collaborators`,
+`branch_protection`, and `workflows` from the profile and must **not** set those
+fields directly — doing so is rejected as a configuration error. Use `vars` for
+substitution and `overrides` for per-workflow tweaks.
+
+For a genuinely one-off repository, omit `profile` and specify the full schema
+explicitly instead:
 
 ```yaml
 repositories:
-  - name: blinklabs-io/example
+  - name: blinklabs-io/special
     settings:
       delete_branch_on_merge: true
     collaborators:
@@ -110,7 +153,7 @@ repositories:
           pull_request:
             branches: [main]
         params:
-          image-name: "blinklabs-io/example"
+          image-name: "blinklabs-io/special"
 ```
 
 To onboard or change a repository, edit `repos-config.yaml` and push to `main`.

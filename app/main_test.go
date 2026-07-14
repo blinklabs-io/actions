@@ -2002,6 +2002,48 @@ func TestExpandProfiles_Errors(t *testing.T) {
 		}
 	})
 
+	t.Run("profile with explicit settings", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {}},
+			Repositories: []RepoConfig{{
+				Name:     "x/y",
+				Profile:  "p",
+				Settings: RepoSettings{DeleteBranchOnMerge: true},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error when profile and explicit settings both set")
+		}
+	})
+
+	t.Run("profile with explicit collaborators", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {}},
+			Repositories: []RepoConfig{{
+				Name:          "x/y",
+				Profile:       "p",
+				Collaborators: []Collaborator{{Username: "alice", Permission: "write"}},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error when profile and explicit collaborators both set")
+		}
+	})
+
+	t.Run("profile with explicit branch_protection", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {}},
+			Repositories: []RepoConfig{{
+				Name:             "x/y",
+				Profile:          "p",
+				BranchProtection: []BranchProtection{{Branch: "main"}},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error when profile and explicit branch_protection both set")
+		}
+	})
+
 	t.Run("override targets unknown workflow", func(t *testing.T) {
 		cfg := Config{
 			Profiles: map[string]Profile{"p": {Workflows: []WorkflowConfig{{DestinationFile: "a.yml"}}}},

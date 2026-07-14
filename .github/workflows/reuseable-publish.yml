@@ -206,13 +206,6 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-      - name: pull-and-push
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          for t in $TAGS; do
-            docker pull "$t" && docker push "$t"
-          done
       - name: Attest Docker Hub image (amd64)
         if: inputs.docker-image != ''
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
@@ -289,13 +282,6 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-      - name: pull-and-push
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          for t in $TAGS; do
-            docker pull "$t" && docker push "$t"
-          done
       - name: Attest Docker Hub image (arm64)
         if: inputs.docker-image != ''
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2

@@ -36,8 +36,8 @@ type Profile struct {
 
 // WorkflowOverride patches a single profile workflow for one repository. Only
 // the fields that differ from the profile need to be set: triggers, matrix,
-// permissions and secrets replace the profile value wholesale, while params are
-// merged into (and may override individual keys of) the profile's params.
+// and secrets replace the profile value wholesale, while permissions and params
+// are merged into (and may override individual keys of) the profile's values.
 type WorkflowOverride struct {
 	Triggers    map[string]interface{} `yaml:"triggers"`
 	Matrix      map[string]interface{} `yaml:"matrix"`
@@ -281,6 +281,18 @@ func expandProfiles(cfg *Config) error {
 		}
 		if len(repo.Workflows) > 0 {
 			return fmt.Errorf("repository %q sets both profile %q and explicit workflows", repo.Name, repo.Profile)
+		}
+		// Profile-based repos inherit settings/collaborators/branch_protection
+		// from the profile; setting them directly would be silently discarded,
+		// so reject it explicitly (mirrors the workflows check above).
+		if repo.Settings != (RepoSettings{}) {
+			return fmt.Errorf("repository %q sets both profile %q and explicit settings; profile-based repos inherit settings from the profile", repo.Name, repo.Profile)
+		}
+		if len(repo.Collaborators) > 0 {
+			return fmt.Errorf("repository %q sets both profile %q and explicit collaborators; profile-based repos inherit collaborators from the profile", repo.Name, repo.Profile)
+		}
+		if len(repo.BranchProtection) > 0 {
+			return fmt.Errorf("repository %q sets both profile %q and explicit branch_protection; profile-based repos inherit branch_protection from the profile", repo.Name, repo.Profile)
 		}
 
 		repo.Settings = profile.Settings
