@@ -2387,6 +2387,41 @@ func TestMergeDiscovered_UnknownProfileSkipped(t *testing.T) {
 	}
 }
 
+func TestMergeDiscovered_BadMarkerSkipped(t *testing.T) {
+	cfg := Config{
+		Profiles: map[string]Profile{
+			"docker-standard": {
+				Workflows: []WorkflowConfig{
+					{
+						DestinationFile:  "ci-docker.yml",
+						ReusableWorkflow: "blinklabs-io/actions/.github/workflows/x.yml@main",
+						Params:           map[string]string{"image-name": "blinklabs-io/${image}"},
+					},
+				},
+			},
+		},
+	}
+	discovered := []RepoConfig{
+		{Name: "blinklabs-io/docker-good", Profile: "docker-standard", Vars: map[string]string{"image": "good"}},
+		{Name: "blinklabs-io/docker-bad", Profile: "docker-standard"}, // missing ${image} var
+	}
+	mergeDiscovered(&cfg, discovered)
+
+	// The bad marker must be dropped without aborting; the good one survives.
+	names := discoveredNames(cfg.Repositories)
+	if len(names) != 1 || names[0] != "blinklabs-io/docker-good" {
+		t.Fatalf("expected only docker-good (bad marker skipped), got %v", names)
+	}
+	// The surviving discovered repo must be expanded in place.
+	good := cfg.Repositories[0]
+	if good.Profile != "" || len(good.Workflows) != 1 {
+		t.Fatalf("discovered repo should be expanded in place, got %+v", good)
+	}
+	if got := good.Workflows[0].Params["image-name"]; got != "blinklabs-io/good" {
+		t.Errorf("expected substituted image-name blinklabs-io/good, got %q", got)
+	}
+}
+
 func TestMergeDiscovered_CaseInsensitiveDedup(t *testing.T) {
 	cfg := Config{
 		Profiles: map[string]Profile{"docker-standard": {}},

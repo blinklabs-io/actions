@@ -323,64 +323,76 @@ func workflowExists(workflows []WorkflowConfig, destinationFile string) bool {
 // Repositories without a profile are left untouched.
 func expandProfiles(cfg *Config) error {
 	for i := range cfg.Repositories {
-		repo := &cfg.Repositories[i]
-		if repo.Profile == "" {
-			continue
+		if err := expandRepo(cfg, &cfg.Repositories[i]); err != nil {
+			return err
 		}
-
-		profile, ok := cfg.Profiles[repo.Profile]
-		if !ok {
-			return fmt.Errorf("repository %q references unknown profile %q", repo.Name, repo.Profile)
-		}
-		if len(repo.Workflows) > 0 {
-			return fmt.Errorf("repository %q sets both profile %q and explicit workflows", repo.Name, repo.Profile)
-		}
-		// Profile-based repos inherit settings/collaborators/branch_protection
-		// from the profile; setting them directly would be silently discarded,
-		// so reject it explicitly (mirrors the workflows check above). Because
-		// DeleteBranchOnMerge is a *bool, an explicit `delete_branch_on_merge:
-		// false` yields a non-nil pointer and is caught here too.
-		if repo.Settings != (RepoSettings{}) {
-			return fmt.Errorf("repository %q sets both profile %q and explicit settings; profile-based repos inherit settings from the profile", repo.Name, repo.Profile)
-		}
-		if len(repo.Collaborators) > 0 {
-			return fmt.Errorf("repository %q sets both profile %q and explicit collaborators; profile-based repos inherit collaborators from the profile", repo.Name, repo.Profile)
-		}
-		if len(repo.BranchProtection) > 0 {
-			return fmt.Errorf("repository %q sets both profile %q and explicit branch_protection; profile-based repos inherit branch_protection from the profile", repo.Name, repo.Profile)
-		}
-
-		repo.Settings = profile.Settings
-		repo.Collaborators = profile.Collaborators
-		repo.BranchProtection = profile.BranchProtection
-
-		workflows := make([]WorkflowConfig, 0, len(profile.Workflows))
-		for _, pwf := range profile.Workflows {
-			wf := cloneWorkflow(pwf)
-			if ov, ok := repo.Overrides[wf.DestinationFile]; ok {
-				applyOverride(&wf, ov)
-			}
-			for k, v := range wf.Params {
-				substituted, err := substituteVars(v, repo.Vars)
-				if err != nil {
-					return fmt.Errorf("repository %q workflow %q param %q: %w", repo.Name, wf.DestinationFile, k, err)
-				}
-				wf.Params[k] = substituted
-			}
-			workflows = append(workflows, wf)
-		}
-
-		for dest := range repo.Overrides {
-			if !workflowExists(workflows, dest) {
-				return fmt.Errorf("repository %q override targets unknown workflow %q", repo.Name, dest)
-			}
-		}
-
-		repo.Workflows = workflows
-		repo.Profile = ""
-		repo.Vars = nil
-		repo.Overrides = nil
 	}
+	return nil
+}
+
+// expandRepo materializes a single profile-based repository in place, applying
+// the profile's inheritance, per-repo overrides and ${var} substitution. A
+// repository without a profile is left untouched. It is factored out of
+// expandProfiles so discovered repositories can be expanded and validated one
+// at a time — a bad marker then skips only that repository instead of aborting
+// the whole run (see mergeDiscovered).
+func expandRepo(cfg *Config, repo *RepoConfig) error {
+	if repo.Profile == "" {
+		return nil
+	}
+
+	profile, ok := cfg.Profiles[repo.Profile]
+	if !ok {
+		return fmt.Errorf("repository %q references unknown profile %q", repo.Name, repo.Profile)
+	}
+	if len(repo.Workflows) > 0 {
+		return fmt.Errorf("repository %q sets both profile %q and explicit workflows", repo.Name, repo.Profile)
+	}
+	// Profile-based repos inherit settings/collaborators/branch_protection
+	// from the profile; setting them directly would be silently discarded,
+	// so reject it explicitly (mirrors the workflows check above). Because
+	// DeleteBranchOnMerge is a *bool, an explicit `delete_branch_on_merge:
+	// false` yields a non-nil pointer and is caught here too.
+	if repo.Settings != (RepoSettings{}) {
+		return fmt.Errorf("repository %q sets both profile %q and explicit settings; profile-based repos inherit settings from the profile", repo.Name, repo.Profile)
+	}
+	if len(repo.Collaborators) > 0 {
+		return fmt.Errorf("repository %q sets both profile %q and explicit collaborators; profile-based repos inherit collaborators from the profile", repo.Name, repo.Profile)
+	}
+	if len(repo.BranchProtection) > 0 {
+		return fmt.Errorf("repository %q sets both profile %q and explicit branch_protection; profile-based repos inherit branch_protection from the profile", repo.Name, repo.Profile)
+	}
+
+	repo.Settings = profile.Settings
+	repo.Collaborators = profile.Collaborators
+	repo.BranchProtection = profile.BranchProtection
+
+	workflows := make([]WorkflowConfig, 0, len(profile.Workflows))
+	for _, pwf := range profile.Workflows {
+		wf := cloneWorkflow(pwf)
+		if ov, ok := repo.Overrides[wf.DestinationFile]; ok {
+			applyOverride(&wf, ov)
+		}
+		for k, v := range wf.Params {
+			substituted, err := substituteVars(v, repo.Vars)
+			if err != nil {
+				return fmt.Errorf("repository %q workflow %q param %q: %w", repo.Name, wf.DestinationFile, k, err)
+			}
+			wf.Params[k] = substituted
+		}
+		workflows = append(workflows, wf)
+	}
+
+	for dest := range repo.Overrides {
+		if !workflowExists(workflows, dest) {
+			return fmt.Errorf("repository %q override targets unknown workflow %q", repo.Name, dest)
+		}
+	}
+
+	repo.Workflows = workflows
+	repo.Profile = ""
+	repo.Vars = nil
+	repo.Overrides = nil
 	return nil
 }
 
@@ -506,10 +518,12 @@ func hasTopic(topics []string, want string) bool {
 // the discovered entry is skipped, so teams can migrate to markers incrementally
 // while pinning special cases in the central config. Repository names are
 // compared case-insensitively because GitHub owner/repo slugs are
-// case-insensitive. A discovered marker naming an unknown profile is skipped
-// with a warning rather than aborting the whole run, so a typo in one newly
-// onboarded repository cannot block governance for every repository; explicit
-// config still fails fast in expandProfiles.
+// case-insensitive. Each discovered repository is expanded in isolation, so a
+// bad marker (an unknown profile, an undefined variable, or an override
+// targeting an unknown workflow) is skipped with a warning rather than aborting
+// the whole run — a typo in one newly onboarded repository cannot block
+// governance for every repository. Explicit config still fails fast in
+// expandProfiles.
 func mergeDiscovered(cfg *Config, discovered []RepoConfig) {
 	seen := make(map[string]bool, len(cfg.Repositories))
 	for _, r := range cfg.Repositories {
@@ -525,8 +539,18 @@ func mergeDiscovered(cfg *Config, discovered []RepoConfig) {
 			fmt.Printf("  ⚠️ discovery: %s references unknown profile %q; skipping\n", r.Name, r.Profile)
 			continue
 		}
+		// Expand the discovered repository in isolation so a bad marker (an
+		// undefined variable or an override targeting an unknown workflow)
+		// skips only this repository rather than aborting governance for every
+		// repository. Working on a copy leaves the original slice and the shared
+		// profile untouched if expansion fails.
+		expanded := r
+		if err := expandRepo(cfg, &expanded); err != nil {
+			fmt.Printf("  ⚠️ discovery: %s: %v; skipping\n", r.Name, err)
+			continue
+		}
 		seen[key] = true
-		cfg.Repositories = append(cfg.Repositories, r)
+		cfg.Repositories = append(cfg.Repositories, expanded)
 	}
 }
 
