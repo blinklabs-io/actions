@@ -61,14 +61,20 @@ open pull requests.
 
 Reconciliation is driven by `.github/workflows/sync.yaml`, which runs on:
 
-- a `push` to `main` that changes `repos-config.yaml`, or
-- a manual `workflow_dispatch`.
+- a `push` to `main` that changes `repos-config.yaml`,
+- a manual `workflow_dispatch`, or
+- a daily `schedule`. The scheduled run corrects drift and, when
+  [auto-discovery](#auto-discovery-opt-in) is enabled, picks up newly-created
+  marker repositories without a `repos-config.yaml` change.
 
 The sync workflow:
 
 1. Parses `repos-config.yaml` to resolve the list of target repositories.
-2. Mints a GitHub App installation token scoped **only** to those repositories
-   (via `actions/create-github-app-token`), limiting blast radius.
+2. Mints a GitHub App installation token via `actions/create-github-app-token`.
+   By default the token is scoped **only** to the repositories listed in
+   `repos-config.yaml`, limiting blast radius. When discovery is enabled the
+   token is scoped org-wide (all repositories the installation can access),
+   since the target set is not known ahead of time.
 3. Runs the engine with `go run ./app`, passing the token as `GH_TOKEN`.
 
 ## Configuration
@@ -160,6 +166,45 @@ To onboard or change a repository, edit `repos-config.yaml` and push to `main`.
 The sync workflow reconciles the affected repositories automatically. The
 `actions` repository manages other repositories and is not part of the managed
 set.
+
+## Auto-discovery (opt-in)
+
+Instead of listing every repository in `repos-config.yaml`, the engine can
+discover managed repositories directly from the organization. Discovery is
+**disabled by default**; enable it with a `discovery` block:
+
+```yaml
+discovery:
+  enabled: true
+  organization: blinklabs-io
+  # Optional: only consider repositories carrying this GitHub topic.
+  topic: blinklabs-managed
+  # Optional: path to the in-repo marker file (default: .blinklabs/profile.yml).
+  marker_path: .blinklabs/profile.yml
+```
+
+When enabled, the engine lists the organization's repositories, skips archived
+ones, optionally filters by `topic`, and reads a **marker file** from each
+repository's default branch. A repository opts in by committing a marker at
+`.blinklabs/profile.yml`:
+
+```yaml
+# .blinklabs/profile.yml — lives in the managed repository, not here.
+profile: docker-standard
+vars:
+  image: blinklabs-io/example
+  description: Example service image
+# Optional per-workflow overrides, same schema as repos-config.yaml.
+overrides:
+  publish.yml:
+    params:
+      build-target: example
+```
+
+Discovered repositories are merged with the explicit `repositories:` list.
+**Explicit entries always win** — if a repository appears in both places, its
+`repos-config.yaml` definition is used and the marker is ignored. Repositories
+without a valid marker (missing file or missing `profile`) are skipped.
 
 ## Local development
 

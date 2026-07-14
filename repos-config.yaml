@@ -17,6 +17,23 @@ branch_protection_defaults: &branch_protection_defaults
   allow_deletions: false
   lock_branch: false
 
+# Optional org-wide auto-discovery. Disabled by default: when absent or
+# `enabled: false`, the engine manages exactly the repositories listed under
+# `repositories:` below. When enabled, the engine additionally lists the
+# organization's repositories and manages any that carry a profile marker at
+# `marker_path` (default `.blinklabs/profile.yml`). Explicit `repositories:`
+# entries always take precedence over discovered ones.
+#
+# NOTE: enabling discovery requires the sync workflow to mint an org-scoped
+# GitHub App token (see .github/workflows/sync.yaml); it also enables the
+# scheduled reconciliation run so newly-created marker repos are picked up.
+#
+# discovery:
+#   enabled: true
+#   organization: blinklabs-io
+#   topic: blinklabs-managed          # optional: only repos with this topic
+#   marker_path: .blinklabs/profile.yml  # optional (this is the default)
+
 profiles:
   # docker-standard: the shared shape for every simple Docker wrapper repo.
   # A repo using this profile only supplies `vars` (image + description) and,

@@ -6,6 +6,13 @@ on:
     paths:
       - 'repos-config.yaml'
   workflow_dispatch:      # Trigger manually to run the sync
+  schedule:
+    # Periodic reconciliation. When auto-discovery is enabled this picks up
+    # newly-created marker repositories without a repos-config.yaml change; it
+    # also corrects any drift on the managed set. Reconciliation is idempotent
+    # (writes only when rendered content differs), so this is safe when
+    # discovery is disabled too.
+    - cron: '0 6 * * *'
 
 jobs:
   orchestrate-governance:
@@ -21,6 +28,9 @@ jobs:
 
       # Scope the token only to the repos listed in repos-config.yaml rather
       # than the whole org, reducing the blast radius if the token is leaked.
+      # When auto-discovery is enabled the explicit list cannot be known ahead
+      # of time, so the token is scoped org-wide (empty `repositories` input =
+      # all repositories the installation can access).
       - name: Resolve target repositories from config
         id: target-repos
         run: |
@@ -38,6 +48,9 @@ jobs:
           )
 
           type config struct {
+            Discovery struct {
+              Enabled bool `yaml:"enabled"`
+            } `yaml:"discovery"`
             Repositories []struct {
               Name string `yaml:"name"`
             } `yaml:"repositories"`
@@ -56,8 +69,28 @@ jobs:
               os.Exit(1)
             }
 
+            outPath := os.Getenv("GITHUB_OUTPUT")
+            if outPath == "" {
+              fmt.Fprintln(os.Stderr, "GITHUB_OUTPUT is not set")
+              os.Exit(1)
+            }
+            out, err := os.OpenFile(outPath, os.O_APPEND|os.O_WRONLY, 0o644)
+            if err != nil {
+              fmt.Fprintf(os.Stderr, "failed to open GITHUB_OUTPUT: %v\n", err)
+              os.Exit(1)
+            }
+            defer out.Close()
+
+            // Discovery mode: emit an empty list so the App token is scoped to
+            // the whole installation, which is required to list org repos and
+            // write to marker-discovered repositories.
+            if cfg.Discovery.Enabled {
+              fmt.Fprint(out, "list<<REPOS_EOF\nREPOS_EOF\n")
+              return
+            }
+
             if len(cfg.Repositories) == 0 {
-              fmt.Fprintln(os.Stderr, "repos-config.yaml must define at least one repository")
+              fmt.Fprintln(os.Stderr, "repos-config.yaml must define at least one repository (or enable discovery)")
               os.Exit(1)
             }
 
@@ -71,17 +104,10 @@ jobs:
               repos = append(repos, name)
             }
 
-            fmt.Println(strings.Join(repos, "\n"))
+            fmt.Fprintf(out, "list<<REPOS_EOF\n%s\nREPOS_EOF\n", strings.Join(repos, "\n"))
           }
           EOF
-          repos=$(go run "$config_parser")
-          if [ -z "$repos" ]; then
-            echo "No target repositories resolved from repos-config.yaml" >&2
-            exit 1
-          fi
-          echo "list<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$repos"    >> "$GITHUB_OUTPUT"
-          echo "EOF"       >> "$GITHUB_OUTPUT"
+          go run "$config_parser"
 
       - name: Authenticate via GitHub App
         id: generate-token

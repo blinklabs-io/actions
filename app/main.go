@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"sort"
@@ -20,8 +22,42 @@ import (
 
 type Config struct {
 	Profiles     map[string]Profile `yaml:"profiles"`
+	Discovery    Discovery          `yaml:"discovery"`
 	Repositories []RepoConfig       `yaml:"repositories"`
 }
+
+// Discovery configures optional org-wide repository auto-discovery. When
+// disabled (the default), the engine manages exactly the repositories listed in
+// repos-config.yaml. When enabled, the engine additionally enumerates the
+// organization's repositories and manages any that contain a profile marker
+// file, so a new repository created from a template is picked up automatically
+// without editing repos-config.yaml.
+type Discovery struct {
+	// Enabled turns auto-discovery on. Absent/false preserves the original
+	// config-only behavior exactly.
+	Enabled bool `yaml:"enabled"`
+	// Organization is the GitHub org to scan (e.g. blinklabs-io).
+	Organization string `yaml:"organization"`
+	// MarkerPath is the in-repo path of the profile marker file. Defaults to
+	// .blinklabs/profile.yml when empty.
+	MarkerPath string `yaml:"marker_path"`
+	// Topic, when set, restricts discovery to repositories carrying this GitHub
+	// topic. Empty means every non-archived repository is considered.
+	Topic string `yaml:"topic"`
+}
+
+// RepoMarker is the schema of the in-repository profile marker file. It carries
+// the same profile/vars/overrides a repository would otherwise declare inline in
+// repos-config.yaml, minus the repository name (which is derived from the repo
+// the marker was found in).
+type RepoMarker struct {
+	Profile   string                      `yaml:"profile"`
+	Vars      map[string]string           `yaml:"vars"`
+	Overrides map[string]WorkflowOverride `yaml:"overrides"`
+}
+
+// defaultMarkerPath is used when Discovery.MarkerPath is empty.
+const defaultMarkerPath = ".blinklabs/profile.yml"
 
 // Profile is a reusable template for a class of repositories. A repository that
 // references a profile inherits its settings, collaborators, branch protection
@@ -141,6 +177,19 @@ func main() {
 	if err := yaml.Unmarshal(configFile, &cfg); err != nil {
 		fmt.Printf("Failed to parse config: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Optional org-wide auto-discovery. Disabled by default, so absent config
+	// leaves the original config-only behavior untouched.
+	if cfg.Discovery.Enabled {
+		fmt.Printf("🔍 Discovering managed repositories in %s\n", cfg.Discovery.Organization)
+		discovered, err := discoverRepositories(ctx, client.Repositories, cfg.Discovery)
+		if err != nil {
+			fmt.Printf("Failed to discover repositories: %v\n", err)
+			os.Exit(1)
+		}
+		mergeDiscovered(&cfg, discovered)
+		fmt.Printf("   Discovered %d marker-managed repositories\n", len(discovered))
 	}
 
 	if err := expandProfiles(&cfg); err != nil {
@@ -333,6 +382,132 @@ func expandProfiles(cfg *Config) error {
 		repo.Overrides = nil
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Repository auto-discovery
+// ---------------------------------------------------------------------------
+
+// discoveryClient is the subset of *github.RepositoriesService that discovery
+// needs. Defining it as an interface keeps discoverRepositories unit-testable
+// with a fake, and *github.RepositoriesService satisfies it directly.
+type discoveryClient interface {
+	ListByOrg(ctx context.Context, org string, opts *github.RepositoryListByOrgOptions) ([]*github.Repository, *github.Response, error)
+	GetContents(ctx context.Context, owner, repo, path string, opts *github.RepositoryContentGetOptions) (*github.RepositoryContent, []*github.RepositoryContent, *github.Response, error)
+}
+
+// parseMarker decodes a profile marker file into a RepoConfig for the given
+// "owner/repo". The marker must name a profile; vars and overrides are optional.
+func parseMarker(data []byte, fullName string) (RepoConfig, error) {
+	var m RepoMarker
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return RepoConfig{}, fmt.Errorf("parse marker for %q: %w", fullName, err)
+	}
+	if strings.TrimSpace(m.Profile) == "" {
+		return RepoConfig{}, fmt.Errorf("marker for %q does not specify a profile", fullName)
+	}
+	return RepoConfig{
+		Name:      fullName,
+		Profile:   m.Profile,
+		Vars:      m.Vars,
+		Overrides: m.Overrides,
+	}, nil
+}
+
+// isNotFound reports whether err is a GitHub 404 (e.g. a repository without a
+// marker file), which discovery treats as "not managed" rather than a failure.
+func isNotFound(err error) bool {
+	var ghErr *github.ErrorResponse
+	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound
+}
+
+// discoverRepositories enumerates the organization's repositories and returns a
+// RepoConfig for each non-archived repository that contains a valid profile
+// marker file. Repositories without a marker are skipped silently; a repository
+// whose marker fails to parse is skipped with a warning so one bad marker cannot
+// halt the whole run. When d.Topic is set, only repositories carrying that topic
+// are considered.
+func discoverRepositories(ctx context.Context, client discoveryClient, d Discovery) ([]RepoConfig, error) {
+	if d.Organization == "" {
+		return nil, errors.New("discovery enabled but no organization configured")
+	}
+	markerPath := d.MarkerPath
+	if markerPath == "" {
+		markerPath = defaultMarkerPath
+	}
+
+	opts := &github.RepositoryListByOrgOptions{ListOptions: github.ListOptions{PerPage: 100}}
+	var discovered []RepoConfig
+	for {
+		repos, resp, err := client.ListByOrg(ctx, d.Organization, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list repositories for org %q: %w", d.Organization, err)
+		}
+		for _, r := range repos {
+			if r.GetArchived() {
+				continue
+			}
+			if d.Topic != "" && !hasTopic(r.Topics, d.Topic) {
+				continue
+			}
+			fullName := r.GetFullName()
+			owner, name := r.GetOwner().GetLogin(), r.GetName()
+			if owner == "" || name == "" {
+				continue
+			}
+			content, _, _, err := client.GetContents(ctx, owner, name, markerPath, nil)
+			if err != nil {
+				if isNotFound(err) {
+					continue
+				}
+				fmt.Printf("  ⚠️ discovery: reading marker for %s: %v\n", fullName, err)
+				continue
+			}
+			decoded, err := content.GetContent()
+			if err != nil {
+				fmt.Printf("  ⚠️ discovery: decoding marker for %s: %v\n", fullName, err)
+				continue
+			}
+			repoCfg, err := parseMarker([]byte(decoded), fullName)
+			if err != nil {
+				fmt.Printf("  ⚠️ discovery: %v\n", err)
+				continue
+			}
+			discovered = append(discovered, repoCfg)
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return discovered, nil
+}
+
+func hasTopic(topics []string, want string) bool {
+	for _, t := range topics {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeDiscovered appends discovered repositories to cfg.Repositories. A
+// repository already listed explicitly in repos-config.yaml takes precedence and
+// the discovered entry is skipped, so teams can migrate to markers incrementally
+// while pinning special cases in the central config.
+func mergeDiscovered(cfg *Config, discovered []RepoConfig) {
+	explicit := make(map[string]bool, len(cfg.Repositories))
+	for _, r := range cfg.Repositories {
+		explicit[r.Name] = true
+	}
+	for _, r := range discovered {
+		if explicit[r.Name] {
+			fmt.Printf("  discovery: %s is pinned in repos-config.yaml; skipping marker\n", r.Name)
+			continue
+		}
+		cfg.Repositories = append(cfg.Repositories, r)
+	}
 }
 
 // ---------------------------------------------------------------------------
