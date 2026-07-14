@@ -17,6 +17,72 @@ branch_protection_defaults: &branch_protection_defaults
   allow_deletions: false
   lock_branch: false
 
+profiles:
+  # docker-standard: the shared shape for every simple Docker wrapper repo.
+  # A repo using this profile only supplies `vars` (image + description) and,
+  # for genuinely special cases, `overrides`.
+  docker-standard:
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: ci-docker.yml
+        workflow_name: "Docker CI"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
+        triggers:
+          pull_request:
+            branches: [main]
+            paths:
+              - Dockerfile
+              - .github/workflows/ci-docker.yml
+        params:
+          image-name: "blinklabs-io/${image}"
+
+      - destination_file: publish.yml
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
+        triggers:
+          push:
+            branches: [main]
+            tags: ['v*.*.*']
+        permissions:
+          contents: write
+          packages: write
+          id-token: write
+          attestations: write
+        secrets:
+          docker-password: DOCKER_PASSWORD
+        params:
+          docker-image: "blinklabs/${image}"
+          ghcr-image: "blinklabs-io/${image}"
+          description: "${description}"
+
+      - destination_file: update-issue-on-close.yml
+        workflow_name: "Set Project Closed Date"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
+        triggers:
+          issues:
+            types: [closed]
+          workflow_dispatch:
+        permissions:
+          contents: read
+          issues: read
+        secrets:
+          project_pat: ORG_PROJECT_PAT
+        params:
+          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
+          closed_date_field: "Closed Date"
+          closed_at: "${{ github.event.issue.closed_at }}"
+
 repositories:
   - name: blinklabs-io/tx-submit-api
     settings:
@@ -65,7 +131,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -101,16 +167,6 @@ repositories:
           docker-image: "blinklabs/tx-submit-api"
           description: "A Go implementation of the Cardano Submit API service"
 
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
       - destination_file: update-issue-on-close.yml
         workflow_name: "Set Project Closed Date"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
@@ -124,7 +180,6 @@ repositories:
           project_url: "https://github.com/orgs/blinklabs-io/projects/11"
           closed_date_field: "Closed Date"
           closed_at: "${{ github.event.issue.closed_at }}"
-
   - name: blinklabs-io/tx-submit-api-mirror
     settings:
       delete_branch_on_merge: true
@@ -161,7 +216,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -197,16 +252,6 @@ repositories:
           docker-image: "blinklabs/tx-submit-api-mirror"
           description: "A Cardano Submit API mirror service"
 
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
       - destination_file: update-issue-on-close.yml
         workflow_name: "Set Project Closed Date"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
@@ -220,7 +265,6 @@ repositories:
           project_url: "https://github.com/orgs/blinklabs-io/projects/11"
           closed_date_field: "Closed Date"
           closed_at: "${{ github.event.issue.closed_at }}"
-
   - name: blinklabs-io/txtop
     settings:
       delete_branch_on_merge: true
@@ -269,7 +313,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -304,16 +348,6 @@ repositories:
           description: "txtop is a mempool display tool for a Cardano Node"
           go-version: "1.26.x"
 
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
       - destination_file: update-issue-on-close.yml
         workflow_name: "Set Project Closed Date"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
@@ -327,77 +361,11 @@ repositories:
           project_url: "https://github.com/orgs/blinklabs-io/projects/11"
           closed_date_field: "Closed Date"
           closed_at: "${{ github.event.issue.closed_at }}"
-
   - name: blinklabs-io/docker-go
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
-        triggers:
-          pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
-            paths:
-              - Dockerfile
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/go"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-          id-token: write
-          attestations: write
-          security-events: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/go"
-          ghcr-image: "blinklabs-io/go"
-          description: "Go image built from Chainguard Wolfi"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+    profile: docker-standard
+    vars:
+      image: go
+      description: Go image built from Chainguard Wolfi
   - name: blinklabs-io/cardano-node-api
     settings:
       delete_branch_on_merge: true
@@ -443,7 +411,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -481,16 +449,6 @@ repositories:
           docker-image: "blinklabs/cardano-node-api"
           description: "HTTP API over the Cardano Node UNIX socket"
 
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
       - destination_file: update-issue-on-close.yml
         workflow_name: "Set Project Closed Date"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
@@ -504,7 +462,6 @@ repositories:
           project_url: "https://github.com/orgs/blinklabs-io/projects/11"
           closed_date_field: "Closed Date"
           closed_at: "${{ github.event.issue.closed_at }}"
-
   - name: blinklabs-io/shai
     settings:
       delete_branch_on_merge: true
@@ -555,7 +512,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -587,16 +544,6 @@ repositories:
           go-version: "1.26.x"
           binary-os-matrix: '["linux"]'
 
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
       - destination_file: update-issue-on-close.yml
         workflow_name: "Set Project Closed Date"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
@@ -610,586 +557,153 @@ repositories:
           project_url: "https://github.com/orgs/blinklabs-io/projects/11"
           closed_date_field: "Closed Date"
           closed_at: "${{ github.event.issue.closed_at }}"
-
   - name: blinklabs-io/docker-cardano-configs
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+    profile: docker-standard
+    vars:
+      image: cardano-configs
+      description: Configuration files for named Cardano blockchain networks
+    overrides:
+      ci-docker.yml:
         triggers:
           pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
+            branches:
+            - main
             paths:
-              - Dockerfile
-              - config/**
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/cardano-configs"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
+            - Dockerfile
+            - config/**
+            - .github/workflows/ci-docker.yml
+      publish.yml:
         triggers:
           push:
-            branches: [main]
+            branches:
+            - main
             tags:
-              - 'v*.*.*'
-              - 'v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]'
-              - 'v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9]'
-              - 'v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9]'
-        permissions:
-          contents: write
-          packages: write
-          id-token: write
-          attestations: write
-          security-events: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/cardano-configs"
-          ghcr-image: "blinklabs-io/cardano-configs"
-          description: "Configuration files for named Cardano blockchain networks"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+            - v*.*.*
+            - v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]
+            - v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9]
+            - v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9]
   - name: blinklabs-io/docker-minio
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
-        triggers:
-          pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
-            paths:
-              - Dockerfile
-              - .github/workflows/ci-docker.yml
+    profile: docker-standard
+    vars:
+      image: minio
+      description: Wrapper image for https://hub.docker.com/r/minio/minio
+    overrides:
+      publish.yml:
         params:
-          image-name: "blinklabs-io/minio"
+          build-args: 'VERSION=${{ github.ref_type == ''tag'' && github.ref_name || '''' }}
 
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-          id-token: write
-          attestations: write
-          security-events: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/minio"
-          ghcr-image: "blinklabs-io/minio"
-          description: "Wrapper image for https://hub.docker.com/r/minio/minio"
-          enable-attestation: "true"
-          build-args: |
-            VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}
             COMMIT_HASH=${{ github.sha }}
 
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+            '
   - name: blinklabs-io/docker-openvpn
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
-        triggers:
-          pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
-            paths:
-              - Dockerfile
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/openvpn"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
+    profile: docker-standard
+    vars:
+      image: openvpn
+      description: Simple OpenVPN image
+    overrides:
+      publish.yml:
         triggers:
           push:
-            branches: [main]
-            tags: ['v*.*.*']
+            branches:
+            - main
+            tags:
+            - v*.*.*
           schedule:
-            - cron: '0 0 * * 1'
+          - cron: 0 0 * * 1
         permissions:
-          contents: write
-          packages: write
-          id-token: write
-          attestations: write
           security-events: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
         params:
-          docker-image: "blinklabs/openvpn"
-          ghcr-image: "blinklabs-io/openvpn"
-          description: "Simple OpenVPN image"
-          enable-trivy-scan: "true"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+          enable-trivy-scan: 'true'
   - name: blinklabs-io/docker-cardano-cli
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+    profile: docker-standard
+    vars:
+      image: cardano-cli
+      description: Cardano CLI built from source on Debian
+    overrides:
+      ci-docker.yml:
         triggers:
           pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main, 'release/**']
+            branches:
+            - main
+            - release/**
             paths:
-              - Dockerfile
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/cardano-cli"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/cardano-cli"
-          ghcr-image: "blinklabs-io/cardano-cli"
-          description: "Cardano CLI built from source on Debian"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+            - Dockerfile
+            - .github/workflows/ci-docker.yml
   - name: blinklabs-io/docker-cardano-node
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+    profile: docker-standard
+    vars:
+      image: cardano-node
+      description: Cardano Node built from source on Debian
+    overrides:
+      ci-docker.yml:
         triggers:
           pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main, 'release/**']
+            branches:
+            - main
+            - release/**
             paths:
-              - Dockerfile
-              - 'bin/**'
-              - 'config/**'
-              - .github/workflows/ci-docker.yml
+            - Dockerfile
+            - bin/**
+            - config/**
+            - .github/workflows/ci-docker.yml
         matrix:
-          image: [cardano-node, cardano-tracer, cardano-submit-api]
+          image:
+          - cardano-node
+          - cardano-tracer
+          - cardano-submit-api
         params:
-          image-name: "blinklabs-io/${{ matrix.image }}"
-          build-target: "${{ matrix.image }}"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
+          image-name: blinklabs-io/${{ matrix.image }}
+          build-target: ${{ matrix.image }}
+      publish.yml:
         params:
-          docker-image: "blinklabs/cardano-node"
-          ghcr-image: "blinklabs-io/cardano-node"
-          description: "Cardano Node built from source on Debian"
-          build-target: "cardano-node"
-          prerelease-pattern: "-pre-"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+          build-target: cardano-node
+          prerelease-pattern: -pre-
   - name: blinklabs-io/docker-cardano-wallet
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+    profile: docker-standard
+    vars:
+      image: cardano-wallet
+      description: Cardano Wallet built from source on Debian
+    overrides:
+      ci-docker.yml:
         triggers:
           pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
+            branches:
+            - main
             paths:
-              - Dockerfile
-              - 'bin/**'
-              - 'config/**'
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/cardano-wallet"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/cardano-wallet"
-          ghcr-image: "blinklabs-io/cardano-wallet"
-          description: "Cardano Wallet built from source on Debian"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+            - Dockerfile
+            - bin/**
+            - config/**
+            - .github/workflows/ci-docker.yml
   - name: blinklabs-io/docker-cardano-db-sync
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+    profile: docker-standard
+    vars:
+      image: cardano-db-sync
+      description: Cardano DB-sync built from source on Debian
+    overrides:
+      ci-docker.yml:
         triggers:
           pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
+            branches:
+            - main
             paths:
-              - Dockerfile
-              - 'bin/**'
-              - 'config/**'
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/cardano-db-sync"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
+            - Dockerfile
+            - bin/**
+            - config/**
+            - .github/workflows/ci-docker.yml
+      publish.yml:
         triggers:
           push:
-            branches: [main]
-            # cardano-db-sync uses quadruple versioning (e.g. v13.7.1.0-1)
-            tags: ['v*.*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
+            branches:
+            - main
+            tags:
+            - v*.*.*.*
         params:
-          docker-image: "blinklabs/cardano-db-sync"
-          ghcr-image: "blinklabs-io/cardano-db-sync"
-          description: "Cardano DB-sync built from source on Debian"
-          prerelease-pattern: "-pre-"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+          prerelease-pattern: -pre-
   - name: blinklabs-io/docker-parity-subkey
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
-        triggers:
-          pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
-            paths:
-              - Dockerfile
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/subkey"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/subkey"
-          ghcr-image: "blinklabs-io/subkey"
-          description: "Polkadot SDK subkey binary built from source on Debian"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+    profile: docker-standard
+    vars:
+      image: subkey
+      description: Polkadot SDK subkey binary built from source on Debian
   - name: blinklabs-io/docker-wireguard
     settings:
       delete_branch_on_merge: true
@@ -1206,7 +720,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -1280,16 +794,6 @@ repositories:
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}
             COMMIT_HASH=${{ github.sha }}
 
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
       - destination_file: update-issue-on-close.yml
         workflow_name: "Set Project Closed Date"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
@@ -1306,512 +810,98 @@ repositories:
           project_url: "https://github.com/orgs/blinklabs-io/projects/11"
           closed_date_field: "Closed Date"
           closed_at: "${{ github.event.issue.closed_at }}"
-
   - name: blinklabs-io/docker-hydra-node
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+    profile: docker-standard
+    vars:
+      image: hydra-node
+      description: Hydra Node built from source on Debian
+    overrides:
+      ci-docker.yml:
         triggers:
           pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
+            branches:
+            - main
             paths:
-              - Dockerfile
-              - 'bin/**'
-              - 'config/**'
-              - .github/workflows/ci-docker.yml
+            - Dockerfile
+            - bin/**
+            - config/**
+            - .github/workflows/ci-docker.yml
+      publish.yml:
         params:
-          image-name: "blinklabs-io/hydra-node"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/hydra-node"
-          ghcr-image: "blinklabs-io/hydra-node"
-          description: "Hydra Node built from source on Debian"
-          prerelease-pattern: "-pre-"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+          prerelease-pattern: -pre-
   - name: blinklabs-io/docker-amaru
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
-        triggers:
-          pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
-            paths:
-              - Dockerfile
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/amaru"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
+    profile: docker-standard
+    vars:
+      image: amaru
+      description: Amaru built from source on Debian
+    overrides:
+      publish.yml:
         triggers:
           push:
-            branches: [main]
-            tags: ['v*.*.*']
+            branches:
+            - main
+            tags:
+            - v*.*.*
           schedule:
-            - cron: '0 0 * * *'
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/amaru"
-          ghcr-image: "blinklabs-io/amaru"
-          description: "Amaru built from source on Debian"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+          - cron: 0 0 * * *
   - name: blinklabs-io/docker-mithril-signer
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
-        triggers:
-          pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
-            paths:
-              - Dockerfile
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/mithril-signer"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/mithril-signer"
-          ghcr-image: "blinklabs-io/mithril-signer"
-          description: "Mithril signer built from source on Debian"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+    profile: docker-standard
+    vars:
+      image: mithril-signer
+      description: Mithril signer built from source on Debian
   - name: blinklabs-io/docker-mithril-client
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
-        triggers:
-          pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
-            paths:
-              - Dockerfile
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/mithril-client"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/mithril-client"
-          ghcr-image: "blinklabs-io/mithril-client"
-          description: "Mithril client built from source on Debian"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+    profile: docker-standard
+    vars:
+      image: mithril-client
+      description: Mithril client built from source on Debian
   - name: blinklabs-io/docker-haskell
-    # image-name: blinklabs-io/haskell
-    # docker-image: blinklabs/haskell
-    # ghcr-image: blinklabs-io/haskell
-    # description: "GHC and Cabal built on Debian for Cardano"
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
-        triggers:
-          pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main]
-            paths:
-              - Dockerfile
-              - .github/workflows/ci-docker.yml
-        params:
-          image-name: "blinklabs-io/haskell"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
-        params:
-          docker-image: "blinklabs/haskell"
-          ghcr-image: "blinklabs-io/haskell"
-          description: "GHC and Cabal built on Debian for Cardano"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+    profile: docker-standard
+    vars:
+      image: haskell
+      description: GHC and Cabal built on Debian for Cardano
   - name: blinklabs-io/docker-kupo
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+    profile: docker-standard
+    vars:
+      image: kupo
+      description: Kupo built from source on Debian
+    overrides:
+      ci-docker.yml:
         triggers:
           pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main, 'release/**']
+            branches:
+            - main
+            - release/**
             paths:
-              - Dockerfile
-              - 'bin/**'
-              - 'config/**'
-              - .github/workflows/ci-docker.yml
+            - Dockerfile
+            - bin/**
+            - config/**
+            - .github/workflows/ci-docker.yml
         params:
-          image-name: "blinklabs-io/kupo"
-          build-target: "kupo"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
+          build-target: kupo
+      publish.yml:
         params:
-          docker-image: "blinklabs/kupo"
-          ghcr-image: "blinklabs-io/kupo"
-          description: "Kupo built from source on Debian"
-          build-target: "kupo"
-          prerelease-pattern: "-pre-"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
+          build-target: kupo
+          prerelease-pattern: -pre-
   - name: blinklabs-io/docker-ogmios
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+    profile: docker-standard
+    vars:
+      image: ogmios
+      description: Ogmios built from source on Debian
+    overrides:
+      ci-docker.yml:
         triggers:
           pull_request:
-
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
-        triggers:
-          pull_request:
-            branches: [main, 'release/**']
+            branches:
+            - main
+            - release/**
             paths:
-              - Dockerfile
-              - 'bin/**'
-              - 'config/**'
-              - .github/workflows/ci-docker.yml
+            - Dockerfile
+            - bin/**
+            - config/**
+            - .github/workflows/ci-docker.yml
         params:
-          image-name: "blinklabs-io/ogmios"
-          build-target: "ogmios"
-
-      - destination_file: publish.yml
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
-        triggers:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          packages: write
-        secrets:
-          docker-password: DOCKER_PASSWORD
+          build-target: ogmios
+      publish.yml:
         params:
-          docker-image: "blinklabs/ogmios"
-          ghcr-image: "blinklabs-io/ogmios"
-          description: "Ogmios built from source on Debian"
-          build-target: "ogmios"
-          prerelease-pattern: "-pre-"
-
-      - destination_file: test-issue-on-close.yml
-        workflow_name: "Test Issue Close Trigger"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-        params:
-          issue_number: "${{ github.event.issue.number }}"
-          issue_title: "${{ github.event.issue.title }}"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
+          build-target: ogmios
+          prerelease-pattern: -pre-
