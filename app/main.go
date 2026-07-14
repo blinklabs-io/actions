@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
@@ -18,19 +19,53 @@ import (
 // ---------------------------------------------------------------------------
 
 type Config struct {
-	Repositories []RepoConfig `yaml:"repositories"`
+	Profiles     map[string]Profile `yaml:"profiles"`
+	Repositories []RepoConfig       `yaml:"repositories"`
 }
 
-type RepoConfig struct {
-	Name             string             `yaml:"name"`
+// Profile is a reusable template for a class of repositories. A repository that
+// references a profile inherits its settings, collaborators, branch protection
+// and workflows, supplying only per-repo values via `vars` (and, for genuinely
+// special cases, `overrides`).
+type Profile struct {
 	Settings         RepoSettings       `yaml:"settings"`
 	Collaborators    []Collaborator     `yaml:"collaborators"`
 	BranchProtection []BranchProtection `yaml:"branch_protection"`
 	Workflows        []WorkflowConfig   `yaml:"workflows"`
 }
 
+// WorkflowOverride patches a single profile workflow for one repository. Only
+// the fields that differ from the profile need to be set: triggers, matrix,
+// and secrets replace the profile value wholesale, while permissions and params
+// are merged into (and may override individual keys of) the profile's values.
+type WorkflowOverride struct {
+	Triggers    map[string]interface{} `yaml:"triggers"`
+	Matrix      map[string]interface{} `yaml:"matrix"`
+	Permissions map[string]string      `yaml:"permissions"`
+	Params      map[string]string      `yaml:"params"`
+	Secrets     map[string]string      `yaml:"secrets"`
+}
+
+type RepoConfig struct {
+	Name    string `yaml:"name"`
+	Profile string `yaml:"profile"`
+	// Vars supplies the per-repo values substituted into ${var} placeholders in
+	// the referenced profile's workflow params.
+	Vars map[string]string `yaml:"vars"`
+	// Overrides patches individual profile workflows, keyed by destination_file.
+	Overrides        map[string]WorkflowOverride `yaml:"overrides"`
+	Settings         RepoSettings                `yaml:"settings"`
+	Collaborators    []Collaborator              `yaml:"collaborators"`
+	BranchProtection []BranchProtection          `yaml:"branch_protection"`
+	Workflows        []WorkflowConfig            `yaml:"workflows"`
+}
+
 type RepoSettings struct {
-	DeleteBranchOnMerge bool `yaml:"delete_branch_on_merge"`
+	// DeleteBranchOnMerge is a pointer so an explicit `false` in YAML is
+	// distinguishable from an unset field (nil). This lets the profile guard in
+	// expandProfiles detect an explicit override of `false`, and lets
+	// syncRepoSettings leave the setting untouched when it is not specified.
+	DeleteBranchOnMerge *bool `yaml:"delete_branch_on_merge"`
 }
 
 type Collaborator struct {
@@ -108,6 +143,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := expandProfiles(&cfg); err != nil {
+		fmt.Printf("Failed to expand profiles: %v\n", err)
+		os.Exit(1)
+	}
+
 	for _, repo := range cfg.Repositories {
 		owner, repoName := parseRepoString(repo.Name)
 		fmt.Printf("⚡ Starting sync for %s/%s\n", owner, repoName)
@@ -134,6 +174,165 @@ func parseRepoString(fullName string) (string, string) {
 		os.Exit(1)
 	}
 	return parts[0], parts[1]
+}
+
+// ---------------------------------------------------------------------------
+// Profile expansion
+// ---------------------------------------------------------------------------
+
+// varPattern matches ${name} placeholders. GitHub Actions expressions use the
+// ${{ ... }} form; because the character after "${" is "{" (not a letter), they
+// are never matched here and pass through untouched.
+var varPattern = regexp.MustCompile(`\$\{([a-zA-Z][a-zA-Z0-9_-]*)\}`)
+
+// substituteVars replaces every ${name} placeholder in s with vars[name],
+// returning an error if any referenced variable is undefined.
+func substituteVars(s string, vars map[string]string) (string, error) {
+	var missing []string
+	out := varPattern.ReplaceAllStringFunc(s, func(match string) string {
+		key := varPattern.FindStringSubmatch(match)[1]
+		val, ok := vars[key]
+		if !ok {
+			missing = append(missing, key)
+			return match
+		}
+		return val
+	})
+	if len(missing) > 0 {
+		return "", fmt.Errorf("undefined variable(s): %s", strings.Join(missing, ", "))
+	}
+	return out, nil
+}
+
+// cloneWorkflow returns a copy of w with independent Params and Permissions maps
+// so callers can merge overrides and substitute vars without mutating the shared
+// profile.
+func cloneWorkflow(w WorkflowConfig) WorkflowConfig {
+	out := w
+	if w.Params != nil {
+		params := make(map[string]string, len(w.Params))
+		for k, v := range w.Params {
+			params[k] = v
+		}
+		out.Params = params
+	}
+	if w.Permissions != nil {
+		perms := make(map[string]string, len(w.Permissions))
+		for k, v := range w.Permissions {
+			perms[k] = v
+		}
+		out.Permissions = perms
+	}
+	return out
+}
+
+// applyOverride patches a workflow with a per-repo override. Triggers, matrix
+// and secrets replace the profile value wholesale; permissions and params are
+// merged (override keys win), so a repo can add a single permission or param
+// without restating the profile's defaults.
+func applyOverride(wf *WorkflowConfig, ov WorkflowOverride) {
+	if ov.Triggers != nil {
+		wf.Triggers = ov.Triggers
+	}
+	if ov.Matrix != nil {
+		wf.Matrix = ov.Matrix
+	}
+	if ov.Secrets != nil {
+		wf.Secrets = ov.Secrets
+	}
+	if len(ov.Permissions) > 0 {
+		if wf.Permissions == nil {
+			wf.Permissions = make(map[string]string, len(ov.Permissions))
+		}
+		for k, v := range ov.Permissions {
+			wf.Permissions[k] = v
+		}
+	}
+	if len(ov.Params) > 0 {
+		if wf.Params == nil {
+			wf.Params = make(map[string]string, len(ov.Params))
+		}
+		for k, v := range ov.Params {
+			wf.Params[k] = v
+		}
+	}
+}
+
+func workflowExists(workflows []WorkflowConfig, destinationFile string) bool {
+	for _, wf := range workflows {
+		if wf.DestinationFile == destinationFile {
+			return true
+		}
+	}
+	return false
+}
+
+// expandProfiles resolves every repository that references a profile into a
+// fully-materialized RepoConfig: profile settings/collaborators/branch
+// protection are inherited, profile workflows are cloned, per-repo overrides
+// are applied, and ${var} placeholders are substituted from the repo's vars.
+// Repositories without a profile are left untouched.
+func expandProfiles(cfg *Config) error {
+	for i := range cfg.Repositories {
+		repo := &cfg.Repositories[i]
+		if repo.Profile == "" {
+			continue
+		}
+
+		profile, ok := cfg.Profiles[repo.Profile]
+		if !ok {
+			return fmt.Errorf("repository %q references unknown profile %q", repo.Name, repo.Profile)
+		}
+		if len(repo.Workflows) > 0 {
+			return fmt.Errorf("repository %q sets both profile %q and explicit workflows", repo.Name, repo.Profile)
+		}
+		// Profile-based repos inherit settings/collaborators/branch_protection
+		// from the profile; setting them directly would be silently discarded,
+		// so reject it explicitly (mirrors the workflows check above). Because
+		// DeleteBranchOnMerge is a *bool, an explicit `delete_branch_on_merge:
+		// false` yields a non-nil pointer and is caught here too.
+		if repo.Settings != (RepoSettings{}) {
+			return fmt.Errorf("repository %q sets both profile %q and explicit settings; profile-based repos inherit settings from the profile", repo.Name, repo.Profile)
+		}
+		if len(repo.Collaborators) > 0 {
+			return fmt.Errorf("repository %q sets both profile %q and explicit collaborators; profile-based repos inherit collaborators from the profile", repo.Name, repo.Profile)
+		}
+		if len(repo.BranchProtection) > 0 {
+			return fmt.Errorf("repository %q sets both profile %q and explicit branch_protection; profile-based repos inherit branch_protection from the profile", repo.Name, repo.Profile)
+		}
+
+		repo.Settings = profile.Settings
+		repo.Collaborators = profile.Collaborators
+		repo.BranchProtection = profile.BranchProtection
+
+		workflows := make([]WorkflowConfig, 0, len(profile.Workflows))
+		for _, pwf := range profile.Workflows {
+			wf := cloneWorkflow(pwf)
+			if ov, ok := repo.Overrides[wf.DestinationFile]; ok {
+				applyOverride(&wf, ov)
+			}
+			for k, v := range wf.Params {
+				substituted, err := substituteVars(v, repo.Vars)
+				if err != nil {
+					return fmt.Errorf("repository %q workflow %q param %q: %w", repo.Name, wf.DestinationFile, k, err)
+				}
+				wf.Params[k] = substituted
+			}
+			workflows = append(workflows, wf)
+		}
+
+		for dest := range repo.Overrides {
+			if !workflowExists(workflows, dest) {
+				return fmt.Errorf("repository %q override targets unknown workflow %q", repo.Name, dest)
+			}
+		}
+
+		repo.Workflows = workflows
+		repo.Profile = ""
+		repo.Vars = nil
+		repo.Overrides = nil
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -379,10 +578,17 @@ func syncRepoSettings(ctx context.Context, client *github.Client, owner, repo st
 		return
 	}
 
-	if current.GetDeleteBranchOnMerge() != settings.DeleteBranchOnMerge {
+	// An unset (nil) DeleteBranchOnMerge means the setting is unmanaged; leave
+	// the repository's current value untouched.
+	if settings.DeleteBranchOnMerge == nil {
+		fmt.Println("✅ No repository settings to reconcile.")
+		return
+	}
+
+	if current.GetDeleteBranchOnMerge() != *settings.DeleteBranchOnMerge {
 		fmt.Println("  Updating repository settings...")
 		update := &github.Repository{
-			DeleteBranchOnMerge: github.Bool(settings.DeleteBranchOnMerge),
+			DeleteBranchOnMerge: github.Bool(*settings.DeleteBranchOnMerge),
 		}
 		_, _, _ = client.Repositories.Edit(ctx, owner, repo, update)
 	} else {
@@ -403,20 +609,14 @@ func syncCollaborators(ctx context.Context, client *github.Client, owner, repo s
 	}
 }
 
-func syncWorkflows(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig) {
-	// Fetch repo info once to get the actual default branch name.
-	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
-	if err != nil {
-		fmt.Printf("  Error getting repo info: %v\n", err)
-		return
-	}
-	defaultBranch := repoInfo.GetDefaultBranch()
-
-	// Use [[ ]] as template delimiters so GitHub Actions ${{ }} expressions
-	// inside param values are emitted verbatim.
-	//
-	// quoteForYAML wraps values that look like JSON arrays (start with "[") in
-	// YAML single-quotes so they are parsed as strings rather than sequences.
+// buildWorkflowTemplate parses the wrapper template from templatePath using the
+// [[ ]] delimiters so GitHub Actions ${{ }} expressions inside param values are
+// emitted verbatim.
+//
+// quoteForYAML wraps values that look like JSON arrays (start with "[") in YAML
+// single-quotes so they are parsed as strings rather than sequences, and renders
+// multiline values as an indented block scalar (|-).
+func buildWorkflowTemplate(templatePath string) (*template.Template, error) {
 	funcMap := template.FuncMap{
 		"quoteForYAML": func(s string) string {
 			if strings.HasPrefix(strings.TrimSpace(s), "[") {
@@ -437,38 +637,56 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 			return s
 		},
 	}
-	tmpl, err := template.New("workflow.tmpl").Delims("[[", "]]").Funcs(funcMap).ParseFiles("templates/workflow.tmpl")
+	return template.New("workflow.tmpl").Delims("[[", "]]").Funcs(funcMap).ParseFiles(templatePath)
+}
+
+// renderWorkflow renders a single workflow wrapper file from the parsed template.
+func renderWorkflow(tmpl *template.Template, wf WorkflowConfig) ([]byte, error) {
+	triggersYAML, err := renderTriggers(wf.Triggers)
+	if err != nil {
+		return nil, fmt.Errorf("renderTriggers: %w", err)
+	}
+	matrixYAML, err := renderMatrix(wf.Matrix)
+	if err != nil {
+		return nil, fmt.Errorf("renderMatrix: %w", err)
+	}
+	data := templateData{
+		WorkflowName:     wf.WorkflowName,
+		ReusableWorkflow: wf.ReusableWorkflow,
+		Params:           wf.Params,
+		Secrets:          wf.Secrets,
+		Permissions:      wf.Permissions,
+		MatrixYAML:       matrixYAML,
+		TriggersYAML:     triggersYAML,
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func syncWorkflows(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig) {
+	// Fetch repo info once to get the actual default branch name.
+	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		fmt.Printf("  Error getting repo info: %v\n", err)
+		return
+	}
+	defaultBranch := repoInfo.GetDefaultBranch()
+
+	tmpl, err := buildWorkflowTemplate("templates/workflow.tmpl")
 	if err != nil {
 		fmt.Printf("  Template compilation error: %v\n", err)
 		return
 	}
 
 	for _, wf := range workflows {
-		triggersYAML, tErr := renderTriggers(wf.Triggers)
-		if tErr != nil {
-			fmt.Printf("  renderTriggers error for %s: %v\n", wf.DestinationFile, tErr)
+		desiredContent, err := renderWorkflow(tmpl, wf)
+		if err != nil {
+			fmt.Printf("  Render error for %s: %v\n", wf.DestinationFile, err)
 			continue
 		}
-		matrixYAML, mErr := renderMatrix(wf.Matrix)
-		if mErr != nil {
-			fmt.Printf("  renderMatrix error for %s: %v\n", wf.DestinationFile, mErr)
-			continue
-		}
-		data := templateData{
-			WorkflowName:     wf.WorkflowName,
-			ReusableWorkflow: wf.ReusableWorkflow,
-			Params:           wf.Params,
-			Secrets:          wf.Secrets,
-			Permissions:      wf.Permissions,
-			MatrixYAML:       matrixYAML,
-			TriggersYAML:     triggersYAML,
-		}
-		var buf bytes.Buffer
-		if err := tmpl.Execute(&buf, data); err != nil {
-			fmt.Printf("  Template execution error for %s: %v\n", wf.DestinationFile, err)
-			continue
-		}
-		desiredContent := buf.Bytes()
 
 		path := fmt.Sprintf(".github/workflows/%s", wf.DestinationFile)
 		fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)

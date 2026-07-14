@@ -3,7 +3,6 @@ name: Reuseable Publish Docker (Multi-arch Native)
 # Builds and publishes multi-arch Docker images using native runners.
 # Uses separate build-amd64 / build-arm64 jobs followed by a manifest-merge job,
 # matching the native-runner pattern used by repositories such as docker-cardano-cli.
-# This is distinct from reuseable-publish-docker.yml which uses QEMU in a single job.
 
 on:
   workflow_call:
@@ -50,13 +49,6 @@ on:
         required: false
         type: string
         default: ""
-      enable-attestation:
-        description: >
-          Attest the built Docker Hub and GHCR images with build provenance.
-          Attestation is performed per-architecture in each native build job.
-        required: false
-        type: boolean
-        default: false
       enable-trivy-scan:
         description: >
           Run Trivy vulnerability scanner on the pushed multi-arch GHCR image and
@@ -159,7 +151,6 @@ jobs:
           done
 
       - name: Attest Docker Hub image (amd64)
-        if: inputs.enable-attestation
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
         with:
           subject-name: index.docker.io/${{ inputs.docker-image }}
@@ -167,7 +158,6 @@ jobs:
           push-to-registry: true
 
       - name: Attest GHCR image (amd64)
-        if: inputs.enable-attestation
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
         with:
           subject-name: ghcr.io/${{ inputs.ghcr-image }}
@@ -255,7 +245,6 @@ jobs:
           done
 
       - name: Attest Docker Hub image (arm64)
-        if: inputs.enable-attestation
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
         with:
           subject-name: index.docker.io/${{ inputs.docker-image }}
@@ -263,7 +252,6 @@ jobs:
           push-to-registry: true
 
       - name: Attest GHCR image (arm64)
-        if: inputs.enable-attestation
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2 https://github.com/actions/attest-build-provenance/releases/tag/v2
         with:
           subject-name: ghcr.io/${{ inputs.ghcr-image }}

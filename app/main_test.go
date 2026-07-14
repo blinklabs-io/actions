@@ -8,6 +8,7 @@ import (
 	"testing"
 	"text/template"
 
+	"github.com/google/go-github/v60/github"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,24 +17,7 @@ import (
 // production output exactly.
 func newWorkflowTemplate(t *testing.T) (*template.Template, error) {
 	t.Helper()
-	funcMap := template.FuncMap{
-		"quoteForYAML": func(s string) string {
-			if strings.HasPrefix(strings.TrimSpace(s), "[") {
-				return "'" + s + "'"
-			}
-			if strings.Contains(s, "\n") {
-				trimmed := strings.TrimRight(s, "\n")
-				lines := strings.Split(trimmed, "\n")
-				result := "|-"
-				for _, line := range lines {
-					result += "\n        " + line
-				}
-				return result
-			}
-			return s
-		},
-	}
-	return template.New("workflow.tmpl").Delims("[[", "]]").Funcs(funcMap).ParseFiles("../templates/workflow.tmpl")
+	return buildWorkflowTemplate("../templates/workflow.tmpl")
 }
 
 // ---------------------------------------------------------------------------
@@ -111,9 +95,9 @@ func TestConfigUnmarshal_Valid(t *testing.T) {
 		"      - username: alice",
 		"        permission: write",
 		"    workflows:",
-		"      - destination_file: issue-close.yaml",
-		"        workflow_name: \"Issue Close\"",
-		"        reusable_workflow: \"blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main\"",
+		"      - destination_file: update-issue-on-close.yaml",
+		"        workflow_name: \"Set Project Closed Date\"",
+		"        reusable_workflow: \"blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main\"",
 		"        secrets:",
 		"          project_pat: ORG_PROJECT_PAT",
 		"        params:",
@@ -131,13 +115,13 @@ func TestConfigUnmarshal_Valid(t *testing.T) {
 	if repo.Name != "blinklabs-io/test-repo" {
 		t.Errorf("unexpected repo name: %q", repo.Name)
 	}
-	if !repo.Settings.DeleteBranchOnMerge {
+	if repo.Settings.DeleteBranchOnMerge == nil || !*repo.Settings.DeleteBranchOnMerge {
 		t.Error("expected delete_branch_on_merge to be true")
 	}
 	if len(repo.Collaborators) != 1 || repo.Collaborators[0].Username != "alice" {
 		t.Error("collaborators not parsed correctly")
 	}
-	if len(repo.Workflows) != 1 || repo.Workflows[0].DestinationFile != "issue-close.yaml" {
+	if len(repo.Workflows) != 1 || repo.Workflows[0].DestinationFile != "update-issue-on-close.yaml" {
 		t.Error("workflows not parsed correctly")
 	}
 	if repo.Workflows[0].Secrets["project_pat"] != "ORG_PROJECT_PAT" {
@@ -217,7 +201,7 @@ repositories:
     workflows:
       - destination_file: test.yaml
         workflow_name: "Test"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-test-issue-on-close.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
 `
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
@@ -560,7 +544,7 @@ func TestWorkflowTemplate_MultilineBuildArgs(t *testing.T) {
 
 	data := templateData{
 		WorkflowName:     "publish",
-		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker.yml@main",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main",
 		TriggersYAML:     triggersYAML,
 		Secrets:          map[string]string{"docker-password": "DOCKER_PASSWORD"},
 		Params: map[string]string{
@@ -1811,6 +1795,342 @@ func TestWorkflowTemplate_DockerOgmiosPublish(t *testing.T) {
 	for _, c := range checks {
 		if !strings.Contains(out, c.contain) {
 			t.Errorf("rendered workflow missing %s (%q):\n%s", c.desc, c.contain, out)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Profile expansion
+// ---------------------------------------------------------------------------
+
+func TestSubstituteVars(t *testing.T) {
+	vars := map[string]string{"image": "minio", "ghcr-name": "blinklabs-io/minio"}
+
+	cases := []struct {
+		desc, in, want string
+		wantErr        bool
+	}{
+		{"single var", "blinklabs/${image}", "blinklabs/minio", false},
+		{"hyphenated var", "${ghcr-name}", "blinklabs-io/minio", false},
+		{"multiple vars", "${image}-${image}", "minio-minio", false},
+		{"github expression passes through", "${{ github.event.issue.closed_at }}", "${{ github.event.issue.closed_at }}", false},
+		{"mixed var and github expr", "blinklabs-io/${image}:${{ github.sha }}", "blinklabs-io/minio:${{ github.sha }}", false},
+		{"no placeholders", "plain-value", "plain-value", false},
+		{"undefined var", "${missing}", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			got, err := substituteVars(c.in, vars)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got none", c.in)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("substituteVars(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// testProfileConfig returns a minimal config with one profile and one repo that
+// uses it, exercising var substitution and every override kind.
+func testProfileConfig() Config {
+	return Config{
+		Profiles: map[string]Profile{
+			"docker-standard": {
+				Settings:      RepoSettings{DeleteBranchOnMerge: github.Bool(true)},
+				Collaborators: []Collaborator{},
+				BranchProtection: []BranchProtection{
+					{Branch: "main"},
+				},
+				Workflows: []WorkflowConfig{
+					{
+						DestinationFile:  "ci-docker.yml",
+						WorkflowName:     "Docker CI",
+						ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main",
+						Triggers:         map[string]interface{}{"pull_request": nil},
+						Params:           map[string]string{"image-name": "blinklabs-io/${image}"},
+					},
+					{
+						DestinationFile:  "publish.yml",
+						WorkflowName:     "publish",
+						ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main",
+						Triggers:         map[string]interface{}{"push": nil},
+						Permissions:      map[string]string{"contents": "write", "packages": "write"},
+						Secrets:          map[string]string{"docker-password": "DOCKER_PASSWORD"},
+						Params: map[string]string{
+							"docker-image": "blinklabs/${image}",
+							"ghcr-image":   "blinklabs-io/${image}",
+							"description":  "${description}",
+						},
+					},
+				},
+			},
+		},
+		Repositories: []RepoConfig{
+			{
+				Name:    "blinklabs-io/docker-openvpn",
+				Profile: "docker-standard",
+				Vars:    map[string]string{"image": "openvpn", "description": "Simple OpenVPN image"},
+				Overrides: map[string]WorkflowOverride{
+					"publish.yml": {
+						Triggers:    map[string]interface{}{"schedule": []interface{}{map[string]interface{}{"cron": "0 0 * * 1"}}},
+						Permissions: map[string]string{"security-events": "write"},
+						Params:      map[string]string{"enable-trivy-scan": "true"},
+					},
+				},
+			},
+		},
+	}
+}
+
+func findWorkflow(t *testing.T, workflows []WorkflowConfig, dest string) WorkflowConfig {
+	t.Helper()
+	for _, wf := range workflows {
+		if wf.DestinationFile == dest {
+			return wf
+		}
+	}
+	t.Fatalf("workflow %q not found", dest)
+	return WorkflowConfig{}
+}
+
+func TestExpandProfiles_SubstitutionAndOverrides(t *testing.T) {
+	cfg := testProfileConfig()
+	if err := expandProfiles(&cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	repo := cfg.Repositories[0]
+
+	// Profile identity fields are cleared after expansion.
+	if repo.Profile != "" || repo.Vars != nil || repo.Overrides != nil {
+		t.Errorf("profile/vars/overrides not cleared after expansion: %+v", repo)
+	}
+	// Inherited from the profile.
+	if repo.Settings.DeleteBranchOnMerge == nil || !*repo.Settings.DeleteBranchOnMerge {
+		t.Error("settings not inherited from profile")
+	}
+	if len(repo.BranchProtection) != 1 || repo.BranchProtection[0].Branch != "main" {
+		t.Errorf("branch protection not inherited: %+v", repo.BranchProtection)
+	}
+	if len(repo.Workflows) != 2 {
+		t.Fatalf("expected 2 workflows, got %d", len(repo.Workflows))
+	}
+
+	// ci-docker.yml: var substituted, not overridden.
+	ci := findWorkflow(t, repo.Workflows, "ci-docker.yml")
+	if ci.Params["image-name"] != "blinklabs-io/openvpn" {
+		t.Errorf("ci image-name = %q, want blinklabs-io/openvpn", ci.Params["image-name"])
+	}
+
+	// publish.yml: vars substituted, override merged.
+	pub := findWorkflow(t, repo.Workflows, "publish.yml")
+	if pub.Params["docker-image"] != "blinklabs/openvpn" {
+		t.Errorf("docker-image = %q", pub.Params["docker-image"])
+	}
+	if pub.Params["ghcr-image"] != "blinklabs-io/openvpn" {
+		t.Errorf("ghcr-image = %q", pub.Params["ghcr-image"])
+	}
+	if pub.Params["description"] != "Simple OpenVPN image" {
+		t.Errorf("description = %q", pub.Params["description"])
+	}
+	// Override params merged in.
+	if pub.Params["enable-trivy-scan"] != "true" {
+		t.Errorf("enable-trivy-scan override missing: %v", pub.Params)
+	}
+	// Override permissions merged with profile defaults (not replaced).
+	for _, k := range []string{"contents", "packages", "security-events"} {
+		if pub.Permissions[k] != "write" {
+			t.Errorf("expected permission %q=write, got %v", k, pub.Permissions)
+		}
+	}
+	// Override triggers replace the profile value wholesale.
+	if _, hasPush := pub.Triggers["push"]; hasPush {
+		t.Errorf("expected triggers to be replaced, still has push: %v", pub.Triggers)
+	}
+	if _, hasSchedule := pub.Triggers["schedule"]; !hasSchedule {
+		t.Errorf("expected schedule trigger from override: %v", pub.Triggers)
+	}
+}
+
+func TestExpandProfiles_DoesNotMutateSharedProfile(t *testing.T) {
+	cfg := testProfileConfig()
+	// Add a second repo using the same profile with no permission override.
+	cfg.Repositories = append(cfg.Repositories, RepoConfig{
+		Name:    "blinklabs-io/docker-go",
+		Profile: "docker-standard",
+		Vars:    map[string]string{"image": "go", "description": "Go image"},
+	})
+	if err := expandProfiles(&cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// docker-go must NOT have inherited docker-openvpn's security-events override.
+	goRepo := cfg.Repositories[1]
+	pub := findWorkflow(t, goRepo.Workflows, "publish.yml")
+	if _, leaked := pub.Permissions["security-events"]; leaked {
+		t.Errorf("security-events override leaked into shared profile: %v", pub.Permissions)
+	}
+	if pub.Params["docker-image"] != "blinklabs/go" {
+		t.Errorf("docker-go docker-image = %q, want blinklabs/go", pub.Params["docker-image"])
+	}
+}
+
+func TestExpandProfiles_Errors(t *testing.T) {
+	t.Run("unknown profile", func(t *testing.T) {
+		cfg := Config{Repositories: []RepoConfig{{Name: "x/y", Profile: "nope"}}}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error for unknown profile")
+		}
+	})
+
+	t.Run("profile with explicit workflows", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {}},
+			Repositories: []RepoConfig{{
+				Name:      "x/y",
+				Profile:   "p",
+				Workflows: []WorkflowConfig{{DestinationFile: "a.yml"}},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error when profile and explicit workflows both set")
+		}
+	})
+
+	t.Run("profile with explicit settings", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {}},
+			Repositories: []RepoConfig{{
+				Name:     "x/y",
+				Profile:  "p",
+				Settings: RepoSettings{DeleteBranchOnMerge: github.Bool(true)},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error when profile and explicit settings both set")
+		}
+	})
+
+	t.Run("profile with explicit false settings", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {}},
+			Repositories: []RepoConfig{{
+				Name:     "x/y",
+				Profile:  "p",
+				Settings: RepoSettings{DeleteBranchOnMerge: github.Bool(false)},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error when profile-based repo explicitly sets delete_branch_on_merge: false")
+		}
+	})
+
+	t.Run("profile with explicit collaborators", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {}},
+			Repositories: []RepoConfig{{
+				Name:          "x/y",
+				Profile:       "p",
+				Collaborators: []Collaborator{{Username: "alice", Permission: "write"}},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error when profile and explicit collaborators both set")
+		}
+	})
+
+	t.Run("profile with explicit branch_protection", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {}},
+			Repositories: []RepoConfig{{
+				Name:             "x/y",
+				Profile:          "p",
+				BranchProtection: []BranchProtection{{Branch: "main"}},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error when profile and explicit branch_protection both set")
+		}
+	})
+
+	t.Run("override targets unknown workflow", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {Workflows: []WorkflowConfig{{DestinationFile: "a.yml"}}}},
+			Repositories: []RepoConfig{{
+				Name:      "x/y",
+				Profile:   "p",
+				Overrides: map[string]WorkflowOverride{"missing.yml": {}},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error for override targeting unknown workflow")
+		}
+	})
+
+	t.Run("undefined var", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {Workflows: []WorkflowConfig{{
+				DestinationFile: "a.yml",
+				Params:          map[string]string{"x": "${undefined}"},
+			}}}},
+			Repositories: []RepoConfig{{Name: "x/y", Profile: "p"}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error for undefined var")
+		}
+	})
+}
+
+// TestExpandProfiles_RealConfig loads the actual repos-config.yaml and asserts it
+// expands cleanly, every repo has workflows, and profile-based repos render with
+// the required always-on attestation permissions.
+func TestExpandProfiles_RealConfig(t *testing.T) {
+	raw, err := os.ReadFile("../repos-config.yaml")
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if err := expandProfiles(&cfg); err != nil {
+		t.Fatalf("expandProfiles: %v", err)
+	}
+
+	tmpl, err := buildWorkflowTemplate("../templates/workflow.tmpl")
+	if err != nil {
+		t.Fatalf("build template: %v", err)
+	}
+
+	for _, repo := range cfg.Repositories {
+		if repo.Profile != "" {
+			t.Errorf("repo %s still references a profile after expansion", repo.Name)
+		}
+		if len(repo.Workflows) == 0 {
+			t.Errorf("repo %s has no workflows after expansion", repo.Name)
+		}
+		for _, wf := range repo.Workflows {
+			content, err := renderWorkflow(tmpl, wf)
+			if err != nil {
+				t.Errorf("render %s/%s: %v", repo.Name, wf.DestinationFile, err)
+				continue
+			}
+			// Publish wrappers for the native multi-arch workflow must grant the
+			// permissions required by the now-always-on attestation step.
+			if wf.DestinationFile == "publish.yml" &&
+				strings.Contains(wf.ReusableWorkflow, "reuseable-publish-docker-multiarch.yml") {
+				for _, perm := range []string{"attestations: write", "id-token: write"} {
+					if !strings.Contains(string(content), perm) {
+						t.Errorf("%s publish.yml missing %q for always-on attestation", repo.Name, perm)
+					}
+				}
+			}
 		}
 	}
 }
