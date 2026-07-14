@@ -8,6 +8,7 @@ import (
 	"testing"
 	"text/template"
 
+	"github.com/google/go-github/v60/github"
 	"gopkg.in/yaml.v3"
 )
 
@@ -114,7 +115,7 @@ func TestConfigUnmarshal_Valid(t *testing.T) {
 	if repo.Name != "blinklabs-io/test-repo" {
 		t.Errorf("unexpected repo name: %q", repo.Name)
 	}
-	if !repo.Settings.DeleteBranchOnMerge {
+	if repo.Settings.DeleteBranchOnMerge == nil || !*repo.Settings.DeleteBranchOnMerge {
 		t.Error("expected delete_branch_on_merge to be true")
 	}
 	if len(repo.Collaborators) != 1 || repo.Collaborators[0].Username != "alice" {
@@ -1842,7 +1843,7 @@ func testProfileConfig() Config {
 	return Config{
 		Profiles: map[string]Profile{
 			"docker-standard": {
-				Settings:      RepoSettings{DeleteBranchOnMerge: true},
+				Settings:      RepoSettings{DeleteBranchOnMerge: github.Bool(true)},
 				Collaborators: []Collaborator{},
 				BranchProtection: []BranchProtection{
 					{Branch: "main"},
@@ -1912,7 +1913,7 @@ func TestExpandProfiles_SubstitutionAndOverrides(t *testing.T) {
 		t.Errorf("profile/vars/overrides not cleared after expansion: %+v", repo)
 	}
 	// Inherited from the profile.
-	if !repo.Settings.DeleteBranchOnMerge {
+	if repo.Settings.DeleteBranchOnMerge == nil || !*repo.Settings.DeleteBranchOnMerge {
 		t.Error("settings not inherited from profile")
 	}
 	if len(repo.BranchProtection) != 1 || repo.BranchProtection[0].Branch != "main" {
@@ -2008,11 +2009,25 @@ func TestExpandProfiles_Errors(t *testing.T) {
 			Repositories: []RepoConfig{{
 				Name:     "x/y",
 				Profile:  "p",
-				Settings: RepoSettings{DeleteBranchOnMerge: true},
+				Settings: RepoSettings{DeleteBranchOnMerge: github.Bool(true)},
 			}},
 		}
 		if err := expandProfiles(&cfg); err == nil {
 			t.Error("expected error when profile and explicit settings both set")
+		}
+	})
+
+	t.Run("profile with explicit false settings", func(t *testing.T) {
+		cfg := Config{
+			Profiles: map[string]Profile{"p": {}},
+			Repositories: []RepoConfig{{
+				Name:     "x/y",
+				Profile:  "p",
+				Settings: RepoSettings{DeleteBranchOnMerge: github.Bool(false)},
+			}},
+		}
+		if err := expandProfiles(&cfg); err == nil {
+			t.Error("expected error when profile-based repo explicitly sets delete_branch_on_merge: false")
 		}
 	})
 

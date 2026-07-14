@@ -61,7 +61,11 @@ type RepoConfig struct {
 }
 
 type RepoSettings struct {
-	DeleteBranchOnMerge bool `yaml:"delete_branch_on_merge"`
+	// DeleteBranchOnMerge is a pointer so an explicit `false` in YAML is
+	// distinguishable from an unset field (nil). This lets the profile guard in
+	// expandProfiles detect an explicit override of `false`, and lets
+	// syncRepoSettings leave the setting untouched when it is not specified.
+	DeleteBranchOnMerge *bool `yaml:"delete_branch_on_merge"`
 }
 
 type Collaborator struct {
@@ -284,7 +288,9 @@ func expandProfiles(cfg *Config) error {
 		}
 		// Profile-based repos inherit settings/collaborators/branch_protection
 		// from the profile; setting them directly would be silently discarded,
-		// so reject it explicitly (mirrors the workflows check above).
+		// so reject it explicitly (mirrors the workflows check above). Because
+		// DeleteBranchOnMerge is a *bool, an explicit `delete_branch_on_merge:
+		// false` yields a non-nil pointer and is caught here too.
 		if repo.Settings != (RepoSettings{}) {
 			return fmt.Errorf("repository %q sets both profile %q and explicit settings; profile-based repos inherit settings from the profile", repo.Name, repo.Profile)
 		}
@@ -572,10 +578,17 @@ func syncRepoSettings(ctx context.Context, client *github.Client, owner, repo st
 		return
 	}
 
-	if current.GetDeleteBranchOnMerge() != settings.DeleteBranchOnMerge {
+	// An unset (nil) DeleteBranchOnMerge means the setting is unmanaged; leave
+	// the repository's current value untouched.
+	if settings.DeleteBranchOnMerge == nil {
+		fmt.Println("✅ No repository settings to reconcile.")
+		return
+	}
+
+	if current.GetDeleteBranchOnMerge() != *settings.DeleteBranchOnMerge {
 		fmt.Println("  Updating repository settings...")
 		update := &github.Repository{
-			DeleteBranchOnMerge: github.Bool(settings.DeleteBranchOnMerge),
+			DeleteBranchOnMerge: github.Bool(*settings.DeleteBranchOnMerge),
 		}
 		_, _, _ = client.Repositories.Edit(ctx, owner, repo, update)
 	} else {
