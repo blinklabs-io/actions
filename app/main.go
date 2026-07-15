@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"sort"
@@ -20,8 +22,42 @@ import (
 
 type Config struct {
 	Profiles     map[string]Profile `yaml:"profiles"`
+	Discovery    Discovery          `yaml:"discovery"`
 	Repositories []RepoConfig       `yaml:"repositories"`
 }
+
+// Discovery configures optional org-wide repository auto-discovery. When
+// disabled (the default), the engine manages exactly the repositories listed in
+// repos-config.yaml. When enabled, the engine additionally enumerates the
+// organization's repositories and manages any that contain a profile marker
+// file, so a new repository created from a template is picked up automatically
+// without editing repos-config.yaml.
+type Discovery struct {
+	// Enabled turns auto-discovery on. Absent/false preserves the original
+	// config-only behavior exactly.
+	Enabled bool `yaml:"enabled"`
+	// Organization is the GitHub org to scan (e.g. blinklabs-io).
+	Organization string `yaml:"organization"`
+	// MarkerPath is the in-repo path of the profile marker file. Defaults to
+	// .blinklabs/profile.yml when empty.
+	MarkerPath string `yaml:"marker_path"`
+	// Topic, when set, restricts discovery to repositories carrying this GitHub
+	// topic. Empty means every non-archived repository is considered.
+	Topic string `yaml:"topic"`
+}
+
+// RepoMarker is the schema of the in-repository profile marker file. It carries
+// the same profile/vars/overrides a repository would otherwise declare inline in
+// repos-config.yaml, minus the repository name (which is derived from the repo
+// the marker was found in).
+type RepoMarker struct {
+	Profile   string                      `yaml:"profile"`
+	Vars      map[string]string           `yaml:"vars"`
+	Overrides map[string]WorkflowOverride `yaml:"overrides"`
+}
+
+// defaultMarkerPath is used when Discovery.MarkerPath is empty.
+const defaultMarkerPath = ".blinklabs/profile.yml"
 
 // Profile is a reusable template for a class of repositories. A repository that
 // references a profile inherits its settings, collaborators, branch protection
@@ -141,6 +177,19 @@ func main() {
 	if err := yaml.Unmarshal(configFile, &cfg); err != nil {
 		fmt.Printf("Failed to parse config: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Optional org-wide auto-discovery. Disabled by default, so absent config
+	// leaves the original config-only behavior untouched.
+	if cfg.Discovery.Enabled {
+		fmt.Printf("🔍 Discovering managed repositories in %s\n", cfg.Discovery.Organization)
+		discovered, err := discoverRepositories(ctx, client.Repositories, cfg.Discovery)
+		if err != nil {
+			fmt.Printf("Failed to discover repositories: %v\n", err)
+			os.Exit(1)
+		}
+		mergeDiscovered(&cfg, discovered)
+		fmt.Printf("   Discovered %d marker-managed repositories\n", len(discovered))
 	}
 
 	if err := expandProfiles(&cfg); err != nil {
@@ -274,65 +323,235 @@ func workflowExists(workflows []WorkflowConfig, destinationFile string) bool {
 // Repositories without a profile are left untouched.
 func expandProfiles(cfg *Config) error {
 	for i := range cfg.Repositories {
-		repo := &cfg.Repositories[i]
-		if repo.Profile == "" {
-			continue
+		if err := expandRepo(cfg, &cfg.Repositories[i]); err != nil {
+			return err
 		}
-
-		profile, ok := cfg.Profiles[repo.Profile]
-		if !ok {
-			return fmt.Errorf("repository %q references unknown profile %q", repo.Name, repo.Profile)
-		}
-		if len(repo.Workflows) > 0 {
-			return fmt.Errorf("repository %q sets both profile %q and explicit workflows", repo.Name, repo.Profile)
-		}
-		// Profile-based repos inherit settings/collaborators/branch_protection
-		// from the profile; setting them directly would be silently discarded,
-		// so reject it explicitly (mirrors the workflows check above). Because
-		// DeleteBranchOnMerge is a *bool, an explicit `delete_branch_on_merge:
-		// false` yields a non-nil pointer and is caught here too.
-		if repo.Settings != (RepoSettings{}) {
-			return fmt.Errorf("repository %q sets both profile %q and explicit settings; profile-based repos inherit settings from the profile", repo.Name, repo.Profile)
-		}
-		if len(repo.Collaborators) > 0 {
-			return fmt.Errorf("repository %q sets both profile %q and explicit collaborators; profile-based repos inherit collaborators from the profile", repo.Name, repo.Profile)
-		}
-		if len(repo.BranchProtection) > 0 {
-			return fmt.Errorf("repository %q sets both profile %q and explicit branch_protection; profile-based repos inherit branch_protection from the profile", repo.Name, repo.Profile)
-		}
-
-		repo.Settings = profile.Settings
-		repo.Collaborators = profile.Collaborators
-		repo.BranchProtection = profile.BranchProtection
-
-		workflows := make([]WorkflowConfig, 0, len(profile.Workflows))
-		for _, pwf := range profile.Workflows {
-			wf := cloneWorkflow(pwf)
-			if ov, ok := repo.Overrides[wf.DestinationFile]; ok {
-				applyOverride(&wf, ov)
-			}
-			for k, v := range wf.Params {
-				substituted, err := substituteVars(v, repo.Vars)
-				if err != nil {
-					return fmt.Errorf("repository %q workflow %q param %q: %w", repo.Name, wf.DestinationFile, k, err)
-				}
-				wf.Params[k] = substituted
-			}
-			workflows = append(workflows, wf)
-		}
-
-		for dest := range repo.Overrides {
-			if !workflowExists(workflows, dest) {
-				return fmt.Errorf("repository %q override targets unknown workflow %q", repo.Name, dest)
-			}
-		}
-
-		repo.Workflows = workflows
-		repo.Profile = ""
-		repo.Vars = nil
-		repo.Overrides = nil
 	}
 	return nil
+}
+
+// expandRepo materializes a single profile-based repository in place, applying
+// the profile's inheritance, per-repo overrides and ${var} substitution. A
+// repository without a profile is left untouched. It is factored out of
+// expandProfiles so discovered repositories can be expanded and validated one
+// at a time — a bad marker then skips only that repository instead of aborting
+// the whole run (see mergeDiscovered).
+func expandRepo(cfg *Config, repo *RepoConfig) error {
+	if repo.Profile == "" {
+		return nil
+	}
+
+	profile, ok := cfg.Profiles[repo.Profile]
+	if !ok {
+		return fmt.Errorf("repository %q references unknown profile %q", repo.Name, repo.Profile)
+	}
+	if len(repo.Workflows) > 0 {
+		return fmt.Errorf("repository %q sets both profile %q and explicit workflows", repo.Name, repo.Profile)
+	}
+	// Profile-based repos inherit settings/collaborators/branch_protection
+	// from the profile; setting them directly would be silently discarded,
+	// so reject it explicitly (mirrors the workflows check above). Because
+	// DeleteBranchOnMerge is a *bool, an explicit `delete_branch_on_merge:
+	// false` yields a non-nil pointer and is caught here too.
+	if repo.Settings != (RepoSettings{}) {
+		return fmt.Errorf("repository %q sets both profile %q and explicit settings; profile-based repos inherit settings from the profile", repo.Name, repo.Profile)
+	}
+	if len(repo.Collaborators) > 0 {
+		return fmt.Errorf("repository %q sets both profile %q and explicit collaborators; profile-based repos inherit collaborators from the profile", repo.Name, repo.Profile)
+	}
+	if len(repo.BranchProtection) > 0 {
+		return fmt.Errorf("repository %q sets both profile %q and explicit branch_protection; profile-based repos inherit branch_protection from the profile", repo.Name, repo.Profile)
+	}
+
+	repo.Settings = profile.Settings
+	repo.Collaborators = profile.Collaborators
+	repo.BranchProtection = profile.BranchProtection
+
+	workflows := make([]WorkflowConfig, 0, len(profile.Workflows))
+	for _, pwf := range profile.Workflows {
+		wf := cloneWorkflow(pwf)
+		if ov, ok := repo.Overrides[wf.DestinationFile]; ok {
+			applyOverride(&wf, ov)
+		}
+		for k, v := range wf.Params {
+			substituted, err := substituteVars(v, repo.Vars)
+			if err != nil {
+				return fmt.Errorf("repository %q workflow %q param %q: %w", repo.Name, wf.DestinationFile, k, err)
+			}
+			wf.Params[k] = substituted
+		}
+		workflows = append(workflows, wf)
+	}
+
+	for dest := range repo.Overrides {
+		if !workflowExists(workflows, dest) {
+			return fmt.Errorf("repository %q override targets unknown workflow %q", repo.Name, dest)
+		}
+	}
+
+	repo.Workflows = workflows
+	repo.Profile = ""
+	repo.Vars = nil
+	repo.Overrides = nil
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Repository auto-discovery
+// ---------------------------------------------------------------------------
+
+// discoveryClient is the subset of *github.RepositoriesService that discovery
+// needs. Defining it as an interface keeps discoverRepositories unit-testable
+// with a fake, and *github.RepositoriesService satisfies it directly.
+type discoveryClient interface {
+	ListByOrg(ctx context.Context, org string, opts *github.RepositoryListByOrgOptions) ([]*github.Repository, *github.Response, error)
+	GetContents(ctx context.Context, owner, repo, path string, opts *github.RepositoryContentGetOptions) (*github.RepositoryContent, []*github.RepositoryContent, *github.Response, error)
+}
+
+// parseMarker decodes a profile marker file into a RepoConfig for the given
+// "owner/repo". The marker must name a profile; vars and overrides are optional.
+func parseMarker(data []byte, fullName string) (RepoConfig, error) {
+	var m RepoMarker
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return RepoConfig{}, fmt.Errorf("parse marker for %q: %w", fullName, err)
+	}
+	if strings.TrimSpace(m.Profile) == "" {
+		return RepoConfig{}, fmt.Errorf("marker for %q does not specify a profile", fullName)
+	}
+	return RepoConfig{
+		Name:      fullName,
+		Profile:   m.Profile,
+		Vars:      m.Vars,
+		Overrides: m.Overrides,
+	}, nil
+}
+
+// isNotFound reports whether err is a GitHub 404 (e.g. a repository without a
+// marker file), which discovery treats as "not managed" rather than a failure.
+func isNotFound(err error) bool {
+	var ghErr *github.ErrorResponse
+	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound
+}
+
+// discoverRepositories enumerates the organization's repositories and returns a
+// RepoConfig for each non-archived repository that contains a valid profile
+// marker file. Repositories without a marker (404) are skipped silently; a
+// repository whose marker fails to parse is skipped with a warning so one bad
+// marker cannot halt the whole run. Any other error reading a marker (e.g. 403,
+// 500, network) is propagated so the run does not silently leave repositories
+// unmanaged. When d.Topic is set, only repositories carrying that topic are
+// considered.
+func discoverRepositories(ctx context.Context, client discoveryClient, d Discovery) ([]RepoConfig, error) {
+	if d.Organization == "" {
+		return nil, errors.New("discovery enabled but no organization configured")
+	}
+	markerPath := d.MarkerPath
+	if markerPath == "" {
+		markerPath = defaultMarkerPath
+	}
+
+	opts := &github.RepositoryListByOrgOptions{ListOptions: github.ListOptions{PerPage: 100}}
+	var discovered []RepoConfig
+	for {
+		repos, resp, err := client.ListByOrg(ctx, d.Organization, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list repositories for org %q: %w", d.Organization, err)
+		}
+		for _, r := range repos {
+			if r.GetArchived() {
+				continue
+			}
+			if d.Topic != "" && !hasTopic(r.Topics, d.Topic) {
+				continue
+			}
+			fullName := r.GetFullName()
+			owner, name := r.GetOwner().GetLogin(), r.GetName()
+			if owner == "" || name == "" {
+				continue
+			}
+			content, _, _, err := client.GetContents(ctx, owner, name, markerPath, nil)
+			if err != nil {
+				if isNotFound(err) {
+					continue
+				}
+				// A non-404 failure means we cannot tell whether the repo is
+				// managed; fail loudly rather than silently leaving it stale.
+				return nil, fmt.Errorf("read marker for %s: %w", fullName, err)
+			}
+			if content == nil {
+				// marker_path resolved to a directory (or otherwise has no file
+				// content); GetContent would panic, so treat it as no marker.
+				fmt.Printf("  ⚠️ discovery: marker path for %s is not a file; skipping\n", fullName)
+				continue
+			}
+			decoded, err := content.GetContent()
+			if err != nil {
+				fmt.Printf("  ⚠️ discovery: decoding marker for %s: %v\n", fullName, err)
+				continue
+			}
+			repoCfg, err := parseMarker([]byte(decoded), fullName)
+			if err != nil {
+				fmt.Printf("  ⚠️ discovery: %v\n", err)
+				continue
+			}
+			discovered = append(discovered, repoCfg)
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return discovered, nil
+}
+
+func hasTopic(topics []string, want string) bool {
+	for _, t := range topics {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeDiscovered appends discovered repositories to cfg.Repositories. A
+// repository already listed explicitly in repos-config.yaml takes precedence and
+// the discovered entry is skipped, so teams can migrate to markers incrementally
+// while pinning special cases in the central config. Repository names are
+// compared case-insensitively because GitHub owner/repo slugs are
+// case-insensitive. Each discovered repository is expanded in isolation, so a
+// bad marker (an unknown profile, an undefined variable, or an override
+// targeting an unknown workflow) is skipped with a warning rather than aborting
+// the whole run — a typo in one newly onboarded repository cannot block
+// governance for every repository. Explicit config still fails fast in
+// expandProfiles.
+func mergeDiscovered(cfg *Config, discovered []RepoConfig) {
+	seen := make(map[string]bool, len(cfg.Repositories))
+	for _, r := range cfg.Repositories {
+		seen[strings.ToLower(r.Name)] = true
+	}
+	for _, r := range discovered {
+		key := strings.ToLower(r.Name)
+		if seen[key] {
+			fmt.Printf("  discovery: %s is pinned in repos-config.yaml; skipping marker\n", r.Name)
+			continue
+		}
+		if _, ok := cfg.Profiles[r.Profile]; !ok {
+			fmt.Printf("  ⚠️ discovery: %s references unknown profile %q; skipping\n", r.Name, r.Profile)
+			continue
+		}
+		// Expand the discovered repository in isolation so a bad marker (an
+		// undefined variable or an override targeting an unknown workflow)
+		// skips only this repository rather than aborting governance for every
+		// repository. Working on a copy leaves the original slice and the shared
+		// profile untouched if expansion fails.
+		expanded := r
+		if err := expandRepo(cfg, &expanded); err != nil {
+			fmt.Printf("  ⚠️ discovery: %s: %v; skipping\n", r.Name, err)
+			continue
+		}
+		seen[key] = true
+		cfg.Repositories = append(cfg.Repositories, expanded)
+	}
 }
 
 // ---------------------------------------------------------------------------

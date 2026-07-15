@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -2132,5 +2134,307 @@ func TestExpandProfiles_RealConfig(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Repository auto-discovery
+// ---------------------------------------------------------------------------
+
+func TestParseMarker(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		data := []byte("profile: docker-standard\nvars:\n  image: foo\n  description: Foo image\n")
+		rc, err := parseMarker(data, "blinklabs-io/docker-foo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if rc.Name != "blinklabs-io/docker-foo" {
+			t.Errorf("name = %q", rc.Name)
+		}
+		if rc.Profile != "docker-standard" {
+			t.Errorf("profile = %q", rc.Profile)
+		}
+		if rc.Vars["image"] != "foo" || rc.Vars["description"] != "Foo image" {
+			t.Errorf("vars = %v", rc.Vars)
+		}
+	})
+
+	t.Run("missing profile", func(t *testing.T) {
+		if _, err := parseMarker([]byte("vars:\n  image: foo\n"), "x/y"); err == nil {
+			t.Error("expected error for marker without a profile")
+		}
+	})
+
+	t.Run("invalid yaml", func(t *testing.T) {
+		if _, err := parseMarker([]byte("profile: [unterminated"), "x/y"); err == nil {
+			t.Error("expected error for malformed marker yaml")
+		}
+	})
+
+	t.Run("overrides preserved", func(t *testing.T) {
+		data := []byte("profile: docker-standard\noverrides:\n  publish.yml:\n    params:\n      build-target: foo\n")
+		rc, err := parseMarker(data, "x/y")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if rc.Overrides["publish.yml"].Params["build-target"] != "foo" {
+			t.Errorf("override not parsed: %+v", rc.Overrides)
+		}
+	})
+}
+
+// fakeDiscovery is an in-memory discoveryClient for tests: it serves a fixed
+// repository list and a marker-content lookup keyed by "owner/repo". A missing
+// key yields a GitHub 404, mirroring a repository without a marker file.
+// serverErr entries return a non-404 error; dirMarkers entries return nil file
+// content (as GitHub does when the path is a directory).
+type fakeDiscovery struct {
+	repos      []*github.Repository
+	markers    map[string]string
+	serverErr  map[string]bool
+	dirMarkers map[string]bool
+}
+
+func (f *fakeDiscovery) ListByOrg(_ context.Context, _ string, _ *github.RepositoryListByOrgOptions) ([]*github.Repository, *github.Response, error) {
+	return f.repos, &github.Response{}, nil
+}
+
+func (f *fakeDiscovery) GetContents(_ context.Context, owner, repo, _ string, _ *github.RepositoryContentGetOptions) (*github.RepositoryContent, []*github.RepositoryContent, *github.Response, error) {
+	key := owner + "/" + repo
+	if f.serverErr[key] {
+		resp := &github.Response{Response: &http.Response{StatusCode: http.StatusInternalServerError}}
+		return nil, nil, resp, &github.ErrorResponse{Response: &http.Response{StatusCode: http.StatusInternalServerError}}
+	}
+	if f.dirMarkers[key] {
+		// A directory path yields directory entries and nil file content.
+		return nil, []*github.RepositoryContent{}, &github.Response{}, nil
+	}
+	content, ok := f.markers[key]
+	if !ok {
+		resp := &github.Response{Response: &http.Response{StatusCode: http.StatusNotFound}}
+		return nil, nil, resp, &github.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}}
+	}
+	// Encoding left empty so GetContent() returns the string verbatim.
+	return &github.RepositoryContent{Content: github.String(content)}, nil, &github.Response{}, nil
+}
+
+func ghRepo(owner, name string, archived bool, topics ...string) *github.Repository {
+	return &github.Repository{
+		Name:     github.String(name),
+		FullName: github.String(owner + "/" + name),
+		Owner:    &github.User{Login: github.String(owner)},
+		Archived: github.Bool(archived),
+		Topics:   topics,
+	}
+}
+
+func discoveredNames(repos []RepoConfig) []string {
+	names := make([]string, len(repos))
+	for i, r := range repos {
+		names[i] = r.Name
+	}
+	return names
+}
+
+func TestDiscoverRepositories_TopicFilter(t *testing.T) {
+	fake := &fakeDiscovery{
+		repos: []*github.Repository{
+			ghRepo("blinklabs-io", "docker-foo", false, "blinklabs-managed"),
+			ghRepo("blinklabs-io", "docker-bar", false, "blinklabs-managed"), // no marker -> 404
+			ghRepo("blinklabs-io", "archived-repo", true, "blinklabs-managed"),
+			ghRepo("blinklabs-io", "no-topic", false),
+			ghRepo("blinklabs-io", "bad-marker", false, "blinklabs-managed"),
+		},
+		markers: map[string]string{
+			"blinklabs-io/docker-foo":    "profile: docker-standard\nvars:\n  image: foo\n",
+			"blinklabs-io/archived-repo": "profile: docker-standard\n",
+			"blinklabs-io/no-topic":      "profile: docker-standard\n",
+			"blinklabs-io/bad-marker":    "vars:\n  x: y\n", // no profile -> skipped with warning
+		},
+	}
+
+	got, err := discoverRepositories(context.Background(), fake, Discovery{
+		Enabled:      true,
+		Organization: "blinklabs-io",
+		Topic:        "blinklabs-managed",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := discoveredNames(got)
+	if len(names) != 1 || names[0] != "blinklabs-io/docker-foo" {
+		t.Fatalf("expected only docker-foo, got %v", names)
+	}
+	if got[0].Profile != "docker-standard" || got[0].Vars["image"] != "foo" {
+		t.Errorf("marker not parsed into RepoConfig: %+v", got[0])
+	}
+}
+
+func TestDiscoverRepositories_NoTopicFilter(t *testing.T) {
+	fake := &fakeDiscovery{
+		repos: []*github.Repository{
+			ghRepo("blinklabs-io", "docker-foo", false),
+			ghRepo("blinklabs-io", "no-topic", false),
+			ghRepo("blinklabs-io", "archived-repo", true),
+			ghRepo("blinklabs-io", "no-marker", false),
+		},
+		markers: map[string]string{
+			"blinklabs-io/docker-foo":    "profile: docker-standard\n",
+			"blinklabs-io/no-topic":      "profile: docker-standard\n",
+			"blinklabs-io/archived-repo": "profile: docker-standard\n",
+		},
+	}
+	got, err := discoverRepositories(context.Background(), fake, Discovery{
+		Enabled:      true,
+		Organization: "blinklabs-io",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := discoveredNames(got)
+	if len(names) != 2 {
+		t.Fatalf("expected docker-foo and no-topic, got %v", names)
+	}
+	for _, n := range names {
+		if n == "blinklabs-io/archived-repo" || n == "blinklabs-io/no-marker" {
+			t.Errorf("unexpected repo discovered: %s", n)
+		}
+	}
+}
+
+func TestDiscoverRepositories_NoOrganization(t *testing.T) {
+	if _, err := discoverRepositories(context.Background(), &fakeDiscovery{}, Discovery{Enabled: true}); err == nil {
+		t.Error("expected error when organization is empty")
+	}
+}
+
+func TestDiscoverRepositories_ServerErrorIsFatal(t *testing.T) {
+	fake := &fakeDiscovery{
+		repos:     []*github.Repository{ghRepo("blinklabs-io", "docker-foo", false)},
+		serverErr: map[string]bool{"blinklabs-io/docker-foo": true},
+	}
+	if _, err := discoverRepositories(context.Background(), fake, Discovery{
+		Enabled:      true,
+		Organization: "blinklabs-io",
+	}); err == nil {
+		t.Error("expected a non-404 marker read error to be propagated")
+	}
+}
+
+func TestDiscoverRepositories_DirectoryMarkerSkipped(t *testing.T) {
+	fake := &fakeDiscovery{
+		repos: []*github.Repository{
+			ghRepo("blinklabs-io", "docker-foo", false),
+			ghRepo("blinklabs-io", "docker-dir", false),
+		},
+		markers:    map[string]string{"blinklabs-io/docker-foo": "profile: docker-standard\n"},
+		dirMarkers: map[string]bool{"blinklabs-io/docker-dir": true},
+	}
+	got, err := discoverRepositories(context.Background(), fake, Discovery{
+		Enabled:      true,
+		Organization: "blinklabs-io",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := discoveredNames(got)
+	if len(names) != 1 || names[0] != "blinklabs-io/docker-foo" {
+		t.Fatalf("expected only docker-foo (directory marker skipped), got %v", names)
+	}
+}
+
+func TestMergeDiscovered_ExplicitWins(t *testing.T) {
+	cfg := Config{
+		Profiles: map[string]Profile{"docker-standard": {}},
+		Repositories: []RepoConfig{
+			{Name: "blinklabs-io/docker-foo", Profile: "docker-standard", Vars: map[string]string{"image": "pinned"}},
+		},
+	}
+	discovered := []RepoConfig{
+		{Name: "blinklabs-io/docker-foo", Profile: "docker-standard", Vars: map[string]string{"image": "from-marker"}},
+		{Name: "blinklabs-io/docker-baz", Profile: "docker-standard"},
+	}
+	mergeDiscovered(&cfg, discovered)
+
+	if len(cfg.Repositories) != 2 {
+		t.Fatalf("expected 2 repositories after merge, got %d: %v", len(cfg.Repositories), discoveredNames(cfg.Repositories))
+	}
+	// The explicit docker-foo entry must be preserved (marker skipped).
+	var foo *RepoConfig
+	for i := range cfg.Repositories {
+		if cfg.Repositories[i].Name == "blinklabs-io/docker-foo" {
+			foo = &cfg.Repositories[i]
+		}
+	}
+	if foo == nil || foo.Vars["image"] != "pinned" {
+		t.Errorf("explicit config should win over discovered marker, got %+v", foo)
+	}
+}
+
+func TestMergeDiscovered_UnknownProfileSkipped(t *testing.T) {
+	cfg := Config{
+		Profiles: map[string]Profile{"docker-standard": {}},
+	}
+	discovered := []RepoConfig{
+		{Name: "blinklabs-io/docker-good", Profile: "docker-standard"},
+		{Name: "blinklabs-io/docker-typo", Profile: "docker-standrd"}, // typo
+	}
+	mergeDiscovered(&cfg, discovered)
+
+	names := discoveredNames(cfg.Repositories)
+	if len(names) != 1 || names[0] != "blinklabs-io/docker-good" {
+		t.Fatalf("expected only docker-good (unknown profile skipped), got %v", names)
+	}
+}
+
+func TestMergeDiscovered_BadMarkerSkipped(t *testing.T) {
+	cfg := Config{
+		Profiles: map[string]Profile{
+			"docker-standard": {
+				Workflows: []WorkflowConfig{
+					{
+						DestinationFile:  "ci-docker.yml",
+						ReusableWorkflow: "blinklabs-io/actions/.github/workflows/x.yml@main",
+						Params:           map[string]string{"image-name": "blinklabs-io/${image}"},
+					},
+				},
+			},
+		},
+	}
+	discovered := []RepoConfig{
+		{Name: "blinklabs-io/docker-good", Profile: "docker-standard", Vars: map[string]string{"image": "good"}},
+		{Name: "blinklabs-io/docker-bad", Profile: "docker-standard"}, // missing ${image} var
+	}
+	mergeDiscovered(&cfg, discovered)
+
+	// The bad marker must be dropped without aborting; the good one survives.
+	names := discoveredNames(cfg.Repositories)
+	if len(names) != 1 || names[0] != "blinklabs-io/docker-good" {
+		t.Fatalf("expected only docker-good (bad marker skipped), got %v", names)
+	}
+	// The surviving discovered repo must be expanded in place.
+	good := cfg.Repositories[0]
+	if good.Profile != "" || len(good.Workflows) != 1 {
+		t.Fatalf("discovered repo should be expanded in place, got %+v", good)
+	}
+	if got := good.Workflows[0].Params["image-name"]; got != "blinklabs-io/good" {
+		t.Errorf("expected substituted image-name blinklabs-io/good, got %q", got)
+	}
+}
+
+func TestMergeDiscovered_CaseInsensitiveDedup(t *testing.T) {
+	cfg := Config{
+		Profiles: map[string]Profile{"docker-standard": {}},
+		Repositories: []RepoConfig{
+			{Name: "blinklabs-io/Docker-Foo", Profile: "docker-standard"},
+		},
+	}
+	discovered := []RepoConfig{
+		{Name: "blinklabs-io/docker-foo", Profile: "docker-standard"}, // same repo, different case
+	}
+	mergeDiscovered(&cfg, discovered)
+
+	if len(cfg.Repositories) != 1 {
+		t.Fatalf("expected case-insensitive dedup to keep 1 repo, got %v", discoveredNames(cfg.Repositories))
 	}
 }

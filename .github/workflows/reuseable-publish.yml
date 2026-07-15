@@ -375,6 +375,8 @@ jobs:
           for t in $GHCR_TAGS; do
             docker buildx imagetools create -t "${t}" "${t}-amd64" "${t}-arm64v8"
           done
+      # On tag builds the version-tag manifest is already created by
+      # manifest-ghcr above; here we only point :latest at the same images.
       - name: manifest-ghcr-latest
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -383,7 +385,6 @@ jobs:
         run: |
           for t in $GHCR_TAG_TAGS; do
             docker buildx imagetools create \
-              -t "${t}" \
               -t "${GHCR_IMAGE}:latest" \
               "${t}-amd64" "${t}-arm64v8"
           done
@@ -397,6 +398,8 @@ jobs:
           for t in $DH_TAGS; do
             docker buildx imagetools create -t "${t}" "${t}-amd64" "${t}-arm64v8"
           done
+      # On tag builds the version-tag manifest is already created by
+      # manifest-dockerhub above; here we only point :latest at the same images.
       - name: manifest-dockerhub-latest
         if: inputs.docker-image != '' && startsWith(github.ref, 'refs/tags/')
         env:
@@ -405,7 +408,6 @@ jobs:
         run: |
           for t in $DH_TAG_TAGS; do
             docker buildx imagetools create \
-              -t "${t}" \
               -t "${DOCKER_IMAGE}:latest" \
               "${t}-amd64" "${t}-arm64v8"
           done

@@ -6,6 +6,21 @@ on:
     paths:
       - 'repos-config.yaml'
   workflow_dispatch:      # Trigger manually to run the sync
+  schedule:
+    # Periodic reconciliation. When auto-discovery is enabled this picks up
+    # newly-created marker repositories without a repos-config.yaml change; it
+    # also corrects any drift on the managed set. Reconciliation is idempotent
+    # (writes only when rendered content differs), so this is safe when
+    # discovery is disabled too.
+    - cron: '0 6 * * *'
+
+# Serialize reconciliation runs. The engine writes workflow files directly to
+# each managed repository's default branch, so two concurrent runs (e.g. a
+# scheduled run overlapping a push or manual dispatch) could race on the same
+# files. Never cancel an in-flight run midway through reconciliation.
+concurrency:
+  group: governance-sync
+  cancel-in-progress: false
 
 jobs:
   orchestrate-governance:
@@ -21,6 +36,9 @@ jobs:
 
       # Scope the token only to the repos listed in repos-config.yaml rather
       # than the whole org, reducing the blast radius if the token is leaked.
+      # When auto-discovery is enabled the explicit list cannot be known ahead
+      # of time, so the token is scoped org-wide (empty `repositories` input =
+      # all repositories the installation can access).
       - name: Resolve target repositories from config
         id: target-repos
         run: |
@@ -38,6 +56,10 @@ jobs:
           )
 
           type config struct {
+            Discovery struct {
+              Enabled      bool   `yaml:"enabled"`
+              Organization string `yaml:"organization"`
+            } `yaml:"discovery"`
             Repositories []struct {
               Name string `yaml:"name"`
             } `yaml:"repositories"`
@@ -56,8 +78,36 @@ jobs:
               os.Exit(1)
             }
 
+            outPath := os.Getenv("GITHUB_OUTPUT")
+            if outPath == "" {
+              fmt.Fprintln(os.Stderr, "GITHUB_OUTPUT is not set")
+              os.Exit(1)
+            }
+            out, err := os.OpenFile(outPath, os.O_APPEND|os.O_WRONLY, 0o644)
+            if err != nil {
+              fmt.Fprintf(os.Stderr, "failed to open GITHUB_OUTPUT: %v\n", err)
+              os.Exit(1)
+            }
+            defer out.Close()
+
+            // Discovery mode: emit an empty list so the App token is scoped to
+            // the whole installation, and emit the discovery organization as
+            // the token owner so listing markers and writing to discovered
+            // repositories is authorized even when the discovery org differs
+            // from this controller repository's owner.
+            if cfg.Discovery.Enabled {
+              org := strings.TrimSpace(cfg.Discovery.Organization)
+              if org == "" {
+                fmt.Fprintln(os.Stderr, "discovery.enabled is true but discovery.organization is empty")
+                os.Exit(1)
+              }
+              fmt.Fprintf(out, "owner=%s\n", org)
+              fmt.Fprint(out, "list<<REPOS_EOF\nREPOS_EOF\n")
+              return
+            }
+
             if len(cfg.Repositories) == 0 {
-              fmt.Fprintln(os.Stderr, "repos-config.yaml must define at least one repository")
+              fmt.Fprintln(os.Stderr, "repos-config.yaml must define at least one repository (or enable discovery)")
               os.Exit(1)
             }
 
@@ -71,17 +121,10 @@ jobs:
               repos = append(repos, name)
             }
 
-            fmt.Println(strings.Join(repos, "\n"))
+            fmt.Fprintf(out, "list<<REPOS_EOF\n%s\nREPOS_EOF\n", strings.Join(repos, "\n"))
           }
           EOF
-          repos=$(go run "$config_parser")
-          if [ -z "$repos" ]; then
-            echo "No target repositories resolved from repos-config.yaml" >&2
-            exit 1
-          fi
-          echo "list<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$repos"    >> "$GITHUB_OUTPUT"
-          echo "EOF"       >> "$GITHUB_OUTPUT"
+          go run "$config_parser"
 
       - name: Authenticate via GitHub App
         id: generate-token
@@ -89,7 +132,7 @@ jobs:
         with:
           client-id: ${{ secrets.GOVERNANCE_APP_CLIENT_ID }}
           private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
+          owner: ${{ steps.target-repos.outputs.owner || github.repository_owner }}
           repositories: ${{ steps.target-repos.outputs.list }}
 
       - name: Resolve Dependencies
