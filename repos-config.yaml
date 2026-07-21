@@ -83,23 +83,6 @@ profiles:
           ghcr-image: "blinklabs-io/${image}"
           description: "${description}"
 
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
-
 repositories:
   - name: blinklabs-io/tx-submit-api
     settings:
@@ -183,20 +166,6 @@ repositories:
           binary-name: "tx-submit-api"
           docker-image: "blinklabs/tx-submit-api"
           description: "A Go implementation of the Cardano Submit API service"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
   - name: blinklabs-io/tx-submit-api-mirror
     settings:
       delete_branch_on_merge: true
@@ -268,20 +237,6 @@ repositories:
           binary-name: "tx-submit-api-mirror"
           docker-image: "blinklabs/tx-submit-api-mirror"
           description: "A Cardano Submit API mirror service"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
   - name: blinklabs-io/txtop
     settings:
       delete_branch_on_merge: true
@@ -364,20 +319,6 @@ repositories:
           docker-image: "blinklabs/txtop"
           description: "txtop is a mempool display tool for a Cardano Node"
           go-version: "1.26.x"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
   - name: blinklabs-io/docker-go
     profile: docker-standard
     vars:
@@ -465,20 +406,6 @@ repositories:
           binary-name: "cardano-node-api"
           docker-image: "blinklabs/cardano-node-api"
           description: "HTTP API over the Cardano Node UNIX socket"
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
   - name: blinklabs-io/shai
     settings:
       delete_branch_on_merge: true
@@ -560,20 +487,6 @@ repositories:
           binary-name: "shai"
           go-version: "1.26.x"
           binary-os-matrix: '["linux"]'
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
   - name: blinklabs-io/docker-cardano-configs
     profile: docker-standard
     vars:
@@ -810,23 +723,6 @@ repositories:
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}
             COMMIT_HASH=${{ github.sha }}
-
-      - destination_file: update-issue-on-close.yml
-        workflow_name: "Set Project Closed Date"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
-        triggers:
-          issues:
-            types: [closed]
-          workflow_dispatch:
-        permissions:
-          contents: read
-          issues: read
-        secrets:
-          project_pat: ORG_PROJECT_PAT
-        params:
-          project_url: "https://github.com/orgs/blinklabs-io/projects/11"
-          closed_date_field: "Closed Date"
-          closed_at: "${{ github.event.issue.closed_at }}"
   - name: blinklabs-io/docker-hydra-node
     profile: docker-standard
     vars:

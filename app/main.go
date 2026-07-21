@@ -209,6 +209,7 @@ func main() {
 			os.Exit(1)
 		}
 		syncWorkflows(ctx, client, owner, repoName, repo.Workflows)
+		removeClosedDateWorkflow(ctx, client, owner, repoName)
 	}
 }
 
@@ -940,4 +941,49 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 			}
 		}
 	}
+}
+
+// closedDateWorkflowPath is the in-repo path of the legacy wrapper that called
+// the (now-deleted) reuseable-set-project-closed-date.yml. GitHub now provides
+// a native "Closed Date" field on project items, so the wrapper is no longer
+// needed — see issue #145.
+const closedDateWorkflowPath = ".github/workflows/update-issue-on-close.yml"
+
+// removeClosedDateWorkflow deletes the legacy closed-date wrapper from a
+// managed repository's default branch when it is still present. This is a
+// one-shot cleanup: once every downstream repo has been pruned, subsequent
+// runs short-circuit on the 404 from GetContents. A 404 is treated as
+// success; any other error is logged but non-fatal so cleanup for one repo
+// cannot halt reconciliation of the rest.
+func removeClosedDateWorkflow(ctx context.Context, client *github.Client, owner, repo string) {
+	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, closedDateWorkflowPath, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return
+		}
+		fmt.Printf("  Error checking %s for cleanup: %v\n", closedDateWorkflowPath, err)
+		return
+	}
+	if fileContent == nil || fileContent.SHA == nil {
+		return
+	}
+
+	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		fmt.Printf("  Error getting repo info for cleanup: %v\n", err)
+		return
+	}
+	defaultBranch := repoInfo.GetDefaultBranch()
+
+	fmt.Printf("  🗑️  Removing legacy %s...\n", closedDateWorkflowPath)
+	opts := &github.RepositoryContentFileOptions{
+		Message: github.String("chore: remove obsolete update-issue-on-close.yml (GitHub now provides Closed Date natively)"),
+		SHA:     fileContent.SHA,
+		Branch:  github.String(defaultBranch),
+	}
+	if _, _, delErr := client.Repositories.DeleteFile(ctx, owner, repo, closedDateWorkflowPath, opts); delErr != nil {
+		fmt.Printf("  Error deleting %s: %v\n", closedDateWorkflowPath, delErr)
+		return
+	}
+	fmt.Printf("✅ Removed %s from %s/%s\n", closedDateWorkflowPath, owner, repo)
 }

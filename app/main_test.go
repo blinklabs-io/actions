@@ -97,13 +97,13 @@ func TestConfigUnmarshal_Valid(t *testing.T) {
 		"      - username: alice",
 		"        permission: write",
 		"    workflows:",
-		"      - destination_file: update-issue-on-close.yaml",
-		"        workflow_name: \"Set Project Closed Date\"",
-		"        reusable_workflow: \"blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main\"",
+		"      - destination_file: publish.yaml",
+		"        workflow_name: \"publish\"",
+		"        reusable_workflow: \"blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main\"",
 		"        secrets:",
-		"          project_pat: ORG_PROJECT_PAT",
+		"          docker-password: DOCKER_PASSWORD",
 		"        params:",
-		"          issue_number: \"${{ github.event.issue.number }}\"",
+		"          docker-image: \"blinklabs/test-repo\"",
 		"",
 	}, "\n")
 	var cfg Config
@@ -123,10 +123,10 @@ func TestConfigUnmarshal_Valid(t *testing.T) {
 	if len(repo.Collaborators) != 1 || repo.Collaborators[0].Username != "alice" {
 		t.Error("collaborators not parsed correctly")
 	}
-	if len(repo.Workflows) != 1 || repo.Workflows[0].DestinationFile != "update-issue-on-close.yaml" {
+	if len(repo.Workflows) != 1 || repo.Workflows[0].DestinationFile != "publish.yaml" {
 		t.Error("workflows not parsed correctly")
 	}
-	if repo.Workflows[0].Secrets["project_pat"] != "ORG_PROJECT_PAT" {
+	if repo.Workflows[0].Secrets["docker-password"] != "DOCKER_PASSWORD" {
 		t.Errorf("workflow secrets not parsed correctly: %v", repo.Workflows[0].Secrets)
 	}
 }
@@ -203,7 +203,7 @@ repositories:
     workflows:
       - destination_file: test.yaml
         workflow_name: "Test"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
 `
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
@@ -231,14 +231,14 @@ func TestWorkflowTemplate_ExplicitSecrets(t *testing.T) {
 	}
 
 	data := templateData{
-		WorkflowName:     "Set Project Closed Date",
-		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-set-project-closed-date.yml@main",
+		WorkflowName:     "publish",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main",
 		TriggersYAML:     triggersYAML,
 		Params: map[string]string{
-			"project_url": "https://github.com/orgs/blinklabs-io/projects/11",
+			"docker-image": "blinklabs/example",
 		},
 		Secrets: map[string]string{
-			"project_pat": "ORG_PROJECT_PAT",
+			"docker-password": "DOCKER_PASSWORD",
 		},
 	}
 
@@ -247,7 +247,7 @@ func TestWorkflowTemplate_ExplicitSecrets(t *testing.T) {
 		t.Fatalf("unexpected template execution error: %v", err)
 	}
 	out := rendered.String()
-	if !strings.Contains(out, "      project_pat: ${{ secrets.ORG_PROJECT_PAT }}") {
+	if !strings.Contains(out, "      docker-password: ${{ secrets.DOCKER_PASSWORD }}") {
 		t.Fatalf("rendered workflow missing explicit secret mapping:\n%s", out)
 	}
 	if strings.Contains(out, "secrets: inherit") {
