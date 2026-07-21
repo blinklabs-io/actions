@@ -209,7 +209,7 @@ func main() {
 			os.Exit(1)
 		}
 		syncWorkflows(ctx, client, owner, repoName, repo.Workflows)
-		removeClosedDateWorkflow(ctx, client, owner, repoName)
+		removeObsoleteIssueCloseWorkflows(ctx, client, owner, repoName)
 	}
 }
 
@@ -943,31 +943,17 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 	}
 }
 
-// closedDateWorkflowPath is the in-repo path of the legacy wrapper that called
-// the (now-deleted) reuseable-set-project-closed-date.yml. GitHub now provides
-// a native "Closed Date" field on project items, so the wrapper is no longer
-// needed — see issue #145.
-const closedDateWorkflowPath = ".github/workflows/update-issue-on-close.yml"
+// obsoleteIssueCloseWorkflowPaths are legacy wrappers that are no longer
+// needed in downstream repositories after reusable-workflow migration changes.
+var obsoleteIssueCloseWorkflowPaths = []string{
+	".github/workflows/update-issue-on-close.yml",
+	".github/workflows/test-issue-on-close.yml",
+}
 
-// removeClosedDateWorkflow deletes the legacy closed-date wrapper from a
-// managed repository's default branch when it is still present. This is a
-// one-shot cleanup: once every downstream repo has been pruned, subsequent
-// runs short-circuit on the 404 from GetContents. A 404 is treated as
-// success; any other error is logged but non-fatal so cleanup for one repo
-// cannot halt reconciliation of the rest.
-func removeClosedDateWorkflow(ctx context.Context, client *github.Client, owner, repo string) {
-	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, closedDateWorkflowPath, nil)
-	if err != nil {
-		if isNotFound(err) {
-			return
-		}
-		fmt.Printf("  Error checking %s for cleanup: %v\n", closedDateWorkflowPath, err)
-		return
-	}
-	if fileContent == nil || fileContent.SHA == nil {
-		return
-	}
-
+// removeObsoleteIssueCloseWorkflows deletes legacy issue-close wrappers from a
+// managed repository's default branch when present. Missing files (404) are
+// treated as success so this cleanup can run on every reconciliation.
+func removeObsoleteIssueCloseWorkflows(ctx context.Context, client *github.Client, owner, repo string) {
 	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
 	if err != nil {
 		fmt.Printf("  Error getting repo info for cleanup: %v\n", err)
@@ -975,15 +961,29 @@ func removeClosedDateWorkflow(ctx context.Context, client *github.Client, owner,
 	}
 	defaultBranch := repoInfo.GetDefaultBranch()
 
-	fmt.Printf("  🗑️  Removing legacy %s...\n", closedDateWorkflowPath)
-	opts := &github.RepositoryContentFileOptions{
-		Message: github.String("chore: remove obsolete update-issue-on-close.yml (GitHub now provides Closed Date natively)"),
-		SHA:     fileContent.SHA,
-		Branch:  github.String(defaultBranch),
+	for _, workflowPath := range obsoleteIssueCloseWorkflowPaths {
+		fileContent, _, _, getErr := client.Repositories.GetContents(ctx, owner, repo, workflowPath, nil)
+		if getErr != nil {
+			if isNotFound(getErr) {
+				continue
+			}
+			fmt.Printf("  Error checking %s for cleanup: %v\n", workflowPath, getErr)
+			continue
+		}
+		if fileContent == nil || fileContent.SHA == nil {
+			continue
+		}
+
+		fmt.Printf("  Removing obsolete %s...\n", workflowPath)
+		opts := &github.RepositoryContentFileOptions{
+			Message: github.String(fmt.Sprintf("chore: remove obsolete %s", strings.TrimPrefix(workflowPath, ".github/workflows/"))),
+			SHA:     fileContent.SHA,
+			Branch:  github.String(defaultBranch),
+		}
+		if _, _, delErr := client.Repositories.DeleteFile(ctx, owner, repo, workflowPath, opts); delErr != nil {
+			fmt.Printf("  Error deleting %s: %v\n", workflowPath, delErr)
+			continue
+		}
+		fmt.Printf("✅ Removed %s from %s/%s\n", workflowPath, owner, repo)
 	}
-	if _, _, delErr := client.Repositories.DeleteFile(ctx, owner, repo, closedDateWorkflowPath, opts); delErr != nil {
-		fmt.Printf("  Error deleting %s: %v\n", closedDateWorkflowPath, delErr)
-		return
-	}
-	fmt.Printf("✅ Removed %s from %s/%s\n", closedDateWorkflowPath, owner, repo)
 }
