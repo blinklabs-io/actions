@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: "1.25.x"
+      setup-go-cache:
+        description: Enable module/build cache in actions/setup-go.
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -23,5 +28,6 @@ jobs:
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0 https://github.com/actions/setup-go/releases/tag/v6.0.0
         with:
           go-version: ${{ inputs.go-version }}
+          cache: ${{ inputs.setup-go-cache }}
       - name: golangci-lint
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1 https://github.com/golangci/golangci-lint-action/releases/tag/v9.2.1
