@@ -18,6 +18,36 @@ on:
         required: false
         type: boolean
         default: true
+      platforms:
+        description: JSON array of runner platforms to test on (e.g. '["ubuntu-latest","windows-latest"]').
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+      system-dependencies:
+        description: Space-separated apt packages to install before testing (Linux runners only). Empty skips installation.
+        required: false
+        type: string
+        default: ""
+      pre-test-command:
+        description: Optional shell command run before `go test` (Linux runners only, e.g. "make build"). Empty skips it.
+        required: false
+        type: string
+        default: ""
+      test-packages:
+        description: Package pattern(s) passed to `go test` (e.g. "./..."). Used on all platforms unless overridden per-OS.
+        required: false
+        type: string
+        default: "./..."
+      windows-test-packages:
+        description: Package pattern(s) passed to `go test` on Windows runners. Empty falls back to test-packages.
+        required: false
+        type: string
+        default: ""
+      test-env:
+        description: Extra environment variables exported before `go test`, one KEY=VALUE per line.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -28,7 +58,7 @@ jobs:
     strategy:
       matrix:
         go-version: ${{ fromJson(inputs.go-versions) }}
-        platform: [ubuntu-latest]
+        platform: ${{ fromJson(inputs.platforms) }}
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3 https://github.com/actions/checkout/releases/tag/v6.0.3
@@ -38,13 +68,45 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
           cache: ${{ inputs.setup-go-cache }}
+      - name: Install system dependencies
+        if: runner.os == 'Linux' && inputs.system-dependencies != ''
+        env:
+          SYSTEM_DEPENDENCIES: ${{ inputs.system-dependencies }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y $SYSTEM_DEPENDENCIES
+      - name: Pre-test command
+        if: runner.os == 'Linux' && inputs.pre-test-command != ''
+        shell: bash
+        env:
+          PRE_TEST_COMMAND: ${{ inputs.pre-test-command }}
+        run: |
+          bash -c "$PRE_TEST_COMMAND"
       - name: go-test
+        shell: bash
         env:
           TEST_FLAGS: ${{ inputs.test-flags }}
+          TEST_PACKAGES: ${{ inputs.test-packages }}
+          WINDOWS_TEST_PACKAGES: ${{ inputs.windows-test-packages }}
+          TEST_ENV: ${{ inputs.test-env }}
         run: |
+          # Export any caller-provided environment variables (KEY=VALUE per line).
+          if [ -n "$TEST_ENV" ]; then
+            while IFS= read -r _line; do
+              [ -z "$_line" ] && continue
+              export "${_line?}"
+            done <<< "$TEST_ENV"
+          fi
+          # Per-OS package selection: Windows may target a different subset.
+          _packages="$TEST_PACKAGES"
+          if [ "$RUNNER_OS" = "Windows" ] && [ -n "$WINDOWS_TEST_PACKAGES" ]; then
+            _packages="$WINDOWS_TEST_PACKAGES"
+          fi
+          # shellcheck disable=SC2086
           if [ -n "$TEST_FLAGS" ]; then
             read -r -a _flags <<< "$TEST_FLAGS"
-            go test "${_flags[@]}" ./...
+            go test "${_flags[@]}" $_packages
           else
-            go test ./...
+            go test $_packages
           fi

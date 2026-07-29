@@ -818,3 +818,83 @@ repositories:
         params:
           build-target: ogmios
           prerelease-pattern: -pre-
+  # adder is a Go service with a desktop GUI tray (Fyne/CGO) and platform
+  # installers (Windows MSI, macOS .pkg). Its publish.yml and test-msi.yml are
+  # repository-specific (code signing, notarization, WiX/pkg builds) and have no
+  # shared reusable equivalent, so they are intentionally NOT listed here and
+  # remain managed in-repo. The CI checks below use the shared reusable
+  # workflows, passing adder's Fyne system dependencies and CGO requirements.
+  - name: blinklabs-io/adder
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: go-test.yml
+        workflow_name: "go-test"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          go-versions: '["1.26.x"]'
+          platforms: '["ubuntu-latest","windows-latest"]'
+          system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
+          pre-test-command: "make build"
+          test-flags: "-v -timeout 10m"
+          windows-test-packages: "./tray/setup/..."
+          test-env: "LANG=en_US.UTF-8"
+
+      - destination_file: golangci-lint.yml
+        workflow_name: "golangci-lint"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          go-version: "1.26.x"
+          cgo-enabled: "true"
+          system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
+
+      - destination_file: nilaway.yml
+        workflow_name: "nilaway"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          include-pkgs: "github.com/blinklabs-io/adder"
+          exclude-pkgs: "github.com/go-gl/glfw"
+          go-version: "1.26.x"
+          cgo-enabled: "true"
+          system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
+
+      - destination_file: ci-docker.yml
+        workflow_name: "Docker CI"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
+        triggers:
+          pull_request:
+            branches: [main]
+            paths:
+              - Dockerfile
+              - cmd/**
+              - docs/**
+              - internal/**
+              - go.*
+              - .github/workflows/ci-docker.yml
+        params:
+          image-name: "blinklabs-io/adder"
