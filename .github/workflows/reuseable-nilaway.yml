@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: ""
+      exclude-pkgs:
+        description: Comma-separated package prefixes passed to -exclude-pkgs (e.g. github.com/go-gl/glfw). Empty skips the flag.
+        required: false
+        type: string
+        default: ""
       go-version:
         description: Go toolchain version to use.
         required: false
@@ -28,6 +33,16 @@ on:
         required: false
         type: boolean
         default: false
+      system-dependencies:
+        description: Space-separated apt packages to install before running NilAway (Linux). Empty skips installation.
+        required: false
+        type: string
+        default: ""
+      cgo-enabled:
+        description: Set CGO_ENABLED=1 for the NilAway run (needed for cgo packages). Leaves the Go default when false.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -45,6 +60,17 @@ jobs:
         with:
           go-version: ${{ inputs.go-version }}
           cache: ${{ inputs.setup-go-cache }}
+      - name: Install system dependencies
+        if: inputs.system-dependencies != ''
+        env:
+          SYSTEM_DEPENDENCIES: ${{ inputs.system-dependencies }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y $SYSTEM_DEPENDENCIES
+      - name: Enable CGO
+        if: inputs.cgo-enabled
+        run: echo "CGO_ENABLED=1" >> "$GITHUB_ENV"
       - name: install nilaway
         env:
           INSTALL_WITH_LOCAL_TOOLCHAIN: ${{ inputs.install-with-local-toolchain }}
@@ -58,9 +84,13 @@ jobs:
       - name: run nilaway
         env:
           INCLUDE_PKGS: ${{ inputs.include-pkgs }}
+          EXCLUDE_PKGS: ${{ inputs.exclude-pkgs }}
         run: |
-          if [ -n "$INCLUDE_PKGS" ]; then
-            nilaway -include-pkgs "$INCLUDE_PKGS" ./...
-          else
-            nilaway ./...
+          _args=()
+          if [ -n "$EXCLUDE_PKGS" ]; then
+            _args+=(-exclude-pkgs "$EXCLUDE_PKGS")
           fi
+          if [ -n "$INCLUDE_PKGS" ]; then
+            _args+=(-include-pkgs "$INCLUDE_PKGS")
+          fi
+          nilaway "${_args[@]}" ./...
