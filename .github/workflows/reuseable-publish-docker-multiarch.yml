@@ -82,13 +82,13 @@ jobs:
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0 https://github.com/docker/setup-buildx-action/releases/tag/v4.2.0
 
       - name: Login to Docker Hub
-        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2 https://github.com/docker/login-action/releases/tag/v4.5.2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
         with:
           username: blinklabs
           password: ${{ secrets.docker-password }}
 
       - name: Login to GHCR
-        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2 https://github.com/docker/login-action/releases/tag/v4.5.2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -180,13 +180,13 @@ jobs:
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0 https://github.com/docker/setup-buildx-action/releases/tag/v4.2.0
 
       - name: Login to Docker Hub
-        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2 https://github.com/docker/login-action/releases/tag/v4.5.2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
         with:
           username: blinklabs
           password: ${{ secrets.docker-password }}
 
       - name: Login to GHCR
-        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2 https://github.com/docker/login-action/releases/tag/v4.5.2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -274,13 +274,13 @@ jobs:
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0 https://github.com/docker/setup-buildx-action/releases/tag/v4.2.0
 
       - name: Login to Docker Hub
-        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2 https://github.com/docker/login-action/releases/tag/v4.5.2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
         with:
           username: blinklabs
           password: ${{ secrets.docker-password }}
 
       - name: Login to GHCR
-        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2 https://github.com/docker/login-action/releases/tag/v4.5.2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -418,7 +418,7 @@ jobs:
 
       - name: Upload Trivy scan results to GitHub Security tab
         if: always() && inputs.enable-trivy-scan
-        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.37.3
+        uses: github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.37.5
         with:
           sarif_file: 'trivy-results.sarif'
 
