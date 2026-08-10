@@ -1,0 +1,97 @@
+name: Reusable Flutter CI
+
+on:
+  workflow_call:
+    inputs:
+      flutter-version:
+        description: Flutter SDK version to install.
+        required: false
+        type: string
+        default: "3.22.0"
+      channel:
+        description: Flutter release channel (e.g. stable, beta).
+        required: false
+        type: string
+        default: "stable"
+      run-analyze:
+        description: Run `flutter analyze`.
+        required: false
+        type: boolean
+        default: true
+      run-tests:
+        description: Run `flutter test`.
+        required: false
+        type: boolean
+        default: true
+      build-apk:
+        description: Build a release Android APK.
+        required: false
+        type: boolean
+        default: false
+      apk-artifact-name:
+        description: Name of the uploaded APK artifact (also used as the renamed APK filename).
+        required: false
+        type: string
+        default: "app-release.apk"
+      create-google-services:
+        description: Write android/app/google-services.json from the GOOGLE_SERVICES_JSON secret before building.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      GOOGLE_SERVICES_JSON:
+        description: Contents of android/app/google-services.json. Required only when create-google-services is true.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  flutter:
+    name: Flutter CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2 https://github.com/actions/checkout/releases/tag/v4.2.2
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@e938fdf56512cc96ef2f93601a5a40bde3801046 # v2.19.0 https://github.com/subosito/flutter-action/releases/tag/v2.19.0
+        with:
+          flutter-version: ${{ inputs.flutter-version }}
+          channel: ${{ inputs.channel }}
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Create google-services.json
+        if: ${{ inputs.create-google-services }}
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          mkdir -p android/app
+          printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+
+      - name: Static Analysis
+        if: ${{ inputs.run-analyze }}
+        run: flutter analyze
+
+      - name: Run Tests
+        if: ${{ inputs.run-tests }}
+        run: flutter test
+
+      - name: Build APK
+        if: ${{ inputs.build-apk }}
+        run: flutter build apk --release
+
+      - name: Rename APK with version
+        if: ${{ inputs.build-apk }}
+        env:
+          APK_ARTIFACT_NAME: ${{ inputs.apk-artifact-name }}
+        run: mv build/app/outputs/flutter-apk/app-release.apk "build/app/outputs/flutter-apk/${APK_ARTIFACT_NAME}"
+
+      - name: Upload APK
+        if: ${{ inputs.build-apk }}
+        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1 https://github.com/actions/upload-artifact/releases/tag/v3.2.1
+        with:
+          name: ${{ inputs.apk-artifact-name }}
+          path: build/app/outputs/flutter-apk/${{ inputs.apk-artifact-name }}
