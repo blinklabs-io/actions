@@ -87,11 +87,16 @@ jobs:
         if: ${{ inputs.build-apk }}
         env:
           APK_ARTIFACT_NAME: ${{ inputs.apk-artifact-name }}
-        run: mv build/app/outputs/flutter-apk/app-release.apk "build/app/outputs/flutter-apk/${APK_ARTIFACT_NAME}"
+        run: |
+          src=build/app/outputs/flutter-apk/app-release.apk
+          dest="build/app/outputs/flutter-apk/${APK_ARTIFACT_NAME}"
+          if [ "$src" != "$dest" ]; then
+            mv "$src" "$dest"
+          fi
 
       - name: Upload APK
         if: ${{ inputs.build-apk }}
-        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1 https://github.com/actions/upload-artifact/releases/tag/v3.2.1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2 https://github.com/actions/upload-artifact/releases/tag/v4.6.2
         with:
           name: ${{ inputs.apk-artifact-name }}
           path: build/app/outputs/flutter-apk/${{ inputs.apk-artifact-name }}
