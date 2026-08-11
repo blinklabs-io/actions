@@ -898,3 +898,52 @@ repositories:
               - .github/workflows/ci-docker.yml
         params:
           image-name: "blinklabs-io/adder"
+  # adder-mobile is a Flutter mobile app (not a Go service). It uses the shared
+  # conventional-commits check plus the shared reusable Flutter CI workflow for
+  # PR analyze/test (pr.yml) and the main-branch release APK build (publish.yml).
+  # The APK build writes android/app/google-services.json from the
+  # GOOGLE_SERVICES_JSON secret and uploads the versioned APK artifact. Store
+  # signing / app-store release packaging is not handled by the shared workflow
+  # and would remain repository-specific if added later.
+  - name: blinklabs-io/adder-mobile
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: pr.yml
+        workflow_name: "PR"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-flutter.yml@main"
+        triggers:
+          pull_request:
+        params:
+          flutter-version: "3.22.0"
+          channel: "stable"
+          run-analyze: "true"
+          run-tests: "true"
+          build-apk: "false"
+
+      - destination_file: publish.yml
+        workflow_name: "Build Flutter APK"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-flutter.yml@main"
+        triggers:
+          push:
+            branches: [main]
+        secrets:
+          GOOGLE_SERVICES_JSON: GOOGLE_SERVICES_JSON
+        params:
+          flutter-version: "3.22.0"
+          channel: "stable"
+          run-analyze: "false"
+          run-tests: "false"
+          build-apk: "true"
+          create-google-services: "true"
+          apk-artifact-name: "app-${{ github.ref_name }}-release.apk"
