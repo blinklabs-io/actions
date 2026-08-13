@@ -1032,9 +1032,11 @@ repositories:
             branches: [main]
             paths:
               - Dockerfile
+              - Makefile
               - cmd/**
               - docs/**
               - internal/**
+              - pkgmgr/**
               - go.*
               - .github/workflows/ci-docker.yml
         params:
