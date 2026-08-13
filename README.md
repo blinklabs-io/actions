@@ -38,6 +38,7 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-golangci-lint.yml` — golangci-lint.
 - `reuseable-nilaway.yml` — NilAway static analysis.
 - `reuseable-conventional-commits.yml` — conventional-commit PR title check.
+- `reuseable-check-versions.yml` — check upstream image versions against a docker-compose file and open update PRs.
 
 ## How the engine works
 

@@ -947,3 +947,29 @@ repositories:
           build-apk: "true"
           create-google-services: "true"
           apk-artifact-name: "app-${{ github.ref_name }}-release.apk"
+
+  # cardano-compose-stacks provides docker-compose stacks for Cardano services.
+  # It runs a weekly (and manually triggerable) job that compares upstream
+  # container image versions against the compose file and opens update PRs. This
+  # is handled by the shared reusable check-versions workflow. The repository's
+  # scripts/upstream-versions.json, scripts/add-version.sh and docker-compose.yaml
+  # match the reusable workflow's defaults, so no params or secrets are needed
+  # (the workflow falls back to the built-in github.token).
+  - name: blinklabs-io/cardano-compose-stacks
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: check-versions.yml
+        workflow_name: "check-versions"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-check-versions.yml@main"
+        triggers:
+          schedule:
+          - cron: 0 0 * * 0
+          workflow_dispatch:
+        permissions:
+          contents: write
+          pull-requests: write
