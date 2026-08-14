@@ -1,0 +1,393 @@
+name: Reusable Check Versions (Packages)
+
+# Generic "check upstream release versions and open update PRs" workflow for
+# cardano-up package repositories.
+#
+# For every package described in an upstream-versions JSON config it determines
+# the latest upstream version (from a GitHub release, a GHCR image, or a Docker
+# Hub image), compares it against the newest local `packages/<pkg>/<pkg>-*.yaml`
+# version file, and — when a newer version is available — creates the new
+# version file, validates it with the cardano-up CLI, and opens a pull request.
+#
+# This complements `reuseable-check-versions.yml` (which targets docker-compose
+# stack repositories). All repository-specific values are optional inputs with
+# defaults, so the workflow stays generic and can be reused by any cardano-up
+# package repository.
+
+on:
+  workflow_call:
+    inputs:
+      upstream-config:
+        description: Path to the upstream-versions JSON config.
+        required: false
+        type: string
+        default: "scripts/upstream-versions.json"
+      packages-dir:
+        description: Directory that contains the per-package version files.
+        required: false
+        type: string
+        default: "packages"
+      add-version-script:
+        description: >-
+          Path to the script that creates a new package version file (called as
+          `<script> <package> <version>`). The configured `packages-dir` is
+          exported to the script as the PACKAGES_DIR environment variable, and
+          the script must write the new file under that directory.
+        required: false
+        type: string
+        default: "scripts/add-version.sh"
+      base-branch:
+        description: Base branch that update pull requests target.
+        required: false
+        type: string
+        default: "main"
+      git-user-name:
+        description: git author/committer name used for the automated commits.
+        required: false
+        type: string
+        default: "github-actions[bot]"
+      git-user-email:
+        description: git author/committer email used for the automated commits.
+        required: false
+        type: string
+        default: "github-actions[bot]@users.noreply.github.com"
+      runs-on:
+        description: Runner label the job executes on.
+        required: false
+        type: string
+        default: "ubuntu-latest"
+      cardano-up-repo:
+        description: GitHub repository (owner/name) to download the cardano-up CLI from.
+        required: false
+        type: string
+        default: "blinklabs-io/cardano-up"
+      cardano-up-version:
+        description: >-
+          cardano-up release to download. Use "latest" for the newest release,
+          or a specific tag (e.g. "v0.15.0").
+        required: false
+        type: string
+        default: "latest"
+      validate-args:
+        description: Arguments passed to `cardano-up validate` when checking a new version.
+        required: false
+        type: string
+        default: "-D"
+    secrets:
+      token:
+        description: >-
+          Token used to read upstream versions, push branches, and open pull
+          requests. Needs contents:write and pull-requests:write. Falls back to
+          the job's GITHUB_TOKEN when not supplied.
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-versions:
+    name: Check for new upstream versions
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.token || github.token }}
+
+      - name: Download cardano-up
+        env:
+          CARDANO_UP_REPO: ${{ inputs.cardano-up-repo }}
+          CARDANO_UP_VERSION: ${{ inputs.cardano-up-version }}
+        run: |
+          set -euo pipefail
+          if [[ "$CARDANO_UP_VERSION" == "latest" ]]; then
+            API_URL="https://api.github.com/repos/${CARDANO_UP_REPO}/releases/latest"
+          else
+            API_URL="https://api.github.com/repos/${CARDANO_UP_REPO}/releases/tags/${CARDANO_UP_VERSION}"
+          fi
+          # Extract the asset URL with jq so the value is clean (the GitHub
+          # API returns `"browser_download_url": "https://...",` — a naive
+          # cut/tr parse leaves a leading space and trailing comma that make
+          # curl reject the URL).
+          DOWNLOAD_URL=$(curl -s "$API_URL" | jq -r '.assets[]? | select(.name | test("linux-amd64")) | .browser_download_url' | head -1)
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            echo "ERROR: Could not find linux-amd64 asset for ${CARDANO_UP_REPO} ${CARDANO_UP_VERSION}"
+            exit 1
+          fi
+          curl -sLo cardano-up "$DOWNLOAD_URL"
+          chmod +x cardano-up
+
+      - name: Check and create PRs for new versions
+        env:
+          GH_TOKEN: ${{ secrets.token || github.token }}
+          UPSTREAM_CONFIG: ${{ inputs.upstream-config }}
+          PACKAGES_DIR: ${{ inputs.packages-dir }}
+          ADD_VERSION_SCRIPT: ${{ inputs.add-version-script }}
+          BASE_BRANCH: ${{ inputs.base-branch }}
+          GIT_USER_NAME: ${{ inputs.git-user-name }}
+          GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+          VALIDATE_ARGS: ${{ inputs.validate-args }}
+        run: |
+          set -euo pipefail
+
+          # Configure git
+          git config user.name "$GIT_USER_NAME"
+          git config user.email "$GIT_USER_EMAIL"
+
+          UPSTREAM_CONFIG="${UPSTREAM_CONFIG:-scripts/upstream-versions.json}"
+          PACKAGES_DIR="${PACKAGES_DIR:-packages}"
+          ADD_VERSION_SCRIPT="${ADD_VERSION_SCRIPT:-scripts/add-version.sh}"
+          BASE_BRANCH="${BASE_BRANCH:-main}"
+
+          if [[ ! -f "$UPSTREAM_CONFIG" ]]; then
+            echo "ERROR: Upstream config not found: $UPSTREAM_CONFIG"
+            exit 1
+          fi
+
+          # Get list of packages from config
+          PACKAGES=$(jq -r 'keys[]' "$UPSTREAM_CONFIG")
+
+          for PACKAGE in $PACKAGES; do
+            echo "=========================================="
+            echo "Checking package: $PACKAGE"
+            echo "=========================================="
+
+            # Get upstream config for this package
+            REPO=$(jq -r --arg pkg "$PACKAGE" '.[$pkg].repo' "$UPSTREAM_CONFIG")
+            TAG_PATTERN=$(jq -r --arg pkg "$PACKAGE" '.[$pkg].tag_pattern' "$UPSTREAM_CONFIG")
+            VERSION_REGEX=$(jq -r --arg pkg "$PACKAGE" '.[$pkg].version_regex // ""' "$UPSTREAM_CONFIG")
+            DOCKER_IMAGE=$(jq -r --arg pkg "$PACKAGE" '.[$pkg].docker_image // ""' "$UPSTREAM_CONFIG")
+            GHCR_IMAGE=$(jq -r --arg pkg "$PACKAGE" '.[$pkg].ghcr_image // ""' "$UPSTREAM_CONFIG")
+
+            echo "  Upstream repo: $REPO"
+            echo "  Tag pattern: $TAG_PATTERN"
+
+            # If ghcr_image is configured, use GHCR as the source of truth for versions
+            # This is useful when the upstream repo uses different versioning than the container image
+            if [[ -n "$GHCR_IMAGE" ]]; then
+              echo "  Using GHCR image as version source: $GHCR_IMAGE"
+              # Parse org and package name from ghcr_image (format: org/package)
+              GHCR_ORG="${GHCR_IMAGE%%/*}"
+              GHCR_PKG="${GHCR_IMAGE#*/}"
+
+              # Query GHCR for tags, filter to semver-like versions, sort and get latest
+              # Use --paginate to fetch all pages since the API returns paginated results
+              UPSTREAM_VERSION=$(gh api "/orgs/${GHCR_ORG}/packages/container/${GHCR_PKG}/versions" --paginate \
+                --jq '.[].metadata.container.tags[]' 2>/dev/null \
+                | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+                | sort -V | tail -1 || echo "")
+
+              if [[ -z "$UPSTREAM_VERSION" ]]; then
+                echo "  WARNING: Could not fetch versions from GHCR for $GHCR_IMAGE, skipping"
+                continue
+              fi
+
+              echo "  Latest GHCR version: $UPSTREAM_VERSION"
+              # Set LATEST_TAG for PR body (no upstream release link for GHCR-sourced versions)
+              LATEST_TAG=""
+            else
+              # Get latest upstream release tag
+              LATEST_TAG=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "")
+
+              if [[ -z "$LATEST_TAG" ]]; then
+                echo "  WARNING: Could not fetch latest release for $REPO, skipping"
+                continue
+              fi
+
+              echo "  Latest upstream tag: $LATEST_TAG"
+
+              # Extract version from tag
+              if [[ -n "$VERSION_REGEX" ]]; then
+                # Extract the version with a single PCRE engine (perl): print
+                # capture group 1 when the pattern defines one, otherwise the
+                # whole match. This avoids the previous grep -oP + sed -E combo,
+                # which mixed regex dialects and corrupted the version with an
+                # empty \1 backreference when the pattern had no capture group.
+                # Values are passed via the environment to avoid shell-quoting
+                # issues.
+                UPSTREAM_VERSION=$(VERSION_REGEX="$VERSION_REGEX" LATEST_TAG="$LATEST_TAG" perl -e '
+                  my ($re, $tag) = ($ENV{VERSION_REGEX}, $ENV{LATEST_TAG});
+                  if ($tag =~ /$re/) { print defined($1) ? $1 : $&; }
+                ')
+                if [[ -z "$UPSTREAM_VERSION" ]]; then
+                  echo "  WARNING: Could not extract version using regex, skipping"
+                  continue
+                fi
+              elif [[ -n "$TAG_PATTERN" ]]; then
+                # Remove tag pattern prefix
+                UPSTREAM_VERSION="${LATEST_TAG#"$TAG_PATTERN"}"
+              else
+                # Use tag as-is
+                UPSTREAM_VERSION="$LATEST_TAG"
+              fi
+
+              # If docker_image is configured, look up the actual image tag version
+              # This handles cases where GitHub releases use short versions (v2.11)
+              # but Docker images use full semver (v2.11.0)
+              if [[ -n "$DOCKER_IMAGE" ]]; then
+                echo "  Looking up Docker image tags for: $DOCKER_IMAGE"
+                # Query Docker Hub for tags matching the release version,
+                # following pagination so images with more than one page of
+                # tags are fully considered. A tag matches when it equals the
+                # prefix exactly or continues with a "." boundary, so a release
+                # like "2.1" does not spuriously match "2.10.0".
+                PREFIX="${TAG_PATTERN}${UPSTREAM_VERSION}"
+                DOCKER_TAG=""
+                NEXT_URL="https://hub.docker.com/v2/repositories/${DOCKER_IMAGE}/tags?page_size=100"
+                while [[ -n "$NEXT_URL" && "$NEXT_URL" != "null" ]]; do
+                  PAGE=$(curl -s "$NEXT_URL" || echo "")
+                  [[ -z "$PAGE" ]] && break
+                  MATCH=$(echo "$PAGE" | jq -r --arg prefix "$PREFIX" \
+                    '.results[].name | select(. == $prefix or startswith($prefix + "."))' 2>/dev/null \
+                    | sort -V | tail -1 || echo "")
+                  if [[ -n "$MATCH" ]]; then
+                    DOCKER_TAG=$(printf '%s\n' "$DOCKER_TAG" "$MATCH" | sort -V | tail -1)
+                  fi
+                  NEXT_URL=$(echo "$PAGE" | jq -r '.next // ""' 2>/dev/null || echo "")
+                done
+                if [[ -n "$DOCKER_TAG" ]]; then
+                  # Extract version from docker tag using same pattern
+                  UPSTREAM_VERSION="${DOCKER_TAG#"$TAG_PATTERN"}"
+                  echo "  Found Docker tag: $DOCKER_TAG -> version $UPSTREAM_VERSION"
+                else
+                  echo "  WARNING: No matching Docker tag found for ${TAG_PATTERN}${UPSTREAM_VERSION}"
+                fi
+              fi
+            fi
+
+            echo "  Upstream version: $UPSTREAM_VERSION"
+
+            # Get latest local version
+            LATEST_LOCAL_FILE=$(find "${PACKAGES_DIR}/${PACKAGE}" -maxdepth 1 -name "${PACKAGE}-*.yaml" -type f 2>/dev/null | sort -V | tail -1 || echo "")
+
+            if [[ -z "$LATEST_LOCAL_FILE" ]]; then
+              echo "  WARNING: No local version files found for $PACKAGE, skipping"
+              continue
+            fi
+
+            LOCAL_VERSION=$(grep -E '^version:' "$LATEST_LOCAL_FILE" | head -1 | awk '{print $2}')
+            echo "  Local version: $LOCAL_VERSION"
+
+            # Skip unless the upstream version is strictly newer than the local
+            # version. Using sort -V for the comparison also prevents opening a
+            # downgrade PR when the local version is ahead of upstream.
+            if [[ "$UPSTREAM_VERSION" == "$LOCAL_VERSION" ]] || \
+               [[ "$(printf '%s\n' "$LOCAL_VERSION" "$UPSTREAM_VERSION" | sort -V | tail -1)" != "$UPSTREAM_VERSION" ]]; then
+              echo "  Already up to date (local: $LOCAL_VERSION, upstream: $UPSTREAM_VERSION)"
+              continue
+            fi
+
+            # Check if we already have this version
+            NEW_FILE="${PACKAGES_DIR}/${PACKAGE}/${PACKAGE}-${UPSTREAM_VERSION}.yaml"
+            if [[ -f "$NEW_FILE" ]]; then
+              echo "  Version $UPSTREAM_VERSION already exists locally"
+              continue
+            fi
+
+            echo "  New version available: $UPSTREAM_VERSION"
+
+            BRANCH_NAME="chore/${PACKAGE}-${UPSTREAM_VERSION}"
+
+            # Skip if an open PR already exists for this version.
+            # Do not swallow errors here: if the API call fails we must abort
+            # rather than treat it as "no PR" and risk deleting a real branch.
+            EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq '.[0].number')
+            if [[ -n "$EXISTING_PR" ]]; then
+              echo "  PR #$EXISTING_PR already open for $BRANCH_NAME, skipping"
+              continue
+            fi
+
+            # Create new version
+            echo "  Creating new version file..."
+            "$ADD_VERSION_SCRIPT" "$PACKAGE" "$UPSTREAM_VERSION"
+
+            # Validate the new package
+            echo "  Validating new package..."
+            # VALIDATE_ARGS is intentionally unquoted so multiple flags split
+            # into separate arguments (matches the original `validate -D`).
+            # shellcheck disable=SC2086
+            if ! ./cardano-up validate $VALIDATE_ARGS 2>&1; then
+              echo "  WARNING: Validation failed for $PACKAGE $UPSTREAM_VERSION, skipping"
+              git checkout -- "${PACKAGES_DIR}/${PACKAGE}/" || true
+              # add-version.sh writes a brand-new, untracked file; git checkout
+              # only reverts tracked files, so remove the new file explicitly to
+              # avoid leaving it behind for subsequent packages.
+              rm -f "$NEW_FILE"
+              continue
+            fi
+
+            # Create branch and commit
+            echo "  Creating branch and commit..."
+            git checkout -b "$BRANCH_NAME"
+            git add "${PACKAGES_DIR}/${PACKAGE}/${PACKAGE}-${UPSTREAM_VERSION}.yaml"
+            git commit -m "chore: ${PACKAGE} ${UPSTREAM_VERSION}"
+
+            # If a stale remote branch exists from a previous failed run
+            # (no open PR was found above), delete it so we can push cleanly
+            # without force-pushing over potential manual commits.
+            if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
+              echo "  Stale remote branch $BRANCH_NAME found with no open PR, deleting"
+              git push origin --delete "$BRANCH_NAME"
+            fi
+
+            # Push branch
+            echo "  Pushing branch..."
+            git push -u origin "$BRANCH_NAME"
+
+            # Create PR
+            echo "  Creating PR..."
+            if [[ -n "$LATEST_TAG" ]]; then
+              PR_BODY="## Summary
+          - Updates ${PACKAGE} to version ${UPSTREAM_VERSION}
+          - Upstream release: https://github.com/${REPO}/releases/tag/${LATEST_TAG}
+
+          ## Test plan
+          - [ ] CI validation passes
+          - [ ] Manual testing if needed
+
+          🤖 Generated automatically by check-versions workflow"
+            else
+              PR_BODY="## Summary
+          - Updates ${PACKAGE} to version ${UPSTREAM_VERSION}
+          - Source: ghcr.io/${GHCR_IMAGE}:${UPSTREAM_VERSION}
+
+          ## Test plan
+          - [ ] CI validation passes
+          - [ ] Manual testing if needed
+
+          🤖 Generated automatically by check-versions workflow"
+            fi
+
+            PR_CREATED=false
+            if PR_CREATE_OUTPUT=$(gh pr create \
+              --title "chore: ${PACKAGE} ${UPSTREAM_VERSION}" \
+              --body "$PR_BODY" \
+              --base "$BASE_BRANCH" \
+              --head "$BRANCH_NAME" 2>&1); then
+              echo "$PR_CREATE_OUTPUT"
+              PR_CREATED=true
+            else
+              if echo "$PR_CREATE_OUTPUT" | grep -qi 'already exists'; then
+                echo "  PR already exists for $BRANCH_NAME, skipping create"
+              else
+                echo "$PR_CREATE_OUTPUT"
+                exit 1
+              fi
+            fi
+
+            # Return to base branch for next package
+            git checkout "$BASE_BRANCH"
+
+            if [[ "$PR_CREATED" == "true" ]]; then
+              echo "  PR created successfully!"
+            fi
+          done
+
+          echo ""
+          echo "=========================================="
+          echo "Version check complete"
+          echo "=========================================="
