@@ -973,3 +973,94 @@ repositories:
         permissions:
           contents: write
           pull-requests: write
+
+  # cardano-up is a Go command line utility for managing Cardano services for
+  # local development. Its CI (conventional commits, go-test, golangci-lint,
+  # nilaway, Docker CI) and release/publish pipeline are migrated to the shared
+  # reusable workflows. The reusable defaults for the Go toolchain and lint
+  # versions match the repository's originals, so only the image/binary naming,
+  # Docker Hub description, docker-password secret and the linux/darwin-only
+  # binary matrix need to be provided.
+  - name: blinklabs-io/cardano-up
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: go-test.yml
+        workflow_name: "go-test"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+
+      - destination_file: golangci-lint.yml
+        workflow_name: "golangci-lint"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+
+      - destination_file: nilaway.yml
+        workflow_name: "nilaway"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          include-pkgs: "github.com/blinklabs-io/cardano-up"
+
+      - destination_file: ci-docker.yml
+        workflow_name: "Docker CI"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
+        triggers:
+          pull_request:
+            branches: [main]
+            paths:
+              - Dockerfile
+              - Makefile
+              - cmd/**
+              - docs/**
+              - internal/**
+              - pkgmgr/**
+              - go.*
+              - .github/workflows/ci-docker.yml
+        params:
+          image-name: "blinklabs-io/cardano-up"
+
+      - destination_file: publish.yml
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        triggers:
+          push:
+            branches: [main]
+            tags: ['v*.*.*']
+        permissions:
+          actions: write
+          attestations: write
+          checks: write
+          contents: write
+          id-token: write
+          packages: write
+          statuses: write
+        secrets:
+          docker-password: DOCKER_PASSWORD
+        params:
+          binary-name: "cardano-up"
+          docker-image: "blinklabs/cardano-up"
+          description: "Command line utility for managing Cardano services for local development"
+          binary-os-matrix: '["linux","darwin"]'
