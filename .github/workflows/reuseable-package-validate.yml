@@ -1,0 +1,101 @@
+name: Reusable Package Validate
+
+# Validates cardano-up package definitions.
+#
+# Downloads the cardano-up CLI and runs `cardano-up validate` against the
+# repository. Optionally runs a filename/content version-consistency script
+# first. All repository-specific values are optional inputs with defaults, so
+# the workflow stays generic and can be reused by any cardano-up package
+# repository.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: Runner label the job executes on.
+        required: false
+        type: string
+        default: "ubuntu-latest"
+      validate-versions-script:
+        description: >-
+          Path to a script that checks filename/content version consistency.
+          Skipped when empty or when the file does not exist.
+        required: false
+        type: string
+        default: "scripts/validate-versions.sh"
+      cardano-up-repo:
+        description: GitHub repository (owner/name) to download the cardano-up CLI from.
+        required: false
+        type: string
+        default: "blinklabs-io/cardano-up"
+      cardano-up-version:
+        description: >-
+          cardano-up release to download. Use "latest" for the newest release,
+          or a specific tag (e.g. "v0.15.0").
+        required: false
+        type: string
+        default: "latest"
+      validate-args:
+        description: Arguments passed to `cardano-up validate`.
+        required: false
+        type: string
+        default: "-D"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate packages
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate filename/content version consistency
+        if: inputs.validate-versions-script != ''
+        env:
+          VALIDATE_VERSIONS_SCRIPT: ${{ inputs.validate-versions-script }}
+        run: |
+          set -euo pipefail
+          if [[ -f "$VALIDATE_VERSIONS_SCRIPT" ]]; then
+            "$VALIDATE_VERSIONS_SCRIPT"
+          else
+            echo "Version consistency script not found: $VALIDATE_VERSIONS_SCRIPT, skipping"
+          fi
+
+      - name: Download cardano-up
+        env:
+          CARDANO_UP_REPO: ${{ inputs.cardano-up-repo }}
+          CARDANO_UP_VERSION: ${{ inputs.cardano-up-version }}
+        run: |
+          set -euo pipefail
+          if [[ "$CARDANO_UP_VERSION" == "latest" ]]; then
+            API_URL="https://api.github.com/repos/${CARDANO_UP_REPO}/releases/latest"
+          else
+            API_URL="https://api.github.com/repos/${CARDANO_UP_REPO}/releases/tags/${CARDANO_UP_VERSION}"
+          fi
+          # Extract the asset URL with jq so the value is clean (the GitHub
+          # API returns `"browser_download_url": "https://...",` — a naive
+          # cut/tr parse leaves a leading space and trailing comma that make
+          # curl reject the URL).
+          DOWNLOAD_URL=$(curl -s "$API_URL" | jq -r '.assets[]? | select(.name | test("linux-amd64")) | .browser_download_url' | head -1)
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            echo "ERROR: Could not find linux-amd64 asset for ${CARDANO_UP_REPO} ${CARDANO_UP_VERSION}"
+            exit 1
+          fi
+          curl -sLo cardano-up "$DOWNLOAD_URL"
+          chmod +x cardano-up
+
+      - name: Validate packages
+        env:
+          VALIDATE_ARGS: ${{ inputs.validate-args }}
+        run: |
+          set -euo pipefail
+          # VALIDATE_ARGS is intentionally unquoted so multiple flags split into
+          # separate arguments (matches the original `validate -D`).
+          # shellcheck disable=SC2086
+          ./cardano-up validate $VALIDATE_ARGS

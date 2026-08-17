@@ -1064,3 +1064,52 @@ repositories:
           docker-image: "blinklabs/cardano-up"
           description: "Command line utility for managing Cardano services for local development"
           binary-os-matrix: '["linux","darwin"]'
+
+  # cardano-up-packages hosts the package definitions installed by the
+  # cardano-up CLI. Three governed workflows:
+  #   - conventional-commits: lints PR titles/commits.
+  #   - package-validate: downloads the cardano-up CLI and validates the package
+  #     definitions on pushes to main, version tags and pull requests.
+  #   - check-versions: weekly (and manually triggerable) job that checks each
+  #     package's upstream release (GitHub release, GHCR or Docker Hub image)
+  #     against the newest local packages/<pkg>/<pkg>-*.yaml file and opens
+  #     update PRs. This uses the packages-specific reusable check-versions
+  #     workflow (distinct from the docker-compose one used by
+  #     cardano-compose-stacks). It needs an org PAT so the opened PRs trigger
+  #     downstream CI, so the workflow's `token` secret is mapped to
+  #     ORG_PROJECT_PAT.
+  - name: blinklabs-io/cardano-up-packages
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: package-validate.yml
+        workflow_name: "package-validate"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-package-validate.yml@main"
+        triggers:
+          push:
+            branches: [main]
+            tags: ['v*']
+          pull_request:
+
+      - destination_file: check-versions.yml
+        workflow_name: "check-versions"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-check-versions-packages.yml@main"
+        triggers:
+          schedule:
+          - cron: 0 0 * * 0
+          workflow_dispatch:
+        permissions:
+          contents: write
+          pull-requests: write
+        secrets:
+          token: ORG_PROJECT_PAT

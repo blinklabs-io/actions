@@ -39,6 +39,8 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-nilaway.yml` — NilAway static analysis.
 - `reuseable-conventional-commits.yml` — conventional-commit PR title check.
 - `reuseable-check-versions.yml` — check upstream image versions against a docker-compose file and open update PRs.
+- `reuseable-check-versions-packages.yml` — check upstream release/image versions against `packages/<pkg>/<pkg>-*.yaml` version files, validate with the cardano-up CLI, and open update PRs (for cardano-up package repositories).
+- `reuseable-package-validate.yml` — validate cardano-up package definitions with the cardano-up CLI (plus optional filename/content version-consistency check).
 
 ## How the engine works
 
