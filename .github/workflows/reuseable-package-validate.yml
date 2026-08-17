@@ -71,6 +71,7 @@ jobs:
         env:
           CARDANO_UP_REPO: ${{ inputs.cardano-up-repo }}
           CARDANO_UP_VERSION: ${{ inputs.cardano-up-version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [[ "$CARDANO_UP_VERSION" == "latest" ]]; then
@@ -81,8 +82,15 @@ jobs:
           # Extract the asset URL with jq so the value is clean (the GitHub
           # API returns `"browser_download_url": "https://...",` — a naive
           # cut/tr parse leaves a leading space and trailing comma that make
-          # curl reject the URL).
-          DOWNLOAD_URL=$(curl -s "$API_URL" | jq -r '.assets[]? | select(.name | test("linux-amd64")) | .browser_download_url' | head -1)
+          # curl reject the URL). Authenticate the request (-f fails on HTTP
+          # errors) so concurrent reconciliation runs are not throttled by the
+          # unauthenticated 60-requests/hour API rate limit.
+          DOWNLOAD_URL=$(curl -sSf \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$API_URL" \
+            | jq -r '.assets[]? | select(.name | test("linux-amd64")) | .browser_download_url' | head -1)
           if [[ -z "$DOWNLOAD_URL" ]]; then
             echo "ERROR: Could not find linux-amd64 asset for ${CARDANO_UP_REPO} ${CARDANO_UP_VERSION}"
             exit 1
