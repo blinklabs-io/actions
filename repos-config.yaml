@@ -77,11 +77,12 @@ profiles:
           id-token: write
           attestations: write
           # The reusable's multi-arch-manifest job declares
-          # security-events: write (for the optional Trivy SARIF upload).
-          # Reusable-workflow permissions cannot be elevated by the caller, so
-          # every docker-standard publisher must grant it here even when
-          # enable-trivy-scan is false; otherwise the call fails validation
-          # with "requesting 'security-events: write', but is only allowed
+          # security-events: write (for the Trivy SARIF upload, which is now
+          # enabled by default). Reusable-workflow permissions cannot be
+          # elevated by the caller, so every docker-standard publisher must
+          # grant it here; it is also required when enable-trivy-scan is
+          # overridden to false, otherwise the call fails validation with
+          # "requesting 'security-events: write', but is only allowed
           # 'security-events: none'".
           security-events: write
         secrets:

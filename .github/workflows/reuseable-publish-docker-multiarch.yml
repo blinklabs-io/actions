@@ -52,10 +52,11 @@ on:
       enable-trivy-scan:
         description: >
           Run Trivy vulnerability scanner on the pushed multi-arch GHCR image and
-          upload SARIF results to the GitHub Security tab.
+          upload SARIF results to the GitHub Security tab. Enabled by default;
+          set to false to opt out when a repository genuinely cannot run it.
         required: false
         type: boolean
-        default: false
+        default: true
     secrets:
       docker-password:
         description: Docker Hub access token.
