@@ -407,7 +407,12 @@ jobs:
           done
 
       - name: Run Trivy vulnerability scanner
-        if: inputs.enable-trivy-scan
+        # Only scan when a concrete image version was resolved. On plain branch
+        # pushes docker/metadata-action can leave `version` empty, which would
+        # make scan-ref point at `ghcr.io/<image>:` (no tag) and fail Trivy —
+        # failing an otherwise-successful publish. Skipping keeps the scan
+        # on-by-default for releases without breaking branch publishes.
+        if: inputs.enable-trivy-scan && steps.meta-ghcr.outputs.version != ''
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0
         with:
           scan-type: 'image'
@@ -418,7 +423,7 @@ jobs:
           severity: 'HIGH,CRITICAL'
 
       - name: Upload Trivy scan results to GitHub Security tab
-        if: always() && inputs.enable-trivy-scan
+        if: always() && inputs.enable-trivy-scan && steps.meta-ghcr.outputs.version != ''
         uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.37.6
         with:
           sarif_file: 'trivy-results.sarif'
