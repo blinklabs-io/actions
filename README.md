@@ -32,7 +32,7 @@ Central workflow templates live in `.github/workflows` and are called from
 downstream repositories via `workflow_call`. The current set:
 
 - `reuseable-ci-docker-multiarch.yml` — native multi-arch Docker CI build (no QEMU).
-- `reuseable-publish-docker-multiarch.yml` — native multi-arch Docker publish to Docker Hub + GHCR, with build provenance attestations always enabled.
+- `reuseable-publish-docker-multiarch.yml` — native multi-arch Docker publish to Docker Hub + GHCR, with build provenance attestations always enabled and Trivy vulnerability scanning enabled by default (override with `enable-trivy-scan: false`).
 - `reuseable-publish.yml` — Go binary + native multi-arch Docker image publish for Go services.
 - `reuseable-go-test.yml` — Go test suite.
 - `reuseable-golangci-lint.yml` — golangci-lint.
