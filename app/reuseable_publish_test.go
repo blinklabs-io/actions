@@ -34,11 +34,34 @@ func TestReusablePublishReleaseAssetAuthentication(t *testing.T) {
 		if got, want := step.Env["GH_TOKEN"], "${{ github.token }}"; got != want {
 			t.Fatalf("Upload release asset GH_TOKEN = %q, want %q", got, want)
 		}
-		if !strings.Contains(step.Run, "Authorization: Bearer $GH_TOKEN") {
+		curlCommand := continuedShellCommand(step.Run, "curl")
+		if curlCommand == "" {
+			t.Fatal("Upload release asset must invoke curl")
+		}
+		if !strings.Contains(curlCommand, `-H "Authorization: Bearer $GH_TOKEN"`) {
 			t.Fatal("Upload release asset must authenticate with GH_TOKEN")
 		}
 		return
 	}
 
 	t.Fatal("build-binaries job has no Upload release asset step")
+}
+
+func continuedShellCommand(script, command string) string {
+	var commandLines []string
+	capturing := false
+	for _, line := range strings.Split(script, "\n") {
+		line = strings.TrimSpace(line)
+		if !capturing {
+			if !strings.HasPrefix(line, command+" ") {
+				continue
+			}
+			capturing = true
+		}
+		commandLines = append(commandLines, strings.TrimSuffix(line, `\`))
+		if !strings.HasSuffix(line, `\`) {
+			break
+		}
+	}
+	return strings.Join(commandLines, " ")
 }
