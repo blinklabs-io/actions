@@ -113,6 +113,7 @@ jobs:
           MATRIX_OS: ${{ matrix.os }}
           MATRIX_ARCH: ${{ matrix.arch }}
           BINARY_COMPRESS: ${{ inputs.binary-compress }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         run: |
           _binary_src="$BINARY_NAME"
@@ -130,7 +131,7 @@ jobs:
           fi
           echo "RELEASE_ASSET_FILENAME=${_filename}" >> "$GITHUB_ENV"
           curl --fail \
-            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Authorization: Bearer $GH_TOKEN" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @"${_filename}" \
             "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${_filename}"
