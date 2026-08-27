@@ -258,12 +258,18 @@ jobs:
       - name: Build binary (Windows)
         if: matrix.os == 'windows'
         shell: pwsh
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          MATRIX_TRAY: ${{ matrix.tray }}
+          MSYS2_AMD64_LOC: ${{ steps.msys2-amd64.outputs.msys2-location }}
+          MSYS2_ARM64_LOC: ${{ steps.msys2-arm64.outputs.msys2-location }}
         run: |
-          $env:GOOS = "${{ matrix.os }}"
-          $env:GOARCH = "${{ matrix.arch }}"
+          $env:GOOS = "$env:MATRIX_OS"
+          $env:GOARCH = "$env:MATRIX_ARCH"
 
-          if ("${{ matrix.arch }}" -eq "amd64") {
-            $msys2Loc = "${{ steps.msys2-amd64.outputs.msys2-location }}"
+          if ("$env:MATRIX_ARCH" -eq "amd64") {
+            $msys2Loc = "$env:MSYS2_AMD64_LOC"
             $env:CC = "$msys2Loc\mingw64\bin\gcc.exe"
             $env:CXX = "$msys2Loc\mingw64\bin\g++.exe"
 
@@ -271,8 +277,8 @@ jobs:
             & $env:CC --version
           }
 
-          if ("${{ matrix.arch }}" -eq "arm64") {
-            $msys2Loc = "${{ steps.msys2-arm64.outputs.msys2-location }}"
+          if ("$env:MATRIX_ARCH" -eq "arm64") {
+            $msys2Loc = "$env:MSYS2_ARM64_LOC"
             $env:CC = "$msys2Loc\clangarm64\bin\clang.exe"
             $env:CXX = "$msys2Loc\clangarm64\bin\clang++.exe"
 
@@ -281,20 +287,23 @@ jobs:
           }
 
           make build
-          if ("${{ matrix.tray }}" -eq "true") {
+          if ("$env:MATRIX_TRAY" -eq "true") {
             make build-tray
           }
       - name: Build binary
         if: matrix.os != 'windows' && matrix.os != 'darwin'
         env:
           TRAY_ICON: ${{ inputs.tray-icon }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          MATRIX_TRAY: ${{ matrix.tray }}
         run: |
-          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} make build
-          if [ "${{ matrix.tray }}" = "true" ]; then
-            if [ "${{ matrix.os }}" = "freebsd" ]; then
-              "$(go env GOPATH)/bin/fyne-cross" freebsd -arch=${{ matrix.arch }} -name "${APPLICATION_NAME}-tray" -icon "${TRAY_ICON}" -env GOTOOLCHAIN=auto "./cmd/${APPLICATION_NAME}-tray"
+          GOOS="${MATRIX_OS}" GOARCH="${MATRIX_ARCH}" make build
+          if [ "${MATRIX_TRAY}" = "true" ]; then
+            if [ "${MATRIX_OS}" = "freebsd" ]; then
+              "$(go env GOPATH)/bin/fyne-cross" freebsd -arch="${MATRIX_ARCH}" -name "${APPLICATION_NAME}-tray" -icon "${TRAY_ICON}" -env GOTOOLCHAIN=auto "./cmd/${APPLICATION_NAME}-tray"
             else
-              GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} make build-tray
+              GOOS="${MATRIX_OS}" GOARCH="${MATRIX_ARCH}" make build-tray
             fi
           fi
 
@@ -322,6 +331,7 @@ jobs:
           CERTIFICATE_STORE_TYPE: ${{ secrets.certificate-store-type }}
           CERTIFICATE_KEYSTORE: ${{ secrets.certificate-keystore }}
           CERTIFICATE_KEY_NAME: ${{ secrets.certificate-key-name }}
+          MATRIX_TRAY: ${{ matrix.tray }}
           SIGNING_NAME: ${{ inputs.windows-signing-name != '' && inputs.windows-signing-name || inputs.application-name }}
           PROJECT_URL: ${{ inputs.project-url != '' && inputs.project-url || format('https://github.com/{0}', github.repository) }}
           TSA_URL: ${{ inputs.windows-tsa-url }}
@@ -348,9 +358,9 @@ jobs:
           # Sign every PE that will end up in the MSI. The outer MSI signature
           # only covers the OLE compound, not the embedded binaries — so each
           # .exe must be signed individually BEFORE wix bundles them.
-          $binariesToSign = @("${{ env.APPLICATION_NAME }}.exe")
-          if ("${{ matrix.tray }}" -eq "true") {
-            $binariesToSign += "${{ env.APPLICATION_NAME }}-tray.exe"
+          $binariesToSign = @("$($env:APPLICATION_NAME).exe")
+          if ("$env:MATRIX_TRAY" -eq "true") {
+            $binariesToSign += "$($env:APPLICATION_NAME)-tray.exe"
           }
 
           foreach ($filename in $binariesToSign) {
@@ -441,6 +451,8 @@ jobs:
       - name: Verify MSI signature (Windows)
         if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' && matrix.tray }}
         shell: pwsh
+        env:
+          MATRIX_ARCH: ${{ matrix.arch }}
         run: |
           # Locate signtool.exe in the Windows 10/11 SDK install (preinstalled
           # on windows-latest / windows-11-arm runners).
@@ -449,7 +461,7 @@ jobs:
             Write-Error "Windows SDK not found at $sdkRoot"
             exit 1
           }
-          $archDir = if ("${{ matrix.arch }}" -eq "arm64") { "arm64" } else { "x64" }
+          $archDir = if ("$env:MATRIX_ARCH" -eq "arm64") { "arm64" } else { "x64" }
           $signtool = Get-ChildItem -Path $sdkRoot -Recurse -Filter signtool.exe `
             | Where-Object { $_.FullName -match "\\$archDir\\signtool\.exe$" } `
             | Sort-Object FullName -Descending `
@@ -465,8 +477,8 @@ jobs:
           }
           Write-Host "Using signtool at: $($signtool.FullName)"
 
-          $cleanVersion = "${{ env.RELEASE_TAG }}" -replace '^v', ''
-          $msi = "dist\${{ env.APPLICATION_NAME }}-$cleanVersion-windows-${{ matrix.arch }}.msi"
+          $cleanVersion = "$env:RELEASE_TAG" -replace '^v', ''
+          $msi = "dist\$($env:APPLICATION_NAME)-$cleanVersion-windows-$($env:MATRIX_ARCH).msi"
           if (-not (Test-Path $msi)) {
             Write-Error "MSI not found at $msi"
             exit 1
@@ -498,6 +510,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.apple-app-specific-password }}
           APPLE_TEAM_ID: ${{ secrets.apple-team-id }}
           APPLE_SIGNING_ORG: ${{ inputs.apple-signing-org }}
+          MATRIX_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
 
@@ -533,12 +546,12 @@ jobs:
             export VERSION="${RELEASE_TAG#v}"
           fi
 
-          export ARCH="${{ matrix.arch }}"
+          export ARCH="${MATRIX_ARCH}"
           ./packaging/macos/build-pkg.sh
 
           if [ "${IS_RELEASE}" = "true" ]; then
             echo "::group::Verify pkg with spctl (must be accepted + Notarized Developer ID)"
-            PKG_PATH="dist/${APPLICATION_NAME}-${VERSION}-darwin-${{ matrix.arch }}.pkg"
+            PKG_PATH="dist/${APPLICATION_NAME}-${VERSION}-darwin-${MATRIX_ARCH}.pkg"
             spctl_out=$(spctl -a -vv --type install "${PKG_PATH}" 2>&1)
             echo "${spctl_out}"
             echo "${spctl_out}" | grep -q 'accepted'
@@ -549,57 +562,74 @@ jobs:
       - name: Upload MSI release asset (Windows)
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' && matrix.tray
         shell: pwsh
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         run: |
-          $cleanVersion = "${{ env.RELEASE_TAG }}" -replace '^v', ''
-          $msiPath  = "dist\${{ env.APPLICATION_NAME }}-$cleanVersion-windows-${{ matrix.arch }}.msi"
+          $cleanVersion = "$env:RELEASE_TAG" -replace '^v', ''
+          $msiPath  = "dist\$($env:APPLICATION_NAME)-$cleanVersion-windows-$($env:MATRIX_ARCH).msi"
           # Asset name follows the existing convention:
           # <app>-<RELEASE_TAG>-<os>-<arch>.<ext> (RELEASE_TAG keeps the leading "v").
-          $assetName = "${{ env.APPLICATION_NAME }}-${{ env.RELEASE_TAG }}-${{ matrix.os }}-${{ matrix.arch }}.msi"
+          $assetName = "$($env:APPLICATION_NAME)-$($env:RELEASE_TAG)-$($env:MATRIX_OS)-$($env:MATRIX_ARCH).msi"
           if (-not (Test-Path $msiPath)) {
             Write-Error "MSI not found at $msiPath"
             exit 1
           }
           Write-Host "Uploading $msiPath as $assetName"
           $headers = @{
-            "Authorization" = "token ${{ secrets.GITHUB_TOKEN }}"
+            "Authorization" = "token $env:GH_TOKEN"
             "Content-Type" = "application/octet-stream"
           }
-          $uploadUrl = "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=$assetName"
+          $uploadUrl = "https://uploads.github.com/repos/$($env:GITHUB_REPOSITORY)/releases/$($env:RELEASE_ID)/assets?name=$assetName"
           Invoke-RestMethod -Uri $uploadUrl -Method Post -Headers $headers -InFile $msiPath
 
       - name: Upload release asset (macOS pkg)
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'darwin'
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         run: |
           set -euo pipefail
           _version="${RELEASE_TAG#v}"
-          _filename="${APPLICATION_NAME}-${_version}-${{ matrix.os }}-${{ matrix.arch }}.pkg"
+          _filename="${APPLICATION_NAME}-${_version}-${MATRIX_OS}-${MATRIX_ARCH}.pkg"
           _path="dist/${_filename}"
           curl --fail --show-error --silent \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Authorization: token ${GH_TOKEN}" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @"${_path}" \
-            "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}"
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${_filename}"
 
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/') && matrix.os != 'windows' && matrix.os != 'darwin'
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         run: |
           set -euo pipefail
           # Build from runtime env (not GitHub expression expansion) so a
           # crafted tag name can't inject shell; quote all paths.
-          _filename="${APPLICATION_NAME}-${RELEASE_TAG}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+          _filename="${APPLICATION_NAME}-${RELEASE_TAG}-${MATRIX_OS}-${MATRIX_ARCH}.tar.gz"
           tar czf "${_filename}" "${APPLICATION_NAME}"
           curl --fail --show-error --silent \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Authorization: token ${GH_TOKEN}" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @"${_filename}" \
-            "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}"
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${_filename}"
 
       - name: Compute MSI path (Windows)
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' && matrix.tray
         shell: pwsh
+        env:
+          MATRIX_ARCH: ${{ matrix.arch }}
         run: |
-          $cleanVersion = "${{ env.RELEASE_TAG }}" -replace '^v', ''
-          $msiPath = "dist\${{ env.APPLICATION_NAME }}-$cleanVersion-windows-${{ matrix.arch }}.msi"
+          $cleanVersion = "$env:RELEASE_TAG" -replace '^v', ''
+          $msiPath = "dist\$($env:APPLICATION_NAME)-$cleanVersion-windows-$($env:MATRIX_ARCH).msi"
           "MSI_PATH=$msiPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Attest MSI (Windows)
@@ -772,6 +802,8 @@ jobs:
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -779,7 +811,7 @@ jobs:
               await github.rest.repos.updateRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                release_id: ${{ needs.create-draft-release.outputs.RELEASE_ID }},
+                release_id: Number(process.env.RELEASE_ID),
                 draft: false,
               });
             } catch (error) {
