@@ -828,11 +828,16 @@ repositories:
           build-target: ogmios
           prerelease-pattern: -pre-
   # adder is a Go service with a desktop GUI tray (Fyne/CGO) and platform
-  # installers (Windows MSI, macOS .pkg). Its publish.yml and test-msi.yml are
-  # repository-specific (code signing, notarization, WiX/pkg builds) and have no
-  # shared reusable equivalent, so they are intentionally NOT listed here and
-  # remain managed in-repo. The CI checks below use the shared reusable
-  # workflows, passing adder's Fyne system dependencies and CGO requirements.
+  # installers (Windows MSI, macOS .pkg). Its release pipeline (macOS
+  # signed+notarized .pkg, Windows signed .msi, Linux/FreeBSD tarballs, native
+  # multi-arch Docker images, and per-artifact build-provenance attestations) is
+  # driven by the shared reuseable-publish-desktop.yml workflow below. The
+  # repo-specific packaging scripts (packaging/macos/build-pkg.sh,
+  # packaging/windows/build-msi.ps1) and Makefile targets that workflow invokes
+  # remain in-repo. test-msi.yml is a manual (workflow_dispatch) MSI smoke-test
+  # harness with no shared equivalent, so it stays managed in-repo. The CI
+  # checks below use the shared reusable workflows, passing adder's Fyne system
+  # dependencies and CGO requirements.
   - name: blinklabs-io/adder
     settings:
       delete_branch_on_merge: true
@@ -907,6 +912,46 @@ repositories:
               - .github/workflows/ci-docker.yml
         params:
           image-name: "blinklabs-io/adder"
+
+      - destination_file: publish.yml
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@main"
+        triggers:
+          push:
+            branches: [main]
+            tags: ['v*.*.*']
+        permissions:
+          actions: write
+          attestations: write
+          checks: write
+          contents: write
+          id-token: write
+          packages: write
+          statuses: write
+        secrets:
+          # Docker Hub
+          docker-password: DOCKER_PASSWORD
+          # Apple Developer ID signing + notarization (macOS .pkg)
+          apple-certificate: APPLE_CERTIFICATE
+          apple-certificate-password: APPLE_CERTIFICATE_PASSWORD
+          apple-installer-certificate: APPLE_INSTALLER_CERTIFICATE
+          # adder reuses the application-cert password for the installer cert.
+          apple-installer-certificate-password: APPLE_CERTIFICATE_PASSWORD
+          apple-keychain-password: APPLE_KEYCHAIN_PASSWORD
+          apple-id: APPLE_ID
+          apple-app-specific-password: APPLE_APP_SPECIFIC_PASSWORD
+          apple-team-id: APPLE_TEAM_ID
+          # Windows EV code signing via jsign + Google Cloud KMS (MSI)
+          certificate-sa-credentials: CERTIFICATE_SA_CREDENTIALS
+          certificate-chain: CERTIFICATE_CHAIN
+          certificate-store-type: CERTIFICATE_STORE_TYPE
+          certificate-keystore: CERTIFICATE_KEYSTORE
+          certificate-key-name: CERTIFICATE_KEY_NAME
+        params:
+          application-name: "adder"
+          docker-image: "blinklabs/adder"
+          description: "Adder is a tool for tailing the Cardano blockchain and emitting events"
+          go-version: "1.26.x"
   # adder-mobile is a Flutter mobile app (not a Go service). It uses the shared
   # conventional-commits check plus the shared reusable Flutter CI workflow for
   # PR analyze/test (pr.yml) and the main-branch release APK build (publish.yml).

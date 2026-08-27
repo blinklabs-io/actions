@@ -34,6 +34,7 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-ci-docker-multiarch.yml` — native multi-arch Docker CI build (no QEMU).
 - `reuseable-publish-docker-multiarch.yml` — native multi-arch Docker publish to Docker Hub + GHCR, with build provenance attestations always enabled and Trivy vulnerability scanning enabled by default (override with `enable-trivy-scan: false`).
 - `reuseable-publish.yml` — Go binary + native multi-arch Docker image publish for Go services.
+- `reuseable-publish-desktop.yml` — full release pipeline for desktop-style Go apps that ship a Fyne GUI tray alongside a CLI: macOS signed + notarized `.pkg` installers, Windows signed `.msi` installers (jsign + WiX), Linux/FreeBSD tarballs, native multi-arch Docker images, and build-provenance attestations for every binary, installer, and image. The packaging scripts and `make` targets it drives live in the calling repository.
 - `reuseable-go-test.yml` — Go test suite.
 - `reuseable-golangci-lint.yml` — golangci-lint.
 - `reuseable-nilaway.yml` — NilAway static analysis.
