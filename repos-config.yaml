@@ -952,6 +952,9 @@ repositories:
           docker-image: "blinklabs/adder"
           description: "Adder is a tool for tailing the Cardano blockchain and emitting events"
           go-version: "1.26.x"
+          # Preserve the capitalized Authenticode display name the in-repo
+          # workflow used (application-name is lowercase "adder").
+          windows-signing-name: "Adder"
   # adder-mobile is a Flutter mobile app (not a Go service). It uses the shared
   # conventional-commits check plus the shared reusable Flutter CI workflow for
   # PR analyze/test (pr.yml) and the main-branch release APK build (publish.yml).
