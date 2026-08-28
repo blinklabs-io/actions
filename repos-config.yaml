@@ -915,7 +915,12 @@ repositories:
 
       - destination_file: publish.yml
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@main"
+        # Pinned to an immutable commit SHA (not @main): this call hands the
+        # reusable Apple, Google Cloud KMS, and Docker credentials plus
+        # release/package write access, so it must reference a reviewed, frozen
+        # revision. Bump this SHA in a reviewed change when adopting new
+        # desktop-publish behavior.
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@3d3e357980cc51cafa37ec5f51354df6604231ed"
         triggers:
           push:
             branches: [main]

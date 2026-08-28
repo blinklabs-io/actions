@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -120,14 +121,34 @@ func adderPublishWorkflow(t *testing.T) WorkflowConfig {
 // reusable and asserts required params are present.
 func TestAdderPublishUsesDesktopReusable(t *testing.T) {
 	wf := adderPublishWorkflow(t)
-	if !strings.HasSuffix(wf.ReusableWorkflow, "reuseable-publish-desktop.yml@main") {
-		t.Errorf("adder publish.yml reusable_workflow = %q, want the reuseable-publish-desktop.yml@main reference", wf.ReusableWorkflow)
+	path, _, _ := strings.Cut(wf.ReusableWorkflow, "@")
+	if !strings.HasSuffix(path, "/reuseable-publish-desktop.yml") {
+		t.Errorf("adder publish.yml reusable_workflow = %q, want the reuseable-publish-desktop.yml reference", wf.ReusableWorkflow)
 	}
 	if got := wf.Params["application-name"]; got != "adder" {
 		t.Errorf("adder publish.yml application-name = %q, want \"adder\"", got)
 	}
 	if got := wf.Params["docker-image"]; got != "blinklabs/adder" {
 		t.Errorf("adder publish.yml docker-image = %q, want \"blinklabs/adder\"", got)
+	}
+}
+
+// commitSHARef matches a full 40-hex-character git commit SHA.
+var commitSHARef = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// TestAdderPublishPinnedToImmutableRef enforces the repository policy that a
+// secret-bearing release call must reference a frozen commit SHA, not a mutable
+// branch/tag ref like @main. This is the caller that receives Apple, Google
+// Cloud, and Docker credentials, so a mutable ref would let an unrelated Actions
+// change alter Adder signing/publishing without an Adder review.
+func TestAdderPublishPinnedToImmutableRef(t *testing.T) {
+	wf := adderPublishWorkflow(t)
+	_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
+	if !ok {
+		t.Fatalf("adder publish.yml reusable_workflow %q has no @ref", wf.ReusableWorkflow)
+	}
+	if !commitSHARef.MatchString(ref) {
+		t.Errorf("adder publish.yml must pin the secret-bearing reusable to a 40-char commit SHA, got mutable ref %q", ref)
 	}
 }
 
