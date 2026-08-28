@@ -136,6 +136,14 @@ func TestAdderPublishUsesDesktopReusable(t *testing.T) {
 // commitSHARef matches a full 40-hex-character git commit SHA.
 var commitSHARef = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
+// wantDesktopReusableSHA is the reviewed commit adder's publish call must pin
+// to. It is advanced deliberately (in the same commit that bumps the caller)
+// whenever the reusable's release behavior changes, so the pin cannot silently
+// lag behind a security-relevant fix. This SHA carries the per-architecture
+// image scan and the scan-gated finalize-release; an older commit (e.g. one
+// that scans only amd64) would fail this test.
+const wantDesktopReusableSHA = "6fd84e8349a2a427a71dbcf06a7d0aaef0daae52"
+
 // TestAdderPublishPinnedToImmutableRef enforces the repository policy that a
 // secret-bearing release call must reference a frozen commit SHA, not a mutable
 // branch/tag ref like @main. This is the caller that receives Apple, Google
@@ -149,6 +157,12 @@ func TestAdderPublishPinnedToImmutableRef(t *testing.T) {
 	}
 	if !commitSHARef.MatchString(ref) {
 		t.Errorf("adder publish.yml must pin the secret-bearing reusable to a 40-char commit SHA, got mutable ref %q", ref)
+	}
+	// Also pin to the specific reviewed commit that carries the current
+	// release behavior (per-arch scan + scan-gated finalize), so the caller
+	// cannot regress to an earlier commit lacking those fixes.
+	if ref != wantDesktopReusableSHA {
+		t.Errorf("adder publish.yml pins reuseable-publish-desktop.yml@%s, want the reviewed SHA %s", ref, wantDesktopReusableSHA)
 	}
 }
 

@@ -920,7 +920,7 @@ repositories:
         # release/package write access, so it must reference a reviewed, frozen
         # revision. Bump this SHA in a reviewed change when adopting new
         # desktop-publish behavior.
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@3d3e357980cc51cafa37ec5f51354df6604231ed"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@6fd84e8349a2a427a71dbcf06a7d0aaef0daae52"
         triggers:
           push:
             branches: [main]
