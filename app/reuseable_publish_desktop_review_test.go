@@ -145,7 +145,7 @@ func TestNoPartialRelease(t *testing.T) {
 		t.Errorf("finalize-release still uses always(); if = %q", job.If)
 	}
 	needs := decodeNeeds(t, job.Needs)
-	for _, want := range []string{"create-draft-release", "build-binaries", "build-images", "build-image-manifest"} {
+	for _, want := range []string{"create-draft-release", "build-binaries", "build-images", "build-image-manifest", "scan-images"} {
 		if !needs[want] {
 			t.Errorf("finalize-release.needs must include %q; got %v", want, needs)
 		}

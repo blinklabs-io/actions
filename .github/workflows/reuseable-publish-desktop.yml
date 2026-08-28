@@ -815,8 +815,13 @@ jobs:
     # merged manifest would silently skip the arm64 filesystem and package set.
     # This matrix scans each per-architecture image on its native runner and
     # uploads a distinct SARIF category per arch so both result sets are kept.
+    #
+    # The job itself is intentionally NOT gated on enable-trivy-scan: it is a
+    # required dependency of finalize-release, and a skipped dependency would
+    # skip finalize-release too (leaving the release drafted forever). Instead
+    # the scan/upload STEPS are gated, so with scanning disabled the job still
+    # completes successfully as a no-op and the release gate stays intact.
     needs: [build-images]
-    if: inputs.enable-trivy-scan
     permissions:
       contents: read
       packages: read
@@ -833,12 +838,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Login to GHCR
+        if: inputs.enable-trivy-scan
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
         with:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
           registry: ghcr.io
       - id: meta
+        if: inputs.enable-trivy-scan
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0 https://github.com/docker/metadata-action/releases/tag/v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
@@ -852,14 +859,14 @@ jobs:
             # semver
             type=semver,pattern={{version}}
       - name: Run Trivy vulnerability scanner (${{ matrix.arch }})
-        # Only scan when a concrete image version was resolved. On plain branch
-        # pushes docker/metadata-action can leave `version` empty, which would
-        # make scan-ref tagless and fail Trivy — failing an otherwise-successful
-        # publish. Skipping keeps the scan on-by-default for releases without
-        # breaking branch publishes. The per-arch tag (…-amd64 / …-arm64) is the
-        # single-platform image build-images pushed, so the scan targets that
-        # architecture's real filesystem regardless of the runner default.
-        if: steps.meta.outputs.version != ''
+        # Only scan when enabled and a concrete image version was resolved. On
+        # plain branch pushes docker/metadata-action can leave `version` empty,
+        # which would make scan-ref tagless and fail Trivy — failing an
+        # otherwise-successful publish. Skipping keeps the scan on-by-default for
+        # releases without breaking branch publishes. The per-arch tag (…-amd64 /
+        # …-arm64) is the single-platform image build-images pushed, so the scan
+        # targets that architecture's real filesystem regardless of the runner.
+        if: inputs.enable-trivy-scan && steps.meta.outputs.version != ''
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0
         with:
           scan-type: 'image'
@@ -871,7 +878,7 @@ jobs:
       - name: Upload Trivy scan results to GitHub Security tab (${{ matrix.arch }})
         # Distinct category per arch: upload-sarif keys results by category, so a
         # shared category would let the arm64 upload overwrite the amd64 one.
-        if: always() && steps.meta.outputs.version != ''
+        if: always() && inputs.enable-trivy-scan && steps.meta.outputs.version != ''
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.37.7
         with:
           sarif_file: 'trivy-results-${{ matrix.arch }}.sarif'
@@ -881,11 +888,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    needs: [create-draft-release, build-binaries, build-images, build-image-manifest]
+    needs: [create-draft-release, build-binaries, build-images, build-image-manifest, scan-images]
     # No always(): a job with `needs` runs only when every listed job succeeded.
-    # So if any binary, installer, image, or manifest build fails, this job is
-    # skipped and the release stays a draft for owner-directed recovery instead
-    # of being published without its missing assets.
+    # So if any binary, installer, image, manifest, or image-scan job fails, this
+    # job is skipped and the release stays a draft for owner-directed recovery
+    # instead of being published without its missing assets or before the
+    # vulnerability scan and SARIF upload have finished.
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
