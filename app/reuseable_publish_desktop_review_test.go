@@ -20,12 +20,19 @@ type desktopWorkflow struct {
 	} `yaml:"on"`
 	Jobs map[string]struct {
 		If          string            `yaml:"if"`
+		Needs       yaml.Node         `yaml:"needs"`
 		Permissions map[string]string `yaml:"permissions"`
-		Steps       []struct {
-			Name string `yaml:"name"`
-			If   string `yaml:"if"`
-			Uses string `yaml:"uses"`
-			Run  string `yaml:"run"`
+		Strategy    struct {
+			Matrix struct {
+				Include []map[string]string `yaml:"include"`
+			} `yaml:"matrix"`
+		} `yaml:"strategy"`
+		Steps []struct {
+			Name string            `yaml:"name"`
+			If   string            `yaml:"if"`
+			Uses string            `yaml:"uses"`
+			Run  string            `yaml:"run"`
+			With map[string]string `yaml:"with"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
 }
@@ -99,9 +106,35 @@ func TestTrayBinaryShippedAndAttested(t *testing.T) {
 	}
 }
 
-// TestNoPartialRelease asserts finalize-release does not use always(): with a
-// plain `needs`, the job is skipped if any build fails, leaving a draft rather
-// than publishing a release missing assets. (P1: do not publish a partial release)
+// decodeNeeds normalizes a job's `needs` (which may be a single scalar or a
+// sequence) into a set of dependency job names.
+func decodeNeeds(t *testing.T, n yaml.Node) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	if n.IsZero() {
+		return out
+	}
+	switch n.Kind {
+	case yaml.ScalarNode:
+		out[n.Value] = true
+	case yaml.SequenceNode:
+		var items []string
+		if err := n.Decode(&items); err != nil {
+			t.Fatalf("decode needs sequence: %v", err)
+		}
+		for _, it := range items {
+			out[it] = true
+		}
+	default:
+		t.Fatalf("unexpected needs node kind %v", n.Kind)
+	}
+	return out
+}
+
+// TestNoPartialRelease asserts finalize-release does not use always() and its
+// real `needs` list still gates on every build job. Decoding the actual YAML
+// `needs` (not a hard-coded copy) means dropping a build dependency from the
+// workflow makes this test fail. (P1: do not publish a partial release)
 func TestNoPartialRelease(t *testing.T) {
 	wf := loadDesktopWorkflow(t)
 	job, ok := wf.Jobs["finalize-release"]
@@ -111,42 +144,61 @@ func TestNoPartialRelease(t *testing.T) {
 	if strings.Contains(job.If, "always()") {
 		t.Errorf("finalize-release still uses always(); if = %q", job.If)
 	}
-	for _, want := range []string{"build-binaries", "build-images", "build-image-manifest"} {
-		found := false
-		for _, s := range []string{"create-draft-release", "build-binaries", "build-images", "build-image-manifest"} {
-			if s == want {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("finalize-release must depend on %q", want)
+	needs := decodeNeeds(t, job.Needs)
+	for _, want := range []string{"create-draft-release", "build-binaries", "build-images", "build-image-manifest"} {
+		if !needs[want] {
+			t.Errorf("finalize-release.needs must include %q; got %v", want, needs)
 		}
 	}
 }
 
-// TestImageScanEnabled asserts the published image is Trivy-scanned with the
-// SARIF uploaded, and the manifest job holds the required security-events scope.
-// (P2: retain the shared image vulnerability scan)
+// TestImageScanEnabled asserts the published images are Trivy-scanned per
+// architecture (so arm64 is not silently skipped by Trivy's amd64 default) with
+// each SARIF uploaded under a distinct category, and that the scan job holds
+// exactly the security-events scope it needs. (P2: retain the image scan)
 func TestImageScanEnabled(t *testing.T) {
 	wf := loadDesktopWorkflow(t)
 	if _, ok := wf.On.WorkflowCall.Inputs["enable-trivy-scan"]; !ok {
 		t.Error("missing enable-trivy-scan input")
 	}
-	job, ok := wf.Jobs["build-image-manifest"]
+	job, ok := wf.Jobs["scan-images"]
 	if !ok {
-		t.Fatal("build-image-manifest job missing")
+		t.Fatal("scan-images job missing")
 	}
 	if job.Permissions["security-events"] != "write" {
-		t.Errorf("build-image-manifest needs security-events: write, got %q", job.Permissions["security-events"])
+		t.Errorf("scan-images needs security-events: write, got %q", job.Permissions["security-events"])
 	}
-	var sawTrivy bool
+	// Both architectures must be in the scan matrix.
+	arches := map[string]bool{}
+	for _, row := range job.Strategy.Matrix.Include {
+		arches[row["arch"]] = true
+	}
+	for _, want := range []string{"amd64", "arm64"} {
+		if !arches[want] {
+			t.Errorf("scan-images matrix does not cover arch %q; got %v", want, arches)
+		}
+	}
+	var sawTrivy, archScanRef, archCategory bool
 	for _, s := range job.Steps {
 		if strings.Contains(s.Uses, "aquasecurity/trivy-action") {
 			sawTrivy = true
+			// The scan-ref must select a per-arch tag, not the merged manifest.
+			if strings.Contains(s.With["scan-ref"], "${{ matrix.arch }}") {
+				archScanRef = true
+			}
+		}
+		if strings.Contains(s.Uses, "upload-sarif") && strings.Contains(s.With["category"], "${{ matrix.arch }}") {
+			archCategory = true
 		}
 	}
 	if !sawTrivy {
-		t.Error("build-image-manifest does not run the Trivy scanner")
+		t.Error("scan-images does not run the Trivy scanner")
+	}
+	if !archScanRef {
+		t.Error("Trivy scan-ref must target the per-architecture image tag (…-${{ matrix.arch }}), not the merged manifest")
+	}
+	if !archCategory {
+		t.Error("SARIF upload must use a per-architecture category so the arm64 results do not overwrite amd64")
 	}
 }
 
