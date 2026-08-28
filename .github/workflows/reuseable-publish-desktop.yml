@@ -72,6 +72,11 @@ on:
         required: false
         type: string
         default: http://timestamp.globalsign.com/tsa/r6advanced1
+      enable-trivy-scan:
+        description: Scan the published multi-arch image for HIGH/CRITICAL vulnerabilities with Trivy and upload SARIF. On by default.
+        required: false
+        type: boolean
+        default: true
     secrets:
       docker-password:
         description: Docker Hub access token. Required when docker-image is set.
@@ -194,14 +199,13 @@ jobs:
             tray: true
     runs-on: ${{ matrix.runner }}
     needs: [create-draft-release]
+    # Only the capabilities this job actually uses: attest (id-token +
+    # attestations) and upload release assets (contents). It pushes no packages
+    # and touches no Actions/Checks/Statuses APIs.
     permissions:
-      actions: write
       attestations: write
-      checks: write
       contents: write
       id-token: write
-      packages: write
-      statuses: write
     env:
       APPLICATION_NAME: ${{ inputs.application-name }}
     steps:
@@ -608,6 +612,7 @@ jobs:
         env:
           MATRIX_OS: ${{ matrix.os }}
           MATRIX_ARCH: ${{ matrix.arch }}
+          MATRIX_TRAY: ${{ matrix.tray }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         run: |
@@ -615,7 +620,13 @@ jobs:
           # Build from runtime env (not GitHub expression expansion) so a
           # crafted tag name can't inject shell; quote all paths.
           _filename="${APPLICATION_NAME}-${RELEASE_TAG}-${MATRIX_OS}-${MATRIX_ARCH}.tar.gz"
-          tar czf "${_filename}" "${APPLICATION_NAME}"
+          # Ship the GUI tray binary next to the core binary on tray-enabled
+          # rows so every built (and later attested) subject is downloadable.
+          _files=("${APPLICATION_NAME}")
+          if [ "${MATRIX_TRAY}" = "true" ] && [ -f "${APPLICATION_NAME}-tray" ]; then
+            _files+=("${APPLICATION_NAME}-tray")
+          fi
+          tar czf "${_filename}" "${_files[@]}"
           curl --fail --show-error --silent \
             -H "Authorization: token ${GH_TOKEN}" \
             -H "Content-Type: application/octet-stream" \
@@ -650,16 +661,21 @@ jobs:
         with:
           subject-path: '${{ env.APPLICATION_NAME }}'
 
+      - name: Attest tray binary
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os != 'windows' && matrix.os != 'darwin' && matrix.tray
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
+        with:
+          subject-path: '${{ env.APPLICATION_NAME }}-tray'
+
   build-images:
     needs: [create-draft-release]
+    # Push images (packages) and attest them (id-token + attestations). It only
+    # reads the repo (checkout) and writes no repository contents.
     permissions:
-      actions: write
       attestations: write
-      checks: write
-      contents: write
+      contents: read
       id-token: write
       packages: write
-      statuses: write
     strategy:
       fail-fast: false
       matrix:
@@ -676,7 +692,7 @@ jobs:
           fetch-depth: '0'
           persist-credentials: false
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0 https://github.com/docker/setup-buildx-action/releases/tag/v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0 https://github.com/docker/setup-buildx-action/releases/tag/v4.3.0
       - name: Login to Docker Hub
         if: inputs.docker-image != ''
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
@@ -732,8 +748,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Trivy uploads its SARIF report to the Security tab.
+      security-events: write
     runs-on: ubuntu-latest
     steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0 https://github.com/docker/setup-buildx-action/releases/tag/v4.3.0
       - name: Login to Docker Hub
         if: inputs.docker-image != ''
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0 https://github.com/docker/login-action/releases/tag/v4.6.0
@@ -762,22 +782,41 @@ jobs:
             # semver
             type=semver,pattern={{version}}
       - name: manifest-create
-        shell: bash
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          # Split multi-line TAGS on IFS at runtime; avoids a newline in the script.
+          # `docker buildx imagetools create` copies the complete source OCI
+          # index for each arch tag — the platform image AND its
+          # build-provenance / SBOM attestation descriptors — into the merged
+          # manifest. Plain `docker manifest create` instead rejects those
+          # `unknown/unknown` attestation entries with "must have an OS and
+          # Architecture", so the earlier per-arch attestations are preserved
+          # here rather than dropped.
+          # Word-splitting of the env-sourced tag list is intentional.
           # shellcheck disable=SC2086
           for t in ${TAGS}; do
-            # Extract the underlying manifests from each manifests list and create a new single manifest list.
-            # Word-splitting of the two command substitutions below is intentional:
-            # each digest line becomes a separate argument to `docker manifest create`.
-            # shellcheck disable=SC2046
-            docker manifest create "${t}" \
-              $(docker manifest inspect "${t}-amd64" | jq -r '.manifests[] | .digest' | sed -e "s|^|${t%:*}@|") \
-              $(docker manifest inspect "${t}-arm64" | jq -r '.manifests[] | .digest' | sed -e "s|^|${t%:*}@|")
-            docker manifest push "${t}"
+            docker buildx imagetools create -t "${t}" "${t}-amd64" "${t}-arm64"
           done
+      - name: Run Trivy vulnerability scanner
+        # Only scan when a concrete image version was resolved. On plain branch
+        # pushes docker/metadata-action can leave `version` empty, which would
+        # make scan-ref tagless and fail Trivy — failing an otherwise-successful
+        # publish. Skipping keeps the scan on-by-default for releases without
+        # breaking branch publishes.
+        if: inputs.enable-trivy-scan && steps.meta.outputs.version != ''
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0
+        with:
+          scan-type: 'image'
+          scan-ref: 'ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          ignore-unfixed: true
+          severity: 'HIGH,CRITICAL'
+      - name: Upload Trivy scan results to GitHub Security tab
+        if: always() && inputs.enable-trivy-scan && steps.meta.outputs.version != ''
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.37.7
+        with:
+          sarif_file: 'trivy-results.sarif'
       # Checkout repo so README.md is available for next step
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
@@ -798,7 +837,11 @@ jobs:
     permissions:
       contents: write
     needs: [create-draft-release, build-binaries, build-images, build-image-manifest]
-    if: always() && startsWith(github.ref, 'refs/tags/') && needs.create-draft-release.result == 'success'
+    # No always(): a job with `needs` runs only when every listed job succeeded.
+    # So if any binary, installer, image, or manifest build fails, this job is
+    # skipped and the release stays a draft for owner-directed recovery instead
+    # of being published without its missing assets.
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
         if: startsWith(github.ref, 'refs/tags/')

@@ -920,14 +920,16 @@ repositories:
           push:
             branches: [main]
             tags: ['v*.*.*']
+        # Union of the capabilities the reusable's jobs actually need:
+        # attestations + id-token (build provenance), contents (release
+        # create/undraft and asset uploads), packages (image push), and
+        # security-events (Trivy SARIF upload). Individual jobs narrow further.
         permissions:
-          actions: write
           attestations: write
-          checks: write
           contents: write
           id-token: write
           packages: write
-          statuses: write
+          security-events: write
         secrets:
           # Docker Hub
           docker-password: DOCKER_PASSWORD
