@@ -252,3 +252,73 @@ func TestBuildxPinnedToCurrentSHA(t *testing.T) {
 		t.Errorf("reusable should pin docker/setup-buildx-action to %s", wantSHA)
 	}
 }
+
+// TestScanImagesNoOpWhenDisabled locks in the disabled-scan no-op contract that
+// keeps the release gate intact. scan-images is a required dependency of
+// finalize-release, so it must never carry a job-level `if` referencing
+// enable-trivy-scan: a false input would skip the job, which skips
+// finalize-release and strands a tagged release in draft. Instead the
+// operational steps (the Trivy scan and the SARIF upload) must each carry the
+// enable-trivy-scan guard, so disabling the scan makes the job a successful
+// no-op. Re-adding a job-level condition — or dropping the guard from a step —
+// must fail this test. (P2: cover the disabled-scan no-op contract)
+func TestScanImagesNoOpWhenDisabled(t *testing.T) {
+	wf := loadDesktopWorkflow(t)
+	job, ok := wf.Jobs["scan-images"]
+	if !ok {
+		t.Fatal("scan-images job missing")
+	}
+
+	// The job must not be gated on enable-trivy-scan: a skipped required
+	// dependency would skip finalize-release and leave the release drafted.
+	if strings.Contains(job.If, "enable-trivy-scan") {
+		t.Errorf("scan-images must not carry a job-level enable-trivy-scan condition (got if: %q); "+
+			"a false input would skip the job and therefore skip finalize-release, "+
+			"stranding a tagged release in draft. Guard the steps instead.", job.If)
+	}
+
+	// The operational steps must carry the guard so a disabled scan is a no-op
+	// rather than a failure. Locate them by their action, independent of order.
+	var trivyIf, uploadIf string
+	var sawTrivy, sawUpload bool
+	for _, s := range job.Steps {
+		switch {
+		case strings.Contains(s.Uses, "aquasecurity/trivy-action"):
+			trivyIf, sawTrivy = s.If, true
+		case strings.Contains(s.Uses, "upload-sarif"):
+			uploadIf, sawUpload = s.If, true
+		}
+	}
+	if !sawTrivy {
+		t.Fatal("scan-images has no Trivy scan step")
+	}
+	if !sawUpload {
+		t.Fatal("scan-images has no SARIF upload step")
+	}
+	if !strings.Contains(trivyIf, "inputs.enable-trivy-scan") {
+		t.Errorf("Trivy scan step must be guarded by inputs.enable-trivy-scan so a disabled scan is a no-op; got if: %q", trivyIf)
+	}
+	if !strings.Contains(uploadIf, "inputs.enable-trivy-scan") {
+		t.Errorf("SARIF upload step must be guarded by inputs.enable-trivy-scan so a disabled scan is a no-op; got if: %q", uploadIf)
+	}
+}
+
+// TestMsys2PinnedToCurrentSHA asserts the Windows CGO toolchain action is pinned
+// to the same v2.32.0 SHA Adder main uses, not a rolled-back version, so the
+// migration stays pin-neutral for both signed .msi architectures. (P2: keep
+// Adder's current MSYS2 action)
+func TestMsys2PinnedToCurrentSHA(t *testing.T) {
+	data, err := os.ReadFile(reusablePublishDesktopPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantSHA = "msys2/setup-msys2@66cd2cc13f75153731901cda3aeead6c28c9fbc4"
+	const oldSHA = "msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638"
+	if strings.Contains(string(data), oldSHA) {
+		t.Error("reusable still pins the older msys2/setup-msys2 v2.28.0 SHA")
+	}
+	// Both the MinGW64 (amd64) and CLANGARM64 (arm64) CGO rows must be bumped.
+	if got := strings.Count(string(data), wantSHA); got != 2 {
+		t.Errorf("expected msys2/setup-msys2 pinned to %s on both CGO rows, found %d occurrence(s)", wantSHA, got)
+	}
+}

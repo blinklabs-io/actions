@@ -229,7 +229,7 @@ jobs:
       - name: Set up MSYS2 MinGW64 for Windows amd64 CGO
         if: matrix.os == 'windows' && matrix.arch == 'amd64' && matrix.tray
         id: msys2-amd64
-        uses: msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638 # v2.28.0 https://github.com/msys2/setup-msys2/releases/tag/v2.28.0
+        uses: msys2/setup-msys2@66cd2cc13f75153731901cda3aeead6c28c9fbc4 # v2.32.0 https://github.com/msys2/setup-msys2/releases/tag/v2.32.0
         with:
           msystem: MINGW64
           update: true
@@ -239,7 +239,7 @@ jobs:
       - name: Set up MSYS2 clangarm64 for Windows arm64 CGO
         if: matrix.os == 'windows' && matrix.arch == 'arm64' && matrix.tray
         id: msys2-arm64
-        uses: msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638 # v2.28.0 https://github.com/msys2/setup-msys2/releases/tag/v2.28.0
+        uses: msys2/setup-msys2@66cd2cc13f75153731901cda3aeead6c28c9fbc4 # v2.32.0 https://github.com/msys2/setup-msys2/releases/tag/v2.32.0
         with:
           msystem: CLANGARM64
           update: true
