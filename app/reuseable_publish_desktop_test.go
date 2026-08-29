@@ -142,7 +142,7 @@ var commitSHARef = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // lag behind a security-relevant fix. This SHA carries the per-architecture
 // image scan and the scan-gated finalize-release; an older commit (e.g. one
 // that scans only amd64) would fail this test.
-const wantDesktopReusableSHA = "6fd84e8349a2a427a71dbcf06a7d0aaef0daae52"
+const wantDesktopReusableSHA = "6539da8cd0614aef85f2008ec646acb22d5caddf"
 
 // TestAdderPublishPinnedToImmutableRef enforces the repository policy that a
 // secret-bearing release call must reference a frozen commit SHA, not a mutable
