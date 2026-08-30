@@ -304,18 +304,26 @@ func TestScanImagesNoOpWhenDisabled(t *testing.T) {
 }
 
 // TestMsys2PinnedToCurrentSHA asserts the Windows CGO toolchain action is pinned
-// to the same v2.32.0 SHA Adder main uses, not a rolled-back version, so the
-// migration stays pin-neutral for both signed .msi architectures. (P2: keep
+// to the real v2.32.0 commit SHA (verified to exist in msys2/setup-msys2), not a
+// rolled-back version or a non-existent SHA. An invalid pin fails every job at
+// the "Set up job" step — GitHub resolves every `uses:` up front, even for
+// `if:`-skipped steps — which would break a real tagged release. (P2: keep
 // Adder's current MSYS2 action)
 func TestMsys2PinnedToCurrentSHA(t *testing.T) {
 	data, err := os.ReadFile(reusablePublishDesktopPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantSHA = "msys2/setup-msys2@66cd2cc13f75153731901cda3aeead6c28c9fbc4"
+	const wantSHA = "msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884"
 	const oldSHA = "msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638"
+	// The non-existent SHA that was mistakenly pinned as v2.32.0; it shares only
+	// the 66cd2cc short prefix with the real commit and returns "No commit found".
+	const badSHA = "msys2/setup-msys2@66cd2cc13f75153731901cda3aeead6c28c9fbc4"
 	if strings.Contains(string(data), oldSHA) {
 		t.Error("reusable still pins the older msys2/setup-msys2 v2.28.0 SHA")
+	}
+	if strings.Contains(string(data), badSHA) {
+		t.Error("reusable pins the non-existent msys2/setup-msys2 SHA 66cd2cc13f7515… (No commit found); use the real v2.32.0 commit")
 	}
 	// Both the MinGW64 (amd64) and CLANGARM64 (arm64) CGO rows must be bumped.
 	if got := strings.Count(string(data), wantSHA); got != 2 {
