@@ -148,7 +148,7 @@ var commitSHARef = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // squash-merges, so a branch commit is unreachable once the branch is deleted
 // and GitHub Actions then fails to resolve the reusable ("cannot find
 // workflow") before any job is created.
-const wantDesktopReusableSHA = "a9498f1f0fe3613599747c43b6efcde52298cec1"
+const wantDesktopReusableSHA = "1f8afdf6c5887294ded2caa9df6127dcfcc0adbc"
 
 // TestAdderPublishPinnedToImmutableRef enforces the repository policy that a
 // secret-bearing release call must reference a frozen commit SHA, not a mutable

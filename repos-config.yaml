@@ -927,7 +927,7 @@ repositories:
         # SHA ("cannot find workflow"), which fails the caller before any job is
         # created. Always pin to a commit that lands on main (the squash/merge
         # commit), never to a feature-branch commit.
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@a9498f1f0fe3613599747c43b6efcde52298cec1"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@1f8afdf6c5887294ded2caa9df6127dcfcc0adbc"
         triggers:
           push:
             branches: [main]
