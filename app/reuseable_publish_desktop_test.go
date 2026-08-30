@@ -140,9 +140,15 @@ var commitSHARef = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // to. It is advanced deliberately (in the same commit that bumps the caller)
 // whenever the reusable's release behavior changes, so the pin cannot silently
 // lag behind a security-relevant fix. This SHA carries the per-architecture
-// image scan and the scan-gated finalize-release; an older commit (e.g. one
-// that scans only amd64) would fail this test.
-const wantDesktopReusableSHA = "6539da8cd0614aef85f2008ec646acb22d5caddf"
+// image scan, the scan-gated finalize-release, and the msys2 v2.32.0 CGO
+// toolchain pin.
+//
+// It MUST be a commit reachable on main (the squash/merge commit from the PR
+// that introduced this reusable), NOT a feature-branch commit: this repo
+// squash-merges, so a branch commit is unreachable once the branch is deleted
+// and GitHub Actions then fails to resolve the reusable ("cannot find
+// workflow") before any job is created.
+const wantDesktopReusableSHA = "a9498f1f0fe3613599747c43b6efcde52298cec1"
 
 // TestAdderPublishPinnedToImmutableRef enforces the repository policy that a
 // secret-bearing release call must reference a frozen commit SHA, not a mutable
