@@ -868,6 +868,14 @@ jobs:
         # targets that architecture's real filesystem regardless of the runner.
         if: inputs.enable-trivy-scan && steps.meta.outputs.version != ''
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 https://github.com/aquasecurity/trivy-action/releases/tag/v0.36.0
+        env:
+          # The per-arch tag (…-amd64 / …-arm64) is a single-platform OCI index.
+          # Without an explicit platform Trivy defaults to linux/amd64 when
+          # resolving the remote index, so on the arm64 runner it fails with
+          # "no child with platform linux/amd64 in index …-arm64". Pin the
+          # platform to this matrix row's architecture so Trivy resolves the
+          # matching child regardless of the runner's default.
+          TRIVY_PLATFORM: 'linux/${{ matrix.arch }}'
         with:
           scan-type: 'image'
           scan-ref: 'ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}-${{ matrix.arch }}'

@@ -33,6 +33,7 @@ type desktopWorkflow struct {
 			Uses string            `yaml:"uses"`
 			Run  string            `yaml:"run"`
 			With map[string]string `yaml:"with"`
+			Env  map[string]string `yaml:"env"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
 }
@@ -178,13 +179,18 @@ func TestImageScanEnabled(t *testing.T) {
 			t.Errorf("scan-images matrix does not cover arch %q; got %v", want, arches)
 		}
 	}
-	var sawTrivy, archScanRef, archCategory bool
+	var sawTrivy, archScanRef, archCategory, archPlatform bool
 	for _, s := range job.Steps {
 		if strings.Contains(s.Uses, "aquasecurity/trivy-action") {
 			sawTrivy = true
 			// The scan-ref must select a per-arch tag, not the merged manifest.
 			if strings.Contains(s.With["scan-ref"], "${{ matrix.arch }}") {
 				archScanRef = true
+			}
+			// Trivy must scan this row's platform child; otherwise it defaults
+			// to linux/amd64 and fails to find an amd64 child in the arm64 index.
+			if strings.Contains(s.Env["TRIVY_PLATFORM"], "${{ matrix.arch }}") {
+				archPlatform = true
 			}
 		}
 		if strings.Contains(s.Uses, "upload-sarif") && strings.Contains(s.With["category"], "${{ matrix.arch }}") {
@@ -196,6 +202,9 @@ func TestImageScanEnabled(t *testing.T) {
 	}
 	if !archScanRef {
 		t.Error("Trivy scan-ref must target the per-architecture image tag (…-${{ matrix.arch }}), not the merged manifest")
+	}
+	if !archPlatform {
+		t.Error("Trivy must set TRIVY_PLATFORM to linux/${{ matrix.arch }} so the arm64 scan resolves the arm64 child instead of Trivy's linux/amd64 default")
 	}
 	if !archCategory {
 		t.Error("SARIF upload must use a per-architecture category so the arm64 results do not overwrite amd64")
