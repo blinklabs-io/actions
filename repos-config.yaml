@@ -751,21 +751,6 @@ repositories:
       publish.yml:
         params:
           prerelease-pattern: -pre-
-  - name: blinklabs-io/docker-amaru
-    profile: docker-standard
-    vars:
-      image: amaru
-      description: Amaru built from source on Debian
-    overrides:
-      publish.yml:
-        triggers:
-          push:
-            branches:
-            - main
-            tags:
-            - v*.*.*
-          schedule:
-          - cron: 0 0 * * *
   - name: blinklabs-io/docker-mithril-signer
     profile: docker-standard
     vars:
