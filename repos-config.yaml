@@ -682,7 +682,7 @@ repositories:
             branches: [main]
             tags: ['v*']
         params:
-          go-versions: '["1.25.x"]'
+          go-versions: '["1.26.x"]'
           test-flags: "-race"
 
       - destination_file: golangci-lint.yml
@@ -726,7 +726,7 @@ repositories:
           binary-name: "wg-peer-api"
           docker-image: "blinklabs/wireguard"
           description: "WireGuard VPN container with JWT-authenticated peer API"
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           binary-os-matrix: '["linux"]'
           binary-compress: "true"
           build-args: |

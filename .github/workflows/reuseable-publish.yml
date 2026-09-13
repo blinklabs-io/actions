@@ -21,7 +21,7 @@ on:
         description: Go toolchain version to use for building binaries.
         required: false
         type: string
-        default: "1.25.x"
+        default: "1.26.x"
       binary-os-matrix:
         description: JSON array of OS targets for binary builds (e.g. '["linux","darwin"]').
         required: false

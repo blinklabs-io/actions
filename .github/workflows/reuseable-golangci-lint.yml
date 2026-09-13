@@ -7,7 +7,7 @@ on:
         description: Go toolchain version to use.
         required: false
         type: string
-        default: "1.25.x"
+        default: "1.26.x"
       setup-go-cache:
         description: Enable module/build cache in actions/setup-go.
         required: false

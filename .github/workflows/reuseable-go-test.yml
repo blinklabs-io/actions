@@ -7,7 +7,7 @@ on:
         description: JSON array of Go versions to test against.
         required: false
         type: string
-        default: '["1.25.x","1.26.x"]'
+        default: '["1.26.x"]'
       test-flags:
         description: Extra flags to pass to `go test` (e.g. "-race").
         required: false
