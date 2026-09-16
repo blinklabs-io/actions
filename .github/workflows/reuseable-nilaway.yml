@@ -43,6 +43,16 @@ on:
         required: false
         type: boolean
         default: false
+      submodules:
+        description: Check out git submodules (passed to actions/checkout submodules).
+        required: false
+        type: boolean
+        default: false
+      exclude-file-docstrings:
+        description: Value passed to nilaway -exclude-file-docstrings (e.g. "<nilaway skip stack-machine>"). Empty skips the flag.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -55,6 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
+          submodules: ${{ inputs.submodules }}
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
@@ -85,6 +96,7 @@ jobs:
         env:
           INCLUDE_PKGS: ${{ inputs.include-pkgs }}
           EXCLUDE_PKGS: ${{ inputs.exclude-pkgs }}
+          EXCLUDE_FILE_DOCSTRINGS: ${{ inputs.exclude-file-docstrings }}
         run: |
           _args=()
           if [ -n "$EXCLUDE_PKGS" ]; then
@@ -92,5 +104,8 @@ jobs:
           fi
           if [ -n "$INCLUDE_PKGS" ]; then
             _args+=(-include-pkgs "$INCLUDE_PKGS")
+          fi
+          if [ -n "$EXCLUDE_FILE_DOCSTRINGS" ]; then
+            _args+=(-exclude-file-docstrings "$EXCLUDE_FILE_DOCSTRINGS")
           fi
           nilaway "${_args[@]}" ./...

@@ -48,6 +48,21 @@ on:
         required: false
         type: string
         default: ""
+      submodules:
+        description: Check out git submodules (passed to actions/checkout submodules).
+        required: false
+        type: boolean
+        default: false
+      upload-coverage:
+        description: Upload a coverage report to Codecov after tests (Linux runners only). The caller must produce the coverage file via test-flags (e.g. -coverprofile=coverage.out).
+        required: false
+        type: boolean
+        default: false
+      coverage-file:
+        description: Path to the coverage file uploaded to Codecov when upload-coverage is true.
+        required: false
+        type: string
+        default: "coverage.out"
 
 permissions:
   contents: read
@@ -63,6 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
+          submodules: ${{ inputs.submodules }}
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6 https://github.com/actions/setup-go/releases/tag/v6
         with:
@@ -110,3 +126,8 @@ jobs:
           else
             go test $_packages
           fi
+      - name: Upload coverage to Codecov
+        if: runner.os == 'Linux' && inputs.upload-coverage
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0 https://github.com/codecov/codecov-action/releases/tag/v7.0.0
+        with:
+          files: ${{ inputs.coverage-file }}
