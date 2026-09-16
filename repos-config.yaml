@@ -1328,3 +1328,20 @@ repositories:
           pull-go-module: "false"
         permissions:
           contents: write
+  # bark generates Go code from protobufs with buf. ci.yml (buf lint/format
+  # plus buf-generate drift check) and publish.yml (regenerates and commits Go
+  # code on main, and cuts a release on tags) are buf-specific and stay
+  # hand-maintained; only the shared conventional-commits check is onboarded.
+  - name: blinklabs-io/bark
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
