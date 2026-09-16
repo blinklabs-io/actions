@@ -73,6 +73,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.token || github.token }}
+          persist-credentials: false
 
       - name: Check and create PRs for new versions
         env:
@@ -89,6 +90,11 @@ jobs:
           # Configure git
           git config user.name "$GIT_USER_NAME"
           git config user.email "$GIT_USER_EMAIL"
+
+          # The checkout step uses persist-credentials: false so the token is
+          # not left in the local git config for later steps. Re-establish push
+          # auth for this step via gh's credential helper (uses GH_TOKEN).
+          gh auth setup-git
 
           UPSTREAM_CONFIG="${UPSTREAM_CONFIG:-scripts/upstream-versions.json}"
           COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yaml}"
