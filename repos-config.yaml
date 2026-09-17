@@ -1169,3 +1169,179 @@ repositories:
           pull-requests: write
         secrets:
           token: ORG_PROJECT_PAT
+  # plutigo is a Go library (a Plutus interpreter). It uses git submodules for
+  # test fixtures and uploads coverage to Codecov, so go-test enables both;
+  # nilaway skips a stack-machine docstring. benchmark.yml is repository-specific
+  # and remains hand-maintained.
+  - name: blinklabs-io/plutigo
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: go-test.yml
+        workflow_name: "go-test"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          submodules: "true"
+          pre-test-command: "make test"
+          test-flags: "-race -coverprofile=coverage.out -covermode=atomic"
+          upload-coverage: "true"
+
+      - destination_file: golangci-lint.yml
+        workflow_name: "golangci-lint"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+
+      - destination_file: nilaway.yml
+        workflow_name: "nilaway"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
+        triggers:
+          workflow_dispatch:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          submodules: "true"
+          include-pkgs: "github.com/blinklabs-io/plutigo"
+          exclude-file-docstrings: "<nilaway skip stack-machine>"
+
+      - destination_file: publish.yml
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main"
+        triggers:
+          push:
+            tags: ['v*.*.*']
+        permissions:
+          contents: write
+  # gouroboros is a Go library (the Ouroboros protocol). go-test.yml runs a
+  # custom GOARCH matrix (amd64/386) with git submodules and stays
+  # hand-maintained, as do benchmark.yml, fuzz.yml and build-examples.yml. The
+  # remaining checks map to the shared reusable workflows.
+  - name: blinklabs-io/gouroboros
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: golangci-lint.yml
+        workflow_name: "golangci-lint"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+
+      - destination_file: nilaway.yml
+        workflow_name: "nilaway"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          include-pkgs: "github.com/blinklabs-io/gouroboros"
+
+      - destination_file: publish.yml
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main"
+        triggers:
+          push:
+            tags: ['v*.*.*']
+        permissions:
+          contents: write
+  # ouroboros-mock is a Go library. go-test.yml (git submodules plus a separate
+  # conformance job) and reproducibility.yml are repository-specific and stay
+  # hand-maintained; the remaining checks map to the shared reusable workflows.
+  - name: blinklabs-io/ouroboros-mock
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: golangci-lint.yml
+        workflow_name: "golangci-lint"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+
+      - destination_file: nilaway.yml
+        workflow_name: "nilaway"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          include-pkgs: "github.com/blinklabs-io/ouroboros-mock"
+
+      - destination_file: publish.yml
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main"
+        triggers:
+          push:
+            branches: [main]
+            tags: ['v*.*.*']
+        params:
+          # ouroboros-mock's original publish.yml did not nudge the Go module
+          # proxy, so keep that behaviour to avoid a new side effect on release.
+          pull-go-module: "false"
+        permissions:
+          contents: write
+  # bark generates Go code from protobufs with buf. ci.yml (buf lint/format
+  # plus buf-generate drift check) and publish.yml (regenerates and commits Go
+  # code on main, and cuts a release on tags) are buf-specific and stay
+  # hand-maintained; only the shared conventional-commits check is onboarded.
+  - name: blinklabs-io/bark
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:

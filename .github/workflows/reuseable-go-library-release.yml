@@ -1,0 +1,72 @@
+name: Reusable Go Library Release
+
+# Release workflow for Go *library* modules (no binary/container artifacts).
+# On a version tag it creates a GitHub release and (optionally) nudges the Go
+# module proxy / pkg.go.dev to fetch the new version. Callers trigger this on
+# `push: tags: ['v*.*.*']`; the job self-guards to tag refs so an accidental
+# branch trigger is a no-op.
+
+on:
+  workflow_call:
+    inputs:
+      prerelease:
+        description: Mark the created GitHub release as a prerelease.
+        required: false
+        type: boolean
+        default: false
+      generate-release-notes:
+        description: Auto-generate release notes for the created GitHub release.
+        required: false
+        type: boolean
+        default: true
+      pull-go-module:
+        description: Trigger the Go module proxy / pkg.go.dev to fetch the new version after release.
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  create-release:
+    name: create-release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    outputs:
+      RELEASE_ID: ${{ steps.create-release.outputs.result }}
+    steps:
+      - name: Set RELEASE_TAG
+        run: echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+      - name: Create release
+        id: create-release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
+        env:
+          GENERATE_RELEASE_NOTES: ${{ inputs.generate-release-notes }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          result-encoding: string
+          script: |
+            try {
+              const response = await github.rest.repos.createRelease({
+                draft: false,
+                generate_release_notes: process.env.GENERATE_RELEASE_NOTES === 'true',
+                name: process.env.RELEASE_TAG,
+                owner: context.repo.owner,
+                prerelease: process.env.PRERELEASE === 'true',
+                repo: context.repo.repo,
+                tag_name: process.env.RELEASE_TAG,
+              });
+
+              return response.data.id;
+            } catch (error) {
+              core.setFailed(error.message);
+            }
+      # Updates the documentation on pkg.go.dev and the latest version available
+      # via the Go module proxy.
+      - name: Pull new module version
+        if: inputs.pull-go-module
+        uses: andrewslotin/go-proxy-pull-action@00af8a5a49c844d6dde0bbbc116b72d8fd7ae97c # v1.5.0 https://github.com/andrewslotin/go-proxy-pull-action/releases/tag/v1.5.0
