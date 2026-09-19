@@ -1077,6 +1077,63 @@ func validatePipeline(members []WorkflowConfig) error {
 			}
 		}
 	}
+
+	return validateNoCycle(file, members)
+}
+
+// validateNoCycle rejects a dependency cycle among a pipeline's jobs.
+//
+// Every job in a cycle waits for another job in it, so none can ever start.
+// GitHub rejects the workflow outright, which takes out the whole file rather
+// than the jobs involved -- the same blast radius as an unresolvable `needs`,
+// and not something the self-reference check catches: `a` needing `b` while `b`
+// needs `a` contains no self-reference at all.
+func validateNoCycle(file string, members []WorkflowConfig) error {
+	needs := make(map[string][]string, len(members))
+	order := make([]string, 0, len(members))
+	for _, wf := range members {
+		id := wf.jobID()
+		needs[id] = wf.Needs
+		order = append(order, id)
+	}
+
+	// Iterative depth-first search, colouring each job white (absent), grey
+	// (on the current path) or black (fully explored). Meeting a grey job is a
+	// back edge, which is a cycle.
+	const (
+		grey  = 1
+		black = 2
+	)
+	state := make(map[string]int, len(needs))
+
+	var visit func(id string, path []string) error
+	visit = func(id string, path []string) error {
+		switch state[id] {
+		case black:
+			return nil
+		case grey:
+			return fmt.Errorf(
+				"pipeline %q: jobs %s form a dependency cycle; every job in "+
+					"it waits for another, so none can start",
+				file,
+				strings.Join(append(path, id), " -> "),
+			)
+		}
+		state[id] = grey
+		for _, need := range needs[id] {
+			if err := visit(need, append(path, id)); err != nil {
+				return err
+			}
+		}
+		state[id] = black
+		return nil
+	}
+
+	for _, id := range order {
+		if err := visit(id, nil); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1381,9 +1438,11 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 			fmt.Printf("  Render error for %s: %v\n", wf.DestinationFile, err)
 			continue
 		}
-		upsertWorkflowFile(
+		if werr := upsertWorkflowFile(
 			ctx, client, owner, repo, defaultBranch, wf.DestinationFile, desiredContent,
-		)
+		); werr != nil {
+			fmt.Printf("  Error writing %s: %v\n", wf.DestinationFile, werr)
+		}
 	}
 
 	if len(pipelines) > 0 {
@@ -1400,9 +1459,15 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 				// repository's only CI until the pipeline renders.
 				continue
 			}
-			upsertWorkflowFile(
+			if werr := upsertWorkflowFile(
 				ctx, client, owner, repo, defaultBranch, members[0].Pipeline, desiredContent,
-			)
+			); werr != nil {
+				fmt.Printf("  Error writing pipeline %s: %v\n", members[0].Pipeline, werr)
+				// Deleting the wrappers now would leave the repository with no
+				// CI at all: the pipeline meant to replace them is not there.
+				// They are still correct, so leave them and retry next run.
+				continue
+			}
 			removeWorkflowFiles(
 				ctx, client, owner, repo, defaultBranch, supersededWorkflowPaths(members),
 			)
@@ -1412,12 +1477,17 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 
 // upsertWorkflowFile writes one generated workflow file, skipping the push when
 // the repository already holds exactly that content.
+//
+// It returns an error rather than only logging one because a caller may have to
+// act on the failure: syncWorkflows deletes the wrappers a pipeline supersedes,
+// and doing that after a failed pipeline write would leave the repository with
+// no CI at all.
 func upsertWorkflowFile(
 	ctx context.Context,
 	client *github.Client,
 	owner, repo, defaultBranch, destinationFile string,
 	desiredContent []byte,
-) {
+) error {
 	path := fmt.Sprintf(".github/workflows/%s", destinationFile)
 	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
 
@@ -1426,7 +1496,7 @@ func upsertWorkflowFile(
 		existingContent, decErr := fileContent.GetContent()
 		if decErr == nil && existingContent == string(desiredContent) {
 			fmt.Printf("✅ Workflow file %s matches perfectly. Skipping push.\n", destinationFile)
-			return
+			return nil
 		}
 		fmt.Printf("  Drift detected in %s. Overwriting file content...\n", destinationFile)
 		opts := &github.RepositoryContentFileOptions{
@@ -1437,8 +1507,9 @@ func upsertWorkflowFile(
 		}
 		if _, _, updateErr := client.Repositories.UpdateFile(ctx, owner, repo, path, opts); updateErr != nil {
 			fmt.Printf("  Error updating %s: %v\n", destinationFile, updateErr)
+			return fmt.Errorf("updating %s: %w", destinationFile, updateErr)
 		}
-		return
+		return nil
 	}
 
 	// File does not exist — create it
@@ -1450,7 +1521,9 @@ func upsertWorkflowFile(
 	}
 	if _, _, createErr := client.Repositories.CreateFile(ctx, owner, repo, path, opts); createErr != nil {
 		fmt.Printf("  Error creating %s: %v\n", destinationFile, createErr)
+		return fmt.Errorf("creating %s: %w", destinationFile, createErr)
 	}
+	return nil
 }
 
 // removeWorkflowFiles deletes generated wrapper files that are no longer

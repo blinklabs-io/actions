@@ -500,3 +500,47 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// TestValidatePipelineRejectsDependencyCycle covers a cycle among several jobs,
+// which the self-reference check does not catch: `a` needing `b` while `b`
+// needs `a` contains no self-reference. Every job in a cycle waits for another
+// in it, so none can start and GitHub rejects the whole file.
+func TestValidatePipelineRejectsDependencyCycle(t *testing.T) {
+	members := goPipeline()
+	// golangci-lint <- nilaway is already there; close the loop.
+	members[0].Needs = []string{"nilaway"}
+
+	err := validatePipeline(members)
+	if err == nil {
+		t.Fatal("expected an error for a dependency cycle")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error = %v, want it to name the cycle", err)
+	}
+}
+
+// TestValidatePipelineRejectsLongerCycle checks the detection is a graph walk
+// rather than a pairwise check.
+func TestValidatePipelineRejectsLongerCycle(t *testing.T) {
+	members := goPipeline()
+	members[0].Needs = []string{"ci-docker"} // lint <- docker <- go-test <- lint
+
+	err := validatePipeline(members)
+	if err == nil {
+		t.Fatal("expected an error for a three-job dependency cycle")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error = %v, want it to name the cycle", err)
+	}
+}
+
+// TestValidatePipelineAcceptsDiamond checks the walk does not mistake a job
+// reached by two paths for a cycle, which would reject a legitimate fan-in.
+func TestValidatePipelineAcceptsDiamond(t *testing.T) {
+	members := goPipeline()
+	members[3].Needs = []string{"go-test", "nilaway"}
+
+	if err := validatePipeline(members); err != nil {
+		t.Fatalf("validatePipeline rejected a diamond: %v", err)
+	}
+}
