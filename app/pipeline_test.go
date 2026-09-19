@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"text/template"
@@ -254,6 +255,45 @@ func TestPipelineTriggersUnfilteredWins(t *testing.T) {
 	got := pipelineTriggers(members)
 	if got["pull_request"] != nil {
 		t.Errorf("pull_request = %#v, want nil (unfiltered)", got["pull_request"])
+	}
+}
+
+func TestPipelineTriggersPreservesPullRequestDefaultsWithOneSidedTypes(t *testing.T) {
+	for name, members := range map[string][]WorkflowConfig{
+		"left": {
+			{Triggers: map[string]interface{}{"pull_request": map[string]interface{}{
+				"types": []interface{}{"closed"},
+			}}},
+			{Triggers: map[string]interface{}{"pull_request": map[string]interface{}{
+				"branches": []interface{}{"main"},
+			}}},
+		},
+		"right": {
+			{Triggers: map[string]interface{}{"pull_request": map[string]interface{}{
+				"branches": []interface{}{"main"},
+			}}},
+			{Triggers: map[string]interface{}{"pull_request": map[string]interface{}{
+				"types": []interface{}{"closed"},
+			}}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pr, ok := pipelineTriggers(members)["pull_request"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("pull_request = %#v, want a mapping", pipelineTriggers(members)["pull_request"])
+			}
+			got, ok := pr["types"].([]interface{})
+			if !ok {
+				t.Fatalf("pull_request.types = %#v, want a list", pr["types"])
+			}
+			want := []interface{}{"closed", "opened", "synchronize", "reopened"}
+			if name == "right" {
+				want = []interface{}{"opened", "synchronize", "reopened", "closed"}
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("pull_request.types = %#v, want %#v", got, want)
+			}
+		})
 	}
 }
 

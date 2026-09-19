@@ -1257,6 +1257,16 @@ func mergeTrigger(merged map[string]interface{}, event string, filter interface{
 			out[key] = unionLists(left[key], rv)
 		}
 	}
+	if event == "pull_request" {
+		defaultTypes := []interface{}{"opened", "synchronize", "reopened"}
+		if lv, lok := left["types"]; lok {
+			if _, rok := right["types"]; !rok {
+				out["types"] = unionLists(lv, defaultTypes)
+			}
+		} else if rv, rok := right["types"]; rok {
+			out["types"] = unionLists(defaultTypes, rv)
+		}
+	}
 
 	if len(out) == 0 {
 		merged[event] = nil
