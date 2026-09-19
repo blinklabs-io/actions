@@ -161,6 +161,24 @@ type WorkflowConfig struct {
 	// Needs lists JobIDs in the same pipeline that must succeed before this job
 	// starts.
 	Needs []string `yaml:"needs"`
+
+	// PipelineTriggers is the combined workflow's `on:` block. Exactly one
+	// member of a pipeline declares it.
+	//
+	// A pipeline that spans events needs this. Wrappers that ran on different
+	// events could never gate each other, which is how a tag came to publish a
+	// release while the lint and test wrappers for the same commit were still
+	// running or already failing. Bringing them into one file means one `on:`
+	// covering every event the pipeline serves, with If narrowing each job to
+	// the events it belongs to.
+	PipelineTriggers map[string]interface{} `yaml:"pipeline_triggers"`
+
+	// If is the job's `if:` condition, used to restrict a job to some of the
+	// events its pipeline runs on.
+	//
+	// Note for anyone adding a job: a skipped job's dependents skip too, so a
+	// job must not need one that is conditional on a different event.
+	If string `yaml:"if"`
 }
 
 // jobID returns the entry's job key inside a pipeline, defaulting to the
@@ -192,6 +210,7 @@ type templateData struct {
 type pipelineJobData struct {
 	JobID            string
 	NeedsYAML        string
+	If               string
 	ReusableWorkflow string
 	Params           map[string]string
 	Secrets          map[string]string
@@ -960,9 +979,28 @@ func validatePipeline(members []WorkflowConfig) error {
 	}
 
 	file := members[0].Pipeline
-	first, err := renderTriggers(members[0].Triggers)
-	if err != nil {
-		return fmt.Errorf("renderTriggers for %q: %w", members[0].DestinationFile, err)
+
+	// A pipeline declares its `on:` block once, or every member declares the
+	// same triggers. The second form is what a pipeline confined to one event
+	// looks like, and predates pipeline_triggers.
+	declared := 0
+	for _, wf := range members {
+		if len(wf.PipelineTriggers) > 0 {
+			declared++
+		}
+	}
+	if declared > 1 {
+		return fmt.Errorf(
+			"pipeline %q: %d members declare pipeline_triggers; a combined "+
+				"workflow has one on: block, so exactly one member declares it",
+			file,
+			declared,
+		)
+	}
+
+	merged := pipelineTriggers(members)
+	if _, err := renderTriggers(merged); err != nil {
+		return fmt.Errorf("renderTriggers for pipeline %q: %w", file, err)
 	}
 
 	ids := make(map[string]bool, len(members))
@@ -981,19 +1019,31 @@ func validatePipeline(members []WorkflowConfig) error {
 		ids[id] = true
 	}
 
+	conditions := make(map[string]string, len(members))
 	for _, wf := range members {
-		triggers, terr := renderTriggers(wf.Triggers)
-		if terr != nil {
-			return fmt.Errorf("renderTriggers for %q: %w", wf.DestinationFile, terr)
-		}
-		if triggers != first {
+		conditions[wf.jobID()] = wf.If
+	}
+
+	for _, wf := range members {
+		// The pipeline's on: block is the union of its members', so a member
+		// that used to run on fewer events now runs on all of them unless its
+		// `if` says otherwise. That is the point for a check: widening lint and
+		// the tests to a repository's pushes is what lets a release depend on
+		// them.
+		//
+		// It is not the point for a job that writes. A publishing job whose
+		// wrapper only ever ran on a tag would, on joining a pipeline that also
+		// runs on pull requests, start publishing from pull requests -- with
+		// its own write grant. Such a job has to say which events it belongs
+		// to.
+		if writesSomething(wf.Permissions) && wf.If == "" && triggersInclude(merged, "pull_request") {
 			return fmt.Errorf(
-				"pipeline %q: %q declares different triggers from %q; "+
-					"a combined workflow has a single on: block, so members "+
-					"that run on different events need separate pipelines",
+				"pipeline %q: %q requests a write permission and declares no "+
+					"`if`, but the pipeline runs on pull_request; give it an "+
+					"`if` naming the events it belongs to, or leave it as a "+
+					"separate wrapper",
 				file,
 				wf.DestinationFile,
-				members[0].DestinationFile,
 			)
 		}
 		for _, need := range wf.Needs {
@@ -1008,9 +1058,183 @@ func validatePipeline(members []WorkflowConfig) error {
 			if need == wf.jobID() {
 				return fmt.Errorf("pipeline %q: job %q needs itself", file, need)
 			}
+			// A skipped job's dependents skip with it. A job guarded by a
+			// narrower condition than the one it needs never runs, so a release
+			// job gated on a pull-request-only build would silently never
+			// publish -- a green run that did nothing.
+			if conditions[need] != "" && conditions[need] != wf.If {
+				return fmt.Errorf(
+					"pipeline %q: job %q needs %q, which is conditional on "+
+						"%q; a skipped job skips its dependents, so %q would "+
+						"never run when %q is skipped",
+					file,
+					wf.jobID(),
+					need,
+					conditions[need],
+					wf.jobID(),
+					need,
+				)
+			}
 		}
 	}
 	return nil
+}
+
+// writesSomething reports whether a job asks for any write grant, which is what
+// separates a check from a job that can change something outside the run.
+func writesSomething(permissions map[string]string) bool {
+	for _, level := range permissions {
+		if strings.TrimSpace(level) == "write" {
+			return true
+		}
+	}
+	return false
+}
+
+// triggersInclude reports whether a merged `on:` block covers an event.
+func triggersInclude(triggers map[string]interface{}, event string) bool {
+	_, ok := triggers[event]
+	return ok
+}
+
+// pipelineTriggers returns the combined workflow's `on:` block: an explicit
+// pipeline_triggers when a member declares one, otherwise the union of what the
+// members would each have run on.
+func pipelineTriggers(members []WorkflowConfig) map[string]interface{} {
+	for _, wf := range members {
+		if len(wf.PipelineTriggers) > 0 {
+			return wf.PipelineTriggers
+		}
+	}
+	merged := map[string]interface{}{}
+	for _, wf := range members {
+		for event, filter := range wf.Triggers {
+			mergeTrigger(merged, event, filter)
+		}
+	}
+	return merged
+}
+
+// mergeTrigger folds one member's trigger into the pipeline's `on:` block.
+//
+// The union has to be the more permissive of the two, or a member stops running
+// on an event it used to run on. That makes a filter present on one member and
+// absent on another collapse to no filter: a bare `pull_request:` means every
+// pull request, so it cannot be narrowed by another member's branches or paths
+// list without silencing the bare one. Each member's `if` is what narrows it
+// back to the events that member belongs to.
+//
+// Note that a paths filter cannot be expressed as an `if`, so folding a
+// paths-filtered wrapper into a pipeline drops that filter. Do that only where
+// the filter was under-inclusive to begin with; a filter that accurately
+// describes what the job depends on is cheaper left in its own wrapper.
+func mergeTrigger(merged map[string]interface{}, event string, filter interface{}) {
+	existing, seen := merged[event]
+	if !seen {
+		merged[event] = filter
+		return
+	}
+	// Either side unfiltered wins: it is the broader of the two.
+	if filter == nil || existing == nil {
+		merged[event] = nil
+		return
+	}
+
+	left, lok := existing.(map[string]interface{})
+	right, rok := filter.(map[string]interface{})
+	if !lok || !rok {
+		merged[event] = nil
+		return
+	}
+
+	// `branches` and `tags` select refs and GitHub ORs them: a push matches if
+	// it matches either, and a filter naming only `tags` does not match a
+	// branch push at all. So a side that names no ref key matches every ref,
+	// and the union then names none either. Intersecting the keys instead is
+	// what silently drops `branches` when merging a lint wrapper that runs on
+	// main with a publish wrapper that runs on tags, leaving lint running on
+	// tags only.
+	//
+	// `paths` is different: it ANDs with the ref selection, so a side without
+	// one is again the broader, and the union carries no paths.
+	refKeys := []string{"branches", "branches-ignore", "tags", "tags-ignore"}
+	pathKeys := []string{"paths", "paths-ignore"}
+
+	out := map[string]interface{}{}
+	mergeGroup := func(keys []string) {
+		leftHas, rightHas := false, false
+		for _, k := range keys {
+			if _, ok := left[k]; ok {
+				leftHas = true
+			}
+			if _, ok := right[k]; ok {
+				rightHas = true
+			}
+		}
+		if !leftHas || !rightHas {
+			return // one side is unfiltered in this dimension; so is the union
+		}
+		for _, k := range keys {
+			lv, lok := left[k]
+			rv, rok := right[k]
+			switch {
+			case lok && rok:
+				out[k] = unionLists(lv, rv)
+			case lok:
+				out[k] = lv
+			case rok:
+				out[k] = rv
+			}
+		}
+	}
+	mergeGroup(refKeys)
+	mergeGroup(pathKeys)
+
+	// Anything neither group covers (inputs, types, ...) only survives when
+	// both sides agree; a difference there is broadened away.
+	for key := range left {
+		if isIn(key, refKeys) || isIn(key, pathKeys) {
+			continue
+		}
+		if rv, ok := right[key]; ok {
+			out[key] = unionLists(left[key], rv)
+		}
+	}
+
+	if len(out) == 0 {
+		merged[event] = nil
+		return
+	}
+	merged[event] = out
+}
+
+func isIn(key string, keys []string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// unionLists merges two YAML sequences, preserving order and dropping repeats.
+func unionLists(a, b interface{}) interface{} {
+	left, lok := a.([]interface{})
+	right, rok := b.([]interface{})
+	if !lok || !rok {
+		return a
+	}
+	seen := map[string]bool{}
+	var out []interface{}
+	for _, v := range append(append([]interface{}{}, left...), right...) {
+		key := fmt.Sprint(v)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 // pipelineWorkflowName picks the combined workflow's `name:`. The first member
@@ -1045,7 +1269,7 @@ func renderPipeline(tmpl *template.Template, members []WorkflowConfig) ([]byte, 
 		return nil, err
 	}
 
-	triggersYAML, err := renderTriggers(members[0].Triggers)
+	triggersYAML, err := renderTriggers(pipelineTriggers(members))
 	if err != nil {
 		return nil, fmt.Errorf("renderTriggers: %w", err)
 	}
@@ -1062,6 +1286,7 @@ func renderPipeline(tmpl *template.Template, members []WorkflowConfig) ([]byte, 
 		data.Jobs = append(data.Jobs, pipelineJobData{
 			JobID:            wf.jobID(),
 			NeedsYAML:        renderNeeds(wf.Needs),
+			If:               wf.If,
 			ReusableWorkflow: wf.ReusableWorkflow,
 			Params:           wf.Params,
 			Secrets:          wf.Secrets,

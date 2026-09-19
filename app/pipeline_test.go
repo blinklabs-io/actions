@@ -144,21 +144,209 @@ func TestRenderPipelineCarriesPerJobPermissions(t *testing.T) {
 	}
 }
 
-// TestValidatePipelineRejectsMismatchedTriggers guards the one-on-block
-// constraint. Silently taking the first member's triggers would stop the other
-// members running at all, which is worse than refusing to render.
-func TestValidatePipelineRejectsMismatchedTriggers(t *testing.T) {
+// TestValidatePipelineRejectsUnconditionalWriteJob guards the dangerous half of
+// the trigger union. Widening a check to more events is the point of a
+// pipeline: lint and the tests have to run on a repository's pushes for a
+// release to be able to depend on them. Widening a job that WRITES is not. A
+// publish wrapper that only ever ran on a tag would, on joining a pipeline that
+// also runs on pull requests, publish from pull requests using its own write
+// grant.
+func TestValidatePipelineRejectsUnconditionalWriteJob(t *testing.T) {
+	members := goPipeline()
+	members = append(members, WorkflowConfig{
+		DestinationFile:  "publish.yml",
+		Pipeline:         "ci.yml",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main",
+		Triggers:         map[string]interface{}{"push": map[string]interface{}{"tags": []interface{}{"v*"}}},
+		Permissions:      map[string]string{"contents": "write"},
+		Needs:            []string{"go-test"},
+	})
+
+	err := validatePipeline(members)
+	if err == nil {
+		t.Fatal("expected an error for an unconditional write job in a pull_request pipeline")
+	}
+	if !strings.Contains(err.Error(), "write permission") {
+		t.Errorf("error = %v, want it to name the write grant", err)
+	}
+}
+
+// TestValidatePipelineAcceptsConditionalWriteJob is the shape this change
+// exists to make possible: a release job sharing a file with the tests that
+// gate it, restricted to the events it belongs to.
+func TestValidatePipelineAcceptsConditionalWriteJob(t *testing.T) {
+	members := goPipeline()
+	members = append(members, WorkflowConfig{
+		DestinationFile:  "publish.yml",
+		Pipeline:         "ci.yml",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main",
+		Triggers:         map[string]interface{}{"push": map[string]interface{}{"tags": []interface{}{"v*"}}},
+		Permissions:      map[string]string{"contents": "write"},
+		If:               "github.event_name == 'push' && github.ref_type == 'tag'",
+		Needs:            []string{"go-test"},
+	})
+
+	if err := validatePipeline(members); err != nil {
+		t.Fatalf("validatePipeline: %v", err)
+	}
+}
+
+// TestValidatePipelineAcceptsNarrowedMember is the other half: a member that
+// runs on fewer events than the pipeline is fine once it says which events it
+// belongs to, which is what lets a publish job share a file with the tests that
+// gate it.
+func TestValidatePipelineAcceptsNarrowedMember(t *testing.T) {
 	members := goPipeline()
 	members[2].Triggers = map[string]interface{}{
 		"push": map[string]interface{}{"branches": []interface{}{"main"}},
 	}
+	members[2].If = "github.event_name == 'push'"
+	// ci-docker needs go-test, which is now conditional, so drop that edge
+	// rather than trip the skipped-dependency check this test is not about.
+	members[3].Needs = []string{"golangci-lint"}
+
+	if err := validatePipeline(members); err != nil {
+		t.Fatalf("validatePipeline: %v", err)
+	}
+}
+
+// TestPipelineTriggersUnionsMembers checks the `on:` block covers every event
+// any member ran on. A union that dropped one would stop that member running at
+// all, which is a silent loss of a check rather than a visible failure.
+func TestPipelineTriggersUnionsMembers(t *testing.T) {
+	members := goPipeline()
+	members[2].Triggers = map[string]interface{}{
+		"push": map[string]interface{}{"branches": []interface{}{"main"}},
+	}
+	members[2].If = "github.event_name == 'push'"
+
+	got := pipelineTriggers(members)
+	if _, ok := got["pull_request"]; !ok {
+		t.Errorf("union lost pull_request: %#v", got)
+	}
+	if _, ok := got["push"]; !ok {
+		t.Errorf("union lost push: %#v", got)
+	}
+}
+
+// TestPipelineTriggersUnfilteredWins checks that a filter on one member cannot
+// narrow another member that had none. A bare `pull_request:` means every pull
+// request; intersecting it with someone else's branches list would silence it
+// on the branches it used to cover.
+func TestPipelineTriggersUnfilteredWins(t *testing.T) {
+	members := []WorkflowConfig{
+		{
+			DestinationFile: "golangci-lint.yml",
+			Pipeline:        "ci.yml",
+			Triggers:        map[string]interface{}{"pull_request": nil},
+		},
+		{
+			DestinationFile: "ci-docker.yml",
+			Pipeline:        "ci.yml",
+			Triggers: map[string]interface{}{"pull_request": map[string]interface{}{
+				"branches": []interface{}{"main"},
+				"paths":    []interface{}{"Dockerfile"},
+			}},
+			If: "github.event_name == 'pull_request'",
+		},
+	}
+
+	got := pipelineTriggers(members)
+	if got["pull_request"] != nil {
+		t.Errorf("pull_request = %#v, want nil (unfiltered)", got["pull_request"])
+	}
+}
+
+// TestPipelineTriggersKeepsBranchAndTagPushes is the regression that rendering
+// the real config exposed. `branches` and `tags` are OR'd ref selectors, and a
+// push filter naming only `tags` does not match a branch push at all. Merging a
+// lint wrapper that runs on main with a publish wrapper that runs on tags by
+// intersecting filter keys drops `branches`, which stops lint running on main
+// while the workflow still looks correct.
+func TestPipelineTriggersKeepsBranchAndTagPushes(t *testing.T) {
+	members := []WorkflowConfig{
+		{
+			DestinationFile: "golangci-lint.yml",
+			Pipeline:        "ci.yml",
+			Triggers: map[string]interface{}{
+				"pull_request": nil,
+				"push": map[string]interface{}{
+					"branches": []interface{}{"main"},
+					"tags":     []interface{}{"v*"},
+				},
+			},
+		},
+		{
+			DestinationFile: "publish.yml",
+			Pipeline:        "ci.yml",
+			Triggers: map[string]interface{}{
+				"push": map[string]interface{}{"tags": []interface{}{"v*.*.*"}},
+			},
+			If: "github.event_name == 'push' && github.ref_type == 'tag'",
+		},
+	}
+
+	push, ok := pipelineTriggers(members)["push"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("push filter = %#v, want a mapping", pipelineTriggers(members)["push"])
+	}
+	branches, ok := push["branches"].([]interface{})
+	if !ok || len(branches) != 1 || branches[0] != "main" {
+		t.Errorf("push.branches = %#v, want [main]; dropping it stops lint running on main", push["branches"])
+	}
+	tags, _ := push["tags"].([]interface{})
+	if len(tags) != 2 {
+		t.Errorf("push.tags = %#v, want both tag patterns", push["tags"])
+	}
+}
+
+// TestPipelineTriggersDropsPathsWhenOneSideHasNone checks the other dimension:
+// paths ANDs with the ref selection, so a member without a paths filter must
+// not be narrowed by one that has it.
+func TestPipelineTriggersDropsPathsWhenOneSideHasNone(t *testing.T) {
+	members := []WorkflowConfig{
+		{
+			DestinationFile: "go-test.yml",
+			Pipeline:        "ci.yml",
+			Triggers: map[string]interface{}{
+				"pull_request": map[string]interface{}{"branches": []interface{}{"main"}},
+			},
+		},
+		{
+			DestinationFile: "ci-docker.yml",
+			Pipeline:        "ci.yml",
+			Triggers: map[string]interface{}{
+				"pull_request": map[string]interface{}{
+					"branches": []interface{}{"main"},
+					"paths":    []interface{}{"Dockerfile"},
+				},
+			},
+			If: "github.event_name == 'pull_request'",
+		},
+	}
+
+	pr, ok := pipelineTriggers(members)["pull_request"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("pull_request = %#v, want a mapping", pipelineTriggers(members)["pull_request"])
+	}
+	if _, has := pr["paths"]; has {
+		t.Errorf("pull_request kept paths %#v; go-test had none and would be narrowed", pr["paths"])
+	}
+}
+
+// TestValidatePipelineRejectsNeedOnConditionalJob covers the trap that makes a
+// green run meaningless: a skipped job skips its dependents, so a job needing
+// one that is conditional on a different event never runs at all.
+func TestValidatePipelineRejectsNeedOnConditionalJob(t *testing.T) {
+	members := goPipeline()
+	members[0].If = "github.event_name == 'pull_request'"
 
 	err := validatePipeline(members)
 	if err == nil {
-		t.Fatal("expected an error for members declaring different triggers")
+		t.Fatal("expected an error for a job needing a differently-conditional job")
 	}
-	if !strings.Contains(err.Error(), "different triggers") {
-		t.Errorf("error = %v, want it to name the trigger mismatch", err)
+	if !strings.Contains(err.Error(), "never run") {
+		t.Errorf("error = %v, want it to explain the skip cascade", err)
 	}
 }
 
