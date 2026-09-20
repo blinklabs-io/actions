@@ -1,0 +1,37 @@
+# Generated automatically by org-governance-bot. Do not edit manually.
+name: "[[ .WorkflowName ]]"
+
+on:
+[[ .TriggersYAML ]]
+
+jobs:
+[[- range .Jobs ]]
+  [[ .JobID ]]:
+[[- if .NeedsYAML ]]
+    needs: [[ .NeedsYAML ]]
+[[- end ]]
+[[- if .If ]]
+    if: [[ .If ]]
+[[- end ]]
+[[- if .MatrixYAML ]]
+    strategy:
+      matrix:
+[[ .MatrixYAML ]]
+[[- end ]]
+    uses: [[ .ReusableWorkflow ]]
+[[- if .Permissions ]]
+    permissions:
+[[- range $k, $v := .Permissions ]]
+      [[ $k ]]: [[ $v ]]
+[[- end ]][[- end ]]
+[[- if .Secrets ]]
+    secrets:
+[[- range $key, $value := .Secrets ]]
+      [[ $key ]]: ${{ secrets.[[ $value ]] }}
+[[- end ]][[- end ]]
+[[- if .Params ]]
+    with:
+[[- range $key, $value := .Params ]]
+      [[ $key ]]: [[ $value | quoteForYAML ]]
+[[- end ]][[- end ]]
+[[- end ]]

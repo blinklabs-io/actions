@@ -110,6 +110,9 @@ repositories:
           pull_request:
 
       - destination_file: go-test.yml
+        pipeline: ci.yml
+        pipeline_name: ci
+        needs: [golangci-lint]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
@@ -119,6 +122,7 @@ repositories:
             tags: ['v*']
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -128,6 +132,8 @@ repositories:
             tags: ['v*']
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -139,6 +145,9 @@ repositories:
           include-pkgs: "github.com/blinklabs-io/tx-submit-api"
 
       - destination_file: ci-docker.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'pull_request'
         workflow_name: "Docker CI"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
@@ -155,6 +164,9 @@ repositories:
           image-name: "blinklabs-io/tx-submit-api"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'push'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
         triggers:
@@ -190,6 +202,8 @@ repositories:
           pull_request:
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
+        pipeline_name: ci
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -199,6 +213,8 @@ repositories:
             tags: ['v*']
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -226,6 +242,9 @@ repositories:
           image-name: "blinklabs-io/tx-submit-api-mirror"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [nilaway]
+        if: github.event_name == 'push'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
         triggers:
@@ -261,6 +280,9 @@ repositories:
           pull_request:
 
       - destination_file: go-test.yml
+        pipeline: ci.yml
+        pipeline_name: ci
+        needs: [golangci-lint]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
@@ -270,6 +292,7 @@ repositories:
             tags: ['v*']
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -281,6 +304,8 @@ repositories:
           go-version: "1.26.x"
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -307,6 +332,9 @@ repositories:
           image-name: "blinklabs-io/txtop"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'push'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
         triggers:
@@ -348,6 +376,9 @@ repositories:
           pull_request:
 
       - destination_file: go-test.yml
+        pipeline: ci.yml
+        pipeline_name: ci
+        needs: [golangci-lint]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
@@ -357,6 +388,7 @@ repositories:
             tags: ['v*']
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -366,6 +398,8 @@ repositories:
             tags: ['v*']
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -395,6 +429,9 @@ repositories:
           image-name: "blinklabs-io/cardano-node-api"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'push'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
         triggers:
@@ -430,6 +467,9 @@ repositories:
           pull_request:
 
       - destination_file: go-test.yml
+        pipeline: ci.yml
+        pipeline_name: ci
+        needs: [golangci-lint]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
@@ -441,6 +481,7 @@ repositories:
           go-versions: '["1.26.x"]'
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -452,6 +493,8 @@ repositories:
           go-version: "1.26.x"
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -464,6 +507,9 @@ repositories:
           go-version: "1.26.x"
 
       - destination_file: ci-docker.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'pull_request'
         workflow_name: "Docker CI"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
@@ -478,6 +524,9 @@ repositories:
           image-name: "blinklabs-io/shai"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'push'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
         triggers:
@@ -674,6 +723,9 @@ repositories:
           image-name: "blinklabs-io/docker-wireguard"
 
       - destination_file: go.yml
+        pipeline: ci.yml
+        pipeline_name: ci
+        needs: [golangci-lint]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
@@ -686,6 +738,7 @@ repositories:
           test-flags: "-race"
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -695,6 +748,8 @@ repositories:
             tags: ['v*']
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -706,6 +761,9 @@ repositories:
           include-pkgs: "github.com/blinklabs-io/docker-wireguard"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go, nilaway]
+        if: github.event_name == 'push'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
         triggers:
@@ -838,6 +896,9 @@ repositories:
           pull_request:
 
       - destination_file: go-test.yml
+        pipeline: ci.yml
+        pipeline_name: ci
+        needs: [golangci-lint]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
@@ -855,6 +916,7 @@ repositories:
           test-env: "LANG=en_US.UTF-8"
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -868,6 +930,8 @@ repositories:
           system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -883,6 +947,9 @@ repositories:
           system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
 
       - destination_file: ci-docker.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'pull_request'
         workflow_name: "Docker CI"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
@@ -899,6 +966,9 @@ repositories:
           image-name: "blinklabs-io/adder"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'push'
         workflow_name: "publish"
         # Pinned to an immutable commit SHA (not @main): this call hands the
         # reusable Apple, Google Cloud KMS, and Docker credentials plus
@@ -1052,6 +1122,9 @@ repositories:
           pull_request:
 
       - destination_file: go-test.yml
+        pipeline: ci.yml
+        pipeline_name: ci
+        needs: [golangci-lint]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
@@ -1061,6 +1134,7 @@ repositories:
             tags: ['v*']
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -1070,6 +1144,8 @@ repositories:
             tags: ['v*']
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -1081,6 +1157,9 @@ repositories:
           include-pkgs: "github.com/blinklabs-io/cardano-up"
 
       - destination_file: ci-docker.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'pull_request'
         workflow_name: "Docker CI"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
@@ -1099,6 +1178,9 @@ repositories:
           image-name: "blinklabs-io/cardano-up"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'push'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
         triggers:
@@ -1188,6 +1270,9 @@ repositories:
           pull_request:
 
       - destination_file: go-test.yml
+        pipeline: ci.yml
+        pipeline_name: ci
+        needs: [golangci-lint]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
@@ -1202,6 +1287,7 @@ repositories:
           upload-coverage: "true"
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -1211,6 +1297,8 @@ repositories:
             tags: ['v*']
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -1225,6 +1313,9 @@ repositories:
           exclude-file-docstrings: "<nilaway skip stack-machine>"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main"
         triggers:
@@ -1251,6 +1342,8 @@ repositories:
           pull_request:
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
+        pipeline_name: ci
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -1260,6 +1353,8 @@ repositories:
             tags: ['v*']
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -1271,6 +1366,9 @@ repositories:
           include-pkgs: "github.com/blinklabs-io/gouroboros"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [nilaway]
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main"
         triggers:
@@ -1296,6 +1394,8 @@ repositories:
           pull_request:
 
       - destination_file: golangci-lint.yml
+        pipeline: ci.yml
+        pipeline_name: ci
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
         triggers:
@@ -1305,6 +1405,8 @@ repositories:
             tags: ['v*']
 
       - destination_file: nilaway.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-nilaway.yml@main"
         triggers:
@@ -1316,6 +1418,9 @@ repositories:
           include-pkgs: "github.com/blinklabs-io/ouroboros-mock"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [nilaway]
+        if: github.event_name == 'push'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main"
         triggers:

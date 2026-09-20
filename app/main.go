@@ -137,6 +137,62 @@ type WorkflowConfig struct {
 	Permissions      map[string]string      `yaml:"permissions"`
 	Params           map[string]string      `yaml:"params"`
 	Secrets          map[string]string      `yaml:"secrets"`
+
+	// Pipeline, when set, is the destination file of a combined workflow that
+	// this entry becomes one job of, instead of a wrapper file of its own.
+	//
+	// GitHub starts every workflow file matching an event at once, and `needs:`
+	// cannot name a job in another file, so separate wrappers can only ever run
+	// flat: a repository whose lint, nilaway and test wrappers are three files
+	// spends three runners on a change that does not compile. Grouping them into
+	// one file makes `needs:` available, so the cheap check gates the expensive
+	// ones and a failure costs one runner instead of all of them.
+	Pipeline string `yaml:"pipeline"`
+
+	// PipelineName is the `name:` of the combined workflow. Only one member need
+	// set it; members leaving it empty inherit it. Ignored when Pipeline is
+	// empty, where WorkflowName names the file's workflow as before.
+	PipelineName string `yaml:"pipeline_name"`
+
+	// JobID is this entry's job key inside its pipeline, and what other members
+	// name in Needs. Defaults to DestinationFile without its extension.
+	JobID string `yaml:"job_id"`
+
+	// Needs lists JobIDs in the same pipeline that must succeed before this job
+	// starts.
+	Needs []string `yaml:"needs"`
+
+	// PipelineTriggers is the combined workflow's `on:` block. Exactly one
+	// member of a pipeline declares it.
+	//
+	// A pipeline that spans events needs this. Wrappers that ran on different
+	// events could never gate each other, which is how a tag came to publish a
+	// release while the lint and test wrappers for the same commit were still
+	// running or already failing. Bringing them into one file means one `on:`
+	// covering every event the pipeline serves, with If narrowing each job to
+	// the events it belongs to.
+	PipelineTriggers map[string]interface{} `yaml:"pipeline_triggers"`
+
+	// If is the job's `if:` condition, used to restrict a job to some of the
+	// events its pipeline runs on.
+	//
+	// Note for anyone adding a job: a skipped job's dependents skip too, so a
+	// job must not need one that is conditional on a different event.
+	If string `yaml:"if"`
+}
+
+// jobID returns the entry's job key inside a pipeline, defaulting to the
+// destination file without its extension so a config that sets only `pipeline`
+// and `needs` still reads naturally.
+func (w WorkflowConfig) jobID() string {
+	if w.JobID != "" {
+		return w.JobID
+	}
+	base := w.DestinationFile
+	if idx := strings.LastIndex(base, "."); idx > 0 {
+		base = base[:idx]
+	}
+	return base
 }
 
 // templateData is the value passed into the workflow template.
@@ -148,6 +204,25 @@ type templateData struct {
 	Permissions      map[string]string
 	MatrixYAML       string
 	TriggersYAML     string
+}
+
+// pipelineJobData is one caller job inside a combined workflow.
+type pipelineJobData struct {
+	JobID            string
+	NeedsYAML        string
+	If               string
+	ReusableWorkflow string
+	Params           map[string]string
+	Secrets          map[string]string
+	Permissions      map[string]string
+	MatrixYAML       string
+}
+
+// pipelineData is the value passed into the pipeline template.
+type pipelineData struct {
+	WorkflowName string
+	TriggersYAML string
+	Jobs         []pipelineJobData
 }
 
 // ---------------------------------------------------------------------------
@@ -857,7 +932,471 @@ func buildWorkflowTemplate(templatePath string) (*template.Template, error) {
 			return s
 		},
 	}
-	return template.New("workflow.tmpl").Delims("[[", "]]").Funcs(funcMap).ParseFiles(templatePath)
+	// The template's name has to match the base of the parsed file or Execute
+	// finds nothing to run, so it is derived rather than hardcoded: this builder
+	// serves both workflow.tmpl and pipeline.tmpl.
+	name := templatePath
+	if idx := strings.LastIndexAny(name, "/\\"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	return template.New(name).Delims("[[", "]]").Funcs(funcMap).ParseFiles(templatePath)
+}
+
+// groupPipelines splits a repository's workflows into the entries that render a
+// wrapper file each, and the pipelines that render one combined file each.
+// Pipeline order follows first appearance in the config, and job order within a
+// pipeline follows the config too, so a generated file stays stable across runs.
+func groupPipelines(
+	workflows []WorkflowConfig,
+) (standalone []WorkflowConfig, pipelines [][]WorkflowConfig) {
+	index := make(map[string]int)
+	for _, wf := range workflows {
+		if wf.Pipeline == "" {
+			standalone = append(standalone, wf)
+			continue
+		}
+		if pos, ok := index[wf.Pipeline]; ok {
+			pipelines[pos] = append(pipelines[pos], wf)
+			continue
+		}
+		index[wf.Pipeline] = len(pipelines)
+		pipelines = append(pipelines, []WorkflowConfig{wf})
+	}
+	return standalone, pipelines
+}
+
+// validatePipeline rejects a pipeline that could not run as written.
+//
+// Triggers are checked because a combined file has one `on:` block: members
+// that disagree about when they run cannot share a file, and silently taking
+// the first member's triggers would stop the others from running at all. Needs
+// are checked because GitHub fails an entire workflow that names a job it
+// cannot resolve, which would take out every job in the pipeline rather than
+// the one that was misconfigured.
+func validatePipeline(members []WorkflowConfig) error {
+	if len(members) == 0 {
+		return errors.New("pipeline has no members")
+	}
+
+	file := members[0].Pipeline
+
+	// A pipeline declares its `on:` block once, or every member declares the
+	// same triggers. The second form is what a pipeline confined to one event
+	// looks like, and predates pipeline_triggers.
+	declared := 0
+	for _, wf := range members {
+		if len(wf.PipelineTriggers) > 0 {
+			declared++
+		}
+	}
+	if declared > 1 {
+		return fmt.Errorf(
+			"pipeline %q: %d members declare pipeline_triggers; a combined "+
+				"workflow has one on: block, so exactly one member declares it",
+			file,
+			declared,
+		)
+	}
+
+	merged := pipelineTriggers(members)
+	if _, err := renderTriggers(merged); err != nil {
+		return fmt.Errorf("renderTriggers for pipeline %q: %w", file, err)
+	}
+
+	ids := make(map[string]bool, len(members))
+	for _, wf := range members {
+		id := wf.jobID()
+		if id == "" {
+			return fmt.Errorf(
+				"pipeline %q: entry %q resolves to an empty job id",
+				file,
+				wf.DestinationFile,
+			)
+		}
+		if ids[id] {
+			return fmt.Errorf("pipeline %q: duplicate job id %q", file, id)
+		}
+		ids[id] = true
+	}
+
+	conditions := make(map[string]string, len(members))
+	for _, wf := range members {
+		conditions[wf.jobID()] = wf.If
+	}
+
+	for _, wf := range members {
+		// The pipeline's on: block is the union of its members', so a member
+		// that used to run on fewer events now runs on all of them unless its
+		// `if` says otherwise. That is the point for a check: widening lint and
+		// the tests to a repository's pushes is what lets a release depend on
+		// them.
+		//
+		// It is not the point for a job that writes. A publishing job whose
+		// wrapper only ever ran on a tag would, on joining a pipeline that also
+		// runs on pull requests, start publishing from pull requests -- with
+		// its own write grant. Such a job has to say which events it belongs
+		// to.
+		if writesSomething(wf.Permissions) && wf.If == "" && triggersInclude(merged, "pull_request") {
+			return fmt.Errorf(
+				"pipeline %q: %q requests a write permission and declares no "+
+					"`if`, but the pipeline runs on pull_request; give it an "+
+					"`if` naming the events it belongs to, or leave it as a "+
+					"separate wrapper",
+				file,
+				wf.DestinationFile,
+			)
+		}
+		for _, need := range wf.Needs {
+			if !ids[need] {
+				return fmt.Errorf(
+					"pipeline %q: job %q needs %q, which is not a job in this pipeline",
+					file,
+					wf.jobID(),
+					need,
+				)
+			}
+			if need == wf.jobID() {
+				return fmt.Errorf("pipeline %q: job %q needs itself", file, need)
+			}
+			// A skipped job's dependents skip with it. A job guarded by a
+			// narrower condition than the one it needs never runs, so a release
+			// job gated on a pull-request-only build would silently never
+			// publish -- a green run that did nothing.
+			if conditions[need] != "" && conditions[need] != wf.If {
+				return fmt.Errorf(
+					"pipeline %q: job %q needs %q, which is conditional on "+
+						"%q; a skipped job skips its dependents, so %q would "+
+						"never run when %q is skipped",
+					file,
+					wf.jobID(),
+					need,
+					conditions[need],
+					wf.jobID(),
+					need,
+				)
+			}
+		}
+	}
+
+	return validateNoCycle(file, members)
+}
+
+// validateNoCycle rejects a dependency cycle among a pipeline's jobs.
+//
+// Every job in a cycle waits for another job in it, so none can ever start.
+// GitHub rejects the workflow outright, which takes out the whole file rather
+// than the jobs involved -- the same blast radius as an unresolvable `needs`,
+// and not something the self-reference check catches: `a` needing `b` while `b`
+// needs `a` contains no self-reference at all.
+func validateNoCycle(file string, members []WorkflowConfig) error {
+	needs := make(map[string][]string, len(members))
+	order := make([]string, 0, len(members))
+	for _, wf := range members {
+		id := wf.jobID()
+		needs[id] = wf.Needs
+		order = append(order, id)
+	}
+
+	// Iterative depth-first search, colouring each job white (absent), grey
+	// (on the current path) or black (fully explored). Meeting a grey job is a
+	// back edge, which is a cycle.
+	const (
+		grey  = 1
+		black = 2
+	)
+	state := make(map[string]int, len(needs))
+
+	var visit func(id string, path []string) error
+	visit = func(id string, path []string) error {
+		switch state[id] {
+		case black:
+			return nil
+		case grey:
+			return fmt.Errorf(
+				"pipeline %q: jobs %s form a dependency cycle; every job in "+
+					"it waits for another, so none can start",
+				file,
+				strings.Join(append(path, id), " -> "),
+			)
+		}
+		state[id] = grey
+		for _, need := range needs[id] {
+			if err := visit(need, append(path, id)); err != nil {
+				return err
+			}
+		}
+		state[id] = black
+		return nil
+	}
+
+	for _, id := range order {
+		if err := visit(id, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writesSomething reports whether a job asks for any write grant, which is what
+// separates a check from a job that can change something outside the run.
+func writesSomething(permissions map[string]string) bool {
+	for _, level := range permissions {
+		if strings.TrimSpace(level) == "write" {
+			return true
+		}
+	}
+	return false
+}
+
+// triggersInclude reports whether a merged `on:` block covers an event.
+func triggersInclude(triggers map[string]interface{}, event string) bool {
+	_, ok := triggers[event]
+	return ok
+}
+
+// pipelineTriggers returns the combined workflow's `on:` block: an explicit
+// pipeline_triggers when a member declares one, otherwise the union of what the
+// members would each have run on.
+func pipelineTriggers(members []WorkflowConfig) map[string]interface{} {
+	for _, wf := range members {
+		if len(wf.PipelineTriggers) > 0 {
+			return wf.PipelineTriggers
+		}
+	}
+	merged := map[string]interface{}{}
+	for _, wf := range members {
+		for event, filter := range wf.Triggers {
+			mergeTrigger(merged, event, filter)
+		}
+	}
+	return merged
+}
+
+// mergeTrigger folds one member's trigger into the pipeline's `on:` block.
+//
+// The union has to be the more permissive of the two, or a member stops running
+// on an event it used to run on. That makes a filter present on one member and
+// absent on another collapse to no filter: a bare `pull_request:` means every
+// pull request, so it cannot be narrowed by another member's branches or paths
+// list without silencing the bare one. Each member's `if` is what narrows it
+// back to the events that member belongs to.
+//
+// Note that a paths filter cannot be expressed as an `if`, so folding a
+// paths-filtered wrapper into a pipeline drops that filter. Do that only where
+// the filter was under-inclusive to begin with; a filter that accurately
+// describes what the job depends on is cheaper left in its own wrapper.
+func mergeTrigger(merged map[string]interface{}, event string, filter interface{}) {
+	existing, seen := merged[event]
+	if !seen {
+		merged[event] = filter
+		return
+	}
+	// Either side unfiltered wins: it is the broader of the two.
+	if filter == nil || existing == nil {
+		merged[event] = nil
+		return
+	}
+
+	left, lok := existing.(map[string]interface{})
+	right, rok := filter.(map[string]interface{})
+	if !lok || !rok {
+		merged[event] = nil
+		return
+	}
+
+	// `branches` and `tags` select refs and GitHub ORs them: a push matches if
+	// it matches either, and a filter naming only `tags` does not match a
+	// branch push at all. So a side that names no ref key matches every ref,
+	// and the union then names none either. Intersecting the keys instead is
+	// what silently drops `branches` when merging a lint wrapper that runs on
+	// main with a publish wrapper that runs on tags, leaving lint running on
+	// tags only.
+	//
+	// `paths` is different: it ANDs with the ref selection, so a side without
+	// one is again the broader, and the union carries no paths.
+	refKeys := []string{"branches", "branches-ignore", "tags", "tags-ignore"}
+	pathKeys := []string{"paths", "paths-ignore"}
+
+	out := map[string]interface{}{}
+	mergeGroup := func(keys []string) {
+		leftHas, rightHas := false, false
+		for _, k := range keys {
+			if _, ok := left[k]; ok {
+				leftHas = true
+			}
+			if _, ok := right[k]; ok {
+				rightHas = true
+			}
+		}
+		if !leftHas || !rightHas {
+			return // one side is unfiltered in this dimension; so is the union
+		}
+		for _, k := range keys {
+			lv, lok := left[k]
+			rv, rok := right[k]
+			switch {
+			case lok && rok:
+				out[k] = unionLists(lv, rv)
+			case lok:
+				out[k] = lv
+			case rok:
+				out[k] = rv
+			}
+		}
+	}
+	mergeGroup(refKeys)
+	mergeGroup(pathKeys)
+
+	// Anything neither group covers (inputs, types, ...) only survives when
+	// both sides agree; a difference there is broadened away.
+	for key := range left {
+		if isIn(key, refKeys) || isIn(key, pathKeys) {
+			continue
+		}
+		if rv, ok := right[key]; ok {
+			out[key] = unionLists(left[key], rv)
+		}
+	}
+	if event == "pull_request" {
+		defaultTypes := []interface{}{"opened", "synchronize", "reopened"}
+		if lv, lok := left["types"]; lok {
+			if _, rok := right["types"]; !rok {
+				out["types"] = unionLists(lv, defaultTypes)
+			}
+		} else if rv, rok := right["types"]; rok {
+			out["types"] = unionLists(defaultTypes, rv)
+		}
+	}
+
+	if len(out) == 0 {
+		merged[event] = nil
+		return
+	}
+	merged[event] = out
+}
+
+func isIn(key string, keys []string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// unionLists merges two YAML sequences, preserving order and dropping repeats.
+func unionLists(a, b interface{}) interface{} {
+	left, lok := a.([]interface{})
+	right, rok := b.([]interface{})
+	if !lok || !rok {
+		return a
+	}
+	seen := map[string]bool{}
+	var out []interface{}
+	for _, v := range append(append([]interface{}{}, left...), right...) {
+		key := fmt.Sprint(v)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, v)
+	}
+	return out
+}
+
+// pipelineWorkflowName picks the combined workflow's `name:`. The first member
+// that sets pipeline_name wins; with none set the pipeline's file name stands
+// in, so a misconfigured pipeline still renders something identifiable rather
+// than an empty name.
+func pipelineWorkflowName(members []WorkflowConfig) string {
+	for _, wf := range members {
+		if wf.PipelineName != "" {
+			return wf.PipelineName
+		}
+	}
+	name := members[0].Pipeline
+	if idx := strings.LastIndex(name, "."); idx > 0 {
+		name = name[:idx]
+	}
+	return name
+}
+
+// renderNeeds renders a job's needs list as an inline YAML sequence.
+func renderNeeds(needs []string) string {
+	if len(needs) == 0 {
+		return ""
+	}
+	return "[" + strings.Join(needs, ", ") + "]"
+}
+
+// renderPipeline renders one combined workflow file whose jobs call the
+// reusable workflows that were previously a wrapper file each.
+func renderPipeline(tmpl *template.Template, members []WorkflowConfig) ([]byte, error) {
+	if err := validatePipeline(members); err != nil {
+		return nil, err
+	}
+
+	triggersYAML, err := renderTriggers(pipelineTriggers(members))
+	if err != nil {
+		return nil, fmt.Errorf("renderTriggers: %w", err)
+	}
+
+	data := pipelineData{
+		WorkflowName: pipelineWorkflowName(members),
+		TriggersYAML: triggersYAML,
+	}
+	for _, wf := range members {
+		matrixYAML, merr := renderMatrix(wf.Matrix)
+		if merr != nil {
+			return nil, fmt.Errorf("renderMatrix for %q: %w", wf.DestinationFile, merr)
+		}
+		data.Jobs = append(data.Jobs, pipelineJobData{
+			JobID:            wf.jobID(),
+			NeedsYAML:        renderNeeds(wf.Needs),
+			If:               wf.If,
+			ReusableWorkflow: wf.ReusableWorkflow,
+			Params:           wf.Params,
+			Secrets:          wf.Secrets,
+			Permissions:      wf.Permissions,
+			MatrixYAML:       matrixYAML,
+		})
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// supersededWorkflowPaths lists the wrapper files a repository no longer needs
+// because their entries were folded into a pipeline.
+//
+// Deleting them is not tidiness. A wrapper left behind keeps matching the same
+// events and keeps starting its own run, so the repository would pay for both
+// the pipeline and every wrapper it replaced -- more fan-out than before the
+// change, and two check runs claiming the same name.
+func supersededWorkflowPaths(workflows []WorkflowConfig) []string {
+	keep := make(map[string]bool)
+	for _, wf := range workflows {
+		if wf.Pipeline != "" {
+			keep[wf.Pipeline] = true
+		}
+	}
+	var paths []string
+	for _, wf := range workflows {
+		if wf.Pipeline == "" || wf.DestinationFile == "" {
+			continue
+		}
+		// A pipeline that reuses one of its members' file names replaces that
+		// file rather than superseding it.
+		if keep[wf.DestinationFile] {
+			continue
+		}
+		paths = append(paths, ".github/workflows/"+wf.DestinationFile)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // renderWorkflow renders a single workflow wrapper file from the parsed template.
@@ -901,45 +1440,138 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 		return
 	}
 
-	for _, wf := range workflows {
+	standalone, pipelines := groupPipelines(workflows)
+
+	for _, wf := range standalone {
 		desiredContent, err := renderWorkflow(tmpl, wf)
 		if err != nil {
 			fmt.Printf("  Render error for %s: %v\n", wf.DestinationFile, err)
 			continue
 		}
+		if werr := upsertWorkflowFile(
+			ctx, client, owner, repo, defaultBranch, wf.DestinationFile, desiredContent,
+		); werr != nil {
+			fmt.Printf("  Error writing %s: %v\n", wf.DestinationFile, werr)
+		}
+	}
 
-		path := fmt.Sprintf(".github/workflows/%s", wf.DestinationFile)
-		fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
-
-		if err == nil {
-			// File exists — GetContent() already returns the decoded string.
-			existingContent, decErr := fileContent.GetContent()
-			if decErr == nil && existingContent == string(desiredContent) {
-				fmt.Printf("✅ Workflow file %s matches perfectly. Skipping push.\n", wf.DestinationFile)
+	if len(pipelines) > 0 {
+		pipelineTmpl, perr := buildWorkflowTemplate("templates/pipeline.tmpl")
+		if perr != nil {
+			fmt.Printf("  Pipeline template compilation error: %v\n", perr)
+			return
+		}
+		for _, members := range pipelines {
+			desiredContent, rerr := renderPipeline(pipelineTmpl, members)
+			if rerr != nil {
+				fmt.Printf("  Render error for pipeline %s: %v\n", members[0].Pipeline, rerr)
+				// Leave the superseded wrappers in place: they are this
+				// repository's only CI until the pipeline renders.
 				continue
 			}
-			fmt.Printf("  Drift detected in %s. Overwriting file content...\n", wf.DestinationFile)
-			opts := &github.RepositoryContentFileOptions{
-				Message: github.String(fmt.Sprintf("chore: central update of %s", wf.DestinationFile)),
-				Content: desiredContent,
-				SHA:     fileContent.SHA,
-				Branch:  github.String(defaultBranch),
+			if werr := upsertWorkflowFile(
+				ctx, client, owner, repo, defaultBranch, members[0].Pipeline, desiredContent,
+			); werr != nil {
+				fmt.Printf("  Error writing pipeline %s: %v\n", members[0].Pipeline, werr)
+				// Deleting the wrappers now would leave the repository with no
+				// CI at all: the pipeline meant to replace them is not there.
+				// They are still correct, so leave them and retry next run.
+				continue
 			}
-			if _, _, updateErr := client.Repositories.UpdateFile(ctx, owner, repo, path, opts); updateErr != nil {
-				fmt.Printf("  Error updating %s: %v\n", wf.DestinationFile, updateErr)
-			}
-		} else {
-			// File does not exist — create it
-			fmt.Printf("  Creating missing workflow file %s...\n", wf.DestinationFile)
-			opts := &github.RepositoryContentFileOptions{
-				Message: github.String(fmt.Sprintf("chore: provision %s", wf.DestinationFile)),
-				Content: desiredContent,
-				Branch:  github.String(defaultBranch),
-			}
-			if _, _, createErr := client.Repositories.CreateFile(ctx, owner, repo, path, opts); createErr != nil {
-				fmt.Printf("  Error creating %s: %v\n", wf.DestinationFile, createErr)
-			}
+			removeWorkflowFiles(
+				ctx, client, owner, repo, defaultBranch, supersededWorkflowPaths(members),
+			)
 		}
+	}
+}
+
+// upsertWorkflowFile writes one generated workflow file, skipping the push when
+// the repository already holds exactly that content.
+//
+// It returns an error rather than only logging one because a caller may have to
+// act on the failure: syncWorkflows deletes the wrappers a pipeline supersedes,
+// and doing that after a failed pipeline write would leave the repository with
+// no CI at all.
+func upsertWorkflowFile(
+	ctx context.Context,
+	client *github.Client,
+	owner, repo, defaultBranch, destinationFile string,
+	desiredContent []byte,
+) error {
+	path := fmt.Sprintf(".github/workflows/%s", destinationFile)
+	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
+
+	if err == nil {
+		// File exists — GetContent() already returns the decoded string.
+		existingContent, decErr := fileContent.GetContent()
+		if decErr == nil && existingContent == string(desiredContent) {
+			fmt.Printf("✅ Workflow file %s matches perfectly. Skipping push.\n", destinationFile)
+			return nil
+		}
+		fmt.Printf("  Drift detected in %s. Overwriting file content...\n", destinationFile)
+		opts := &github.RepositoryContentFileOptions{
+			Message: github.String(fmt.Sprintf("chore: central update of %s", destinationFile)),
+			Content: desiredContent,
+			SHA:     fileContent.SHA,
+			Branch:  github.String(defaultBranch),
+		}
+		if _, _, updateErr := client.Repositories.UpdateFile(ctx, owner, repo, path, opts); updateErr != nil {
+			fmt.Printf("  Error updating %s: %v\n", destinationFile, updateErr)
+			return fmt.Errorf("updating %s: %w", destinationFile, updateErr)
+		}
+		return nil
+	}
+
+	// File does not exist — create it
+	fmt.Printf("  Creating missing workflow file %s...\n", destinationFile)
+	opts := &github.RepositoryContentFileOptions{
+		Message: github.String(fmt.Sprintf("chore: provision %s", destinationFile)),
+		Content: desiredContent,
+		Branch:  github.String(defaultBranch),
+	}
+	if _, _, createErr := client.Repositories.CreateFile(ctx, owner, repo, path, opts); createErr != nil {
+		fmt.Printf("  Error creating %s: %v\n", destinationFile, createErr)
+		return fmt.Errorf("creating %s: %w", destinationFile, createErr)
+	}
+	return nil
+}
+
+// removeWorkflowFiles deletes generated wrapper files that are no longer
+// wanted. A missing file is success, so this is safe to run on every
+// reconciliation.
+func removeWorkflowFiles(
+	ctx context.Context,
+	client *github.Client,
+	owner, repo, defaultBranch string,
+	paths []string,
+) {
+	for _, workflowPath := range paths {
+		fileContent, _, _, getErr := client.Repositories.GetContents(ctx, owner, repo, workflowPath, nil)
+		if getErr != nil {
+			if isNotFound(getErr) {
+				continue
+			}
+			fmt.Printf("  Error checking %s for cleanup: %v\n", workflowPath, getErr)
+			continue
+		}
+		if fileContent == nil || fileContent.SHA == nil {
+			continue
+		}
+
+		fmt.Printf("  Removing superseded %s...\n", workflowPath)
+		opts := &github.RepositoryContentFileOptions{
+			Message: github.String(fmt.Sprintf(
+				"chore: remove superseded %s",
+				strings.TrimPrefix(workflowPath, ".github/workflows/"),
+			)),
+			SHA:    fileContent.SHA,
+			Branch: github.String(defaultBranch),
+		}
+		if _, _, delErr := client.Repositories.DeleteFile(ctx, owner, repo, workflowPath, opts); delErr != nil {
+			fmt.Printf("  Error deleting %s: %v\n", workflowPath, delErr)
+			continue
+		}
+		fmt.Printf("✅ Removed %s from %s/%s\n", workflowPath, owner, repo)
 	}
 }
 
