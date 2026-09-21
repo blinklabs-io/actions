@@ -284,7 +284,6 @@ func main() {
 			os.Exit(1)
 		}
 		syncWorkflows(ctx, client, owner, repoName, repo.Workflows)
-		removeObsoleteIssueCloseWorkflows(ctx, client, owner, repoName)
 	}
 }
 
@@ -1442,23 +1441,27 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 
 	standalone, pipelines := groupPipelines(workflows)
 
+	// Every workflow change this repository needs is staged here and written as
+	// one commit. Pushing a commit per file made a run that touches N files
+	// start N CI runs; a change that hit many repositories multiplied that
+	// across the org and clogged the runners. One commit per repo means one run.
+	batch := &commitBatch{}
+
 	for _, wf := range standalone {
 		desiredContent, err := renderWorkflow(tmpl, wf)
 		if err != nil {
 			fmt.Printf("  Render error for %s: %v\n", wf.DestinationFile, err)
 			continue
 		}
-		if werr := upsertWorkflowFile(
-			ctx, client, owner, repo, defaultBranch, wf.DestinationFile, desiredContent,
-		); werr != nil {
-			fmt.Printf("  Error writing %s: %v\n", wf.DestinationFile, werr)
-		}
+		stageWorkflowFile(ctx, client, owner, repo, batch, wf.DestinationFile, desiredContent)
 	}
 
 	if len(pipelines) > 0 {
 		pipelineTmpl, perr := buildWorkflowTemplate("templates/pipeline.tmpl")
 		if perr != nil {
 			fmt.Printf("  Pipeline template compilation error: %v\n", perr)
+			// Still commit the standalone changes already staged.
+			flushBatch(ctx, client, owner, repo, defaultBranch, batch)
 			return
 		}
 		for _, members := range pipelines {
@@ -1469,35 +1472,33 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 				// repository's only CI until the pipeline renders.
 				continue
 			}
-			if werr := upsertWorkflowFile(
-				ctx, client, owner, repo, defaultBranch, members[0].Pipeline, desiredContent,
-			); werr != nil {
-				fmt.Printf("  Error writing pipeline %s: %v\n", members[0].Pipeline, werr)
-				// Deleting the wrappers now would leave the repository with no
-				// CI at all: the pipeline meant to replace them is not there.
-				// They are still correct, so leave them and retry next run.
-				continue
-			}
-			removeWorkflowFiles(
-				ctx, client, owner, repo, defaultBranch, supersededWorkflowPaths(members),
-			)
+			// Stage the pipeline and the removal of the wrappers it supersedes
+			// together. They land in the same commit, so the wrappers can never
+			// be dropped without the pipeline that replaces them being written
+			// in the same push: the repository is never left with no CI.
+			stageWorkflowFile(ctx, client, owner, repo, batch, members[0].Pipeline, desiredContent)
+			stageRemovals(ctx, client, owner, repo, batch, supersededWorkflowPaths(members))
 		}
 	}
+
+	// Fold obsolete-wrapper cleanup into the same commit so it does not start a
+	// separate CI run of its own.
+	stageRemovals(ctx, client, owner, repo, batch, obsoleteIssueCloseWorkflowPaths)
+
+	flushBatch(ctx, client, owner, repo, defaultBranch, batch)
 }
 
-// upsertWorkflowFile writes one generated workflow file, skipping the push when
-// the repository already holds exactly that content.
-//
-// It returns an error rather than only logging one because a caller may have to
-// act on the failure: syncWorkflows deletes the wrappers a pipeline supersedes,
-// and doing that after a failed pipeline write would leave the repository with
-// no CI at all.
-func upsertWorkflowFile(
+// stageWorkflowFile stages one generated workflow file for the aggregated
+// commit, skipping it when the repository already holds exactly that content so
+// an unchanged run produces no commit at all.
+func stageWorkflowFile(
 	ctx context.Context,
 	client *github.Client,
-	owner, repo, defaultBranch, destinationFile string,
+	owner, repo string,
+	batch *commitBatch,
+	destinationFile string,
 	desiredContent []byte,
-) error {
+) {
 	path := fmt.Sprintf(".github/workflows/%s", destinationFile)
 	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
 
@@ -1506,43 +1507,27 @@ func upsertWorkflowFile(
 		existingContent, decErr := fileContent.GetContent()
 		if decErr == nil && existingContent == string(desiredContent) {
 			fmt.Printf("✅ Workflow file %s matches perfectly. Skipping push.\n", destinationFile)
-			return nil
+			return
 		}
-		fmt.Printf("  Drift detected in %s. Overwriting file content...\n", destinationFile)
-		opts := &github.RepositoryContentFileOptions{
-			Message: github.String(fmt.Sprintf("chore: central update of %s", destinationFile)),
-			Content: desiredContent,
-			SHA:     fileContent.SHA,
-			Branch:  github.String(defaultBranch),
-		}
-		if _, _, updateErr := client.Repositories.UpdateFile(ctx, owner, repo, path, opts); updateErr != nil {
-			fmt.Printf("  Error updating %s: %v\n", destinationFile, updateErr)
-			return fmt.Errorf("updating %s: %w", destinationFile, updateErr)
-		}
-		return nil
+		fmt.Printf("  Drift detected in %s. Staging update...\n", destinationFile)
+		batch.upsert(path, desiredContent, fmt.Sprintf("update %s", destinationFile))
+		return
 	}
 
-	// File does not exist — create it
-	fmt.Printf("  Creating missing workflow file %s...\n", destinationFile)
-	opts := &github.RepositoryContentFileOptions{
-		Message: github.String(fmt.Sprintf("chore: provision %s", destinationFile)),
-		Content: desiredContent,
-		Branch:  github.String(defaultBranch),
-	}
-	if _, _, createErr := client.Repositories.CreateFile(ctx, owner, repo, path, opts); createErr != nil {
-		fmt.Printf("  Error creating %s: %v\n", destinationFile, createErr)
-		return fmt.Errorf("creating %s: %w", destinationFile, createErr)
-	}
-	return nil
+	// File does not exist — stage its creation.
+	fmt.Printf("  Staging creation of missing workflow file %s...\n", destinationFile)
+	batch.upsert(path, desiredContent, fmt.Sprintf("add %s", destinationFile))
 }
 
-// removeWorkflowFiles deletes generated wrapper files that are no longer
-// wanted. A missing file is success, so this is safe to run on every
-// reconciliation.
-func removeWorkflowFiles(
+// stageRemovals stages the deletion of generated files that are no longer
+// wanted into the aggregated commit. A file that is already gone (404) is
+// skipped, so this is safe to run on every reconciliation and adds nothing to
+// the commit when there is nothing to remove.
+func stageRemovals(
 	ctx context.Context,
 	client *github.Client,
-	owner, repo, defaultBranch string,
+	owner, repo string,
+	batch *commitBatch,
 	paths []string,
 ) {
 	for _, workflowPath := range paths {
@@ -1558,20 +1543,10 @@ func removeWorkflowFiles(
 			continue
 		}
 
-		fmt.Printf("  Removing superseded %s...\n", workflowPath)
-		opts := &github.RepositoryContentFileOptions{
-			Message: github.String(fmt.Sprintf(
-				"chore: remove superseded %s",
-				strings.TrimPrefix(workflowPath, ".github/workflows/"),
-			)),
-			SHA:    fileContent.SHA,
-			Branch: github.String(defaultBranch),
-		}
-		if _, _, delErr := client.Repositories.DeleteFile(ctx, owner, repo, workflowPath, opts); delErr != nil {
-			fmt.Printf("  Error deleting %s: %v\n", workflowPath, delErr)
-			continue
-		}
-		fmt.Printf("✅ Removed %s from %s/%s\n", workflowPath, owner, repo)
+		fmt.Printf("  Staging removal of %s...\n", workflowPath)
+		batch.remove(workflowPath, fmt.Sprintf(
+			"remove %s", strings.TrimPrefix(workflowPath, ".github/workflows/"),
+		))
 	}
 }
 
@@ -1582,40 +1557,121 @@ var obsoleteIssueCloseWorkflowPaths = []string{
 	".github/workflows/test-issue-on-close.yml",
 }
 
-// removeObsoleteIssueCloseWorkflows deletes legacy issue-close wrappers from a
-// managed repository's default branch when present. Missing files (404) are
-// treated as success so this cleanup can run on every reconciliation.
-func removeObsoleteIssueCloseWorkflows(ctx context.Context, client *github.Client, owner, repo string) {
-	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
-	if err != nil {
-		fmt.Printf("  Error getting repo info for cleanup: %v\n", err)
+// fileOp is one staged change to a repository's tree: a content write, or a
+// deletion when remove is set.
+type fileOp struct {
+	path    string
+	content []byte
+	remove  bool
+}
+
+// commitBatch accumulates every file change the engine wants to make to one
+// repository during a single reconciliation so they can be written as one
+// commit. The Contents API commits per file, which turned a run that touched N
+// files into N commits and N CI runs; batching to one commit per repo replaces
+// that fan-out with a single run.
+type commitBatch struct {
+	ops     []fileOp
+	summary []string
+}
+
+// upsert stages writing content to path. desc is a short line for the commit body.
+func (b *commitBatch) upsert(path string, content []byte, desc string) {
+	b.ops = append(b.ops, fileOp{path: path, content: content})
+	b.summary = append(b.summary, desc)
+}
+
+// remove stages deleting path. desc is a short line for the commit body.
+func (b *commitBatch) remove(path, desc string) {
+	b.ops = append(b.ops, fileOp{path: path, remove: true})
+	b.summary = append(b.summary, desc)
+}
+
+// message renders the aggregated commit message: a fixed title plus one bullet
+// per staged change so the single commit still records what it touched.
+func (b *commitBatch) message() string {
+	const title = "chore: sync managed workflows"
+	if len(b.summary) == 0 {
+		return title
+	}
+	var sb strings.Builder
+	sb.WriteString(title)
+	sb.WriteString("\n")
+	for _, s := range b.summary {
+		sb.WriteString("\n- ")
+		sb.WriteString(s)
+	}
+	return sb.String()
+}
+
+// flushBatch writes every staged change as one commit on the default branch
+// using the Git Data API (one tree, one commit, one ref update), so a
+// reconciliation that touches many files starts a single CI run. An empty batch
+// is a no-op, so an unchanged repository produces no commit.
+func flushBatch(
+	ctx context.Context,
+	client *github.Client,
+	owner, repo, defaultBranch string,
+	batch *commitBatch,
+) {
+	if len(batch.ops) == 0 {
 		return
 	}
-	defaultBranch := repoInfo.GetDefaultBranch()
 
-	for _, workflowPath := range obsoleteIssueCloseWorkflowPaths {
-		fileContent, _, _, getErr := client.Repositories.GetContents(ctx, owner, repo, workflowPath, nil)
-		if getErr != nil {
-			if isNotFound(getErr) {
-				continue
-			}
-			fmt.Printf("  Error checking %s for cleanup: %v\n", workflowPath, getErr)
-			continue
-		}
-		if fileContent == nil || fileContent.SHA == nil {
-			continue
-		}
-
-		fmt.Printf("  Removing obsolete %s...\n", workflowPath)
-		opts := &github.RepositoryContentFileOptions{
-			Message: github.String(fmt.Sprintf("chore: remove obsolete %s", strings.TrimPrefix(workflowPath, ".github/workflows/"))),
-			SHA:     fileContent.SHA,
-			Branch:  github.String(defaultBranch),
-		}
-		if _, _, delErr := client.Repositories.DeleteFile(ctx, owner, repo, workflowPath, opts); delErr != nil {
-			fmt.Printf("  Error deleting %s: %v\n", workflowPath, delErr)
-			continue
-		}
-		fmt.Printf("✅ Removed %s from %s/%s\n", workflowPath, owner, repo)
+	ref, _, err := client.Git.GetRef(ctx, owner, repo, "heads/"+defaultBranch)
+	if err != nil {
+		fmt.Printf("  Error reading %s ref: %v\n", defaultBranch, err)
+		return
 	}
+	baseCommitSHA := ref.GetObject().GetSHA()
+
+	baseCommit, _, err := client.Git.GetCommit(ctx, owner, repo, baseCommitSHA)
+	if err != nil {
+		fmt.Printf("  Error reading base commit: %v\n", err)
+		return
+	}
+	baseTreeSHA := baseCommit.GetTree().GetSHA()
+
+	entries := make([]*github.TreeEntry, 0, len(batch.ops))
+	for _, op := range batch.ops {
+		entry := &github.TreeEntry{
+			Path: github.String(op.path),
+			Mode: github.String("100644"),
+			Type: github.String("blob"),
+		}
+		if !op.remove {
+			// A nil Content with a nil SHA tells CreateTree to delete the path;
+			// setting Content is what makes this a write instead.
+			entry.Content = github.String(string(op.content))
+		}
+		entries = append(entries, entry)
+	}
+
+	newTree, _, err := client.Git.CreateTree(ctx, owner, repo, baseTreeSHA, entries)
+	if err != nil {
+		fmt.Printf("  Error creating tree: %v\n", err)
+		return
+	}
+
+	commit := &github.Commit{
+		Message: github.String(batch.message()),
+		Tree:    newTree,
+		Parents: []*github.Commit{{SHA: github.String(baseCommitSHA)}},
+	}
+	newCommit, _, err := client.Git.CreateCommit(ctx, owner, repo, commit, nil)
+	if err != nil {
+		fmt.Printf("  Error creating commit: %v\n", err)
+		return
+	}
+
+	ref.Object.SHA = newCommit.SHA
+	if _, _, err := client.Git.UpdateRef(ctx, owner, repo, ref, false); err != nil {
+		fmt.Printf("  Error updating %s ref: %v\n", defaultBranch, err)
+		return
+	}
+
+	fmt.Printf(
+		"✅ Committed %d workflow change(s) to %s/%s@%s in one commit.\n",
+		len(batch.ops), owner, repo, defaultBranch,
+	)
 }
