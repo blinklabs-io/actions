@@ -1355,6 +1355,20 @@ repositories:
             branches: [main]
             tags: ['v*']
 
+      - destination_file: go-test.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
+        workflow_name: "go-test"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          go-arches: '["amd64","386"]'
+          submodules: "true"
+
       - destination_file: nilaway.yml
         pipeline: ci.yml
         needs: [golangci-lint]
@@ -1370,7 +1384,7 @@ repositories:
 
       - destination_file: publish.yml
         pipeline: ci.yml
-        needs: [nilaway]
+        needs: [go-test, nilaway]
         if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main"

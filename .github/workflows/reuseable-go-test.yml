@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: '["1.26.x"]'
+      go-arches:
+        description: JSON array of Go architectures to test against (e.g. '["amd64","386"]').
+        required: false
+        type: string
+        default: '[""]'
       test-flags:
         description: Extra flags to pass to `go test` (e.g. "-race").
         required: false
@@ -73,6 +78,7 @@ jobs:
     strategy:
       matrix:
         go-version: ${{ fromJson(inputs.go-versions) }}
+        go-arch: ${{ fromJson(inputs.go-arches) }}
         platform: ${{ fromJson(inputs.platforms) }}
     runs-on: ${{ matrix.platform }}
     steps:
@@ -106,6 +112,7 @@ jobs:
           TEST_PACKAGES: ${{ inputs.test-packages }}
           WINDOWS_TEST_PACKAGES: ${{ inputs.windows-test-packages }}
           TEST_ENV: ${{ inputs.test-env }}
+          GOARCH: ${{ matrix.go-arch }}
         run: |
           # Export any caller-provided environment variables (KEY=VALUE per line).
           if [ -n "$TEST_ENV" ]; then
