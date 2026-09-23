@@ -5,6 +5,10 @@ name: Reusable Go Library Release
 # module proxy / pkg.go.dev to fetch the new version. Callers trigger this on
 # `push: tags: ['v*.*.*']`; the job self-guards to tag refs so an accidental
 # branch trigger is a no-op.
+#
+# Libraries that ship runnable example programs can opt in to `build-examples`
+# to cross-compile each example and attach the binaries to the release; the
+# feature is off by default so every other library caller is unaffected.
 
 on:
   workflow_call:
@@ -24,6 +28,41 @@ on:
         required: false
         type: boolean
         default: true
+      build-examples:
+        description: Cross-compile the module's example programs and attach the binaries to the release.
+        required: false
+        type: boolean
+        default: false
+      examples-dir:
+        description: Directory holding one subdirectory per example program (each built to a repo-root binary named after its directory).
+        required: false
+        type: string
+        default: examples
+      example-build-command:
+        description: Command that builds every example, honouring GOOS/GOARCH, into repo-root binaries named after their directories.
+        required: false
+        type: string
+        default: make build
+      example-os-matrix:
+        description: JSON array of GOOS values to build example binaries for.
+        required: false
+        type: string
+        default: '["linux","darwin","freebsd","windows"]'
+      example-arch-matrix:
+        description: JSON array of GOARCH values to build example binaries for.
+        required: false
+        type: string
+        default: '["amd64","arm64"]'
+      go-version:
+        description: Go version used to build the example binaries.
+        required: false
+        type: string
+        default: 1.26.x
+      submodules:
+        description: Whether to check out git submodules when building the example binaries.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -70,3 +109,81 @@ jobs:
       - name: Pull new module version
         if: inputs.pull-go-module
         uses: andrewslotin/go-proxy-pull-action@00af8a5a49c844d6dde0bbbc116b72d8fd7ae97c # v1.5.0 https://github.com/andrewslotin/go-proxy-pull-action/releases/tag/v1.5.0
+
+  publish-examples:
+    name: publish-examples
+    # Opt-in and tag-only: skipped for library callers that leave build-examples
+    # unset, and never runs on branch triggers.
+    if: startsWith(github.ref, 'refs/tags/') && inputs.build-examples
+    needs: [create-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    strategy:
+      matrix:
+        os: ${{ fromJson(inputs.example-os-matrix) }}
+        arch: ${{ fromJson(inputs.example-arch-matrix) }}
+    env:
+      RELEASE_ID: ${{ needs.create-release.outputs.RELEASE_ID }}
+      MATRIX_OS: ${{ matrix.os }}
+      MATRIX_ARCH: ${{ matrix.arch }}
+      EXAMPLES_DIR: ${{ inputs.examples-dir }}
+    steps:
+      - name: Set RELEASE_TAG
+        run: echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: ${{ inputs.submodules }}
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6 https://github.com/actions/setup-go/releases/tag/v6.0.0
+        with:
+          go-version: ${{ inputs.go-version }}
+      - name: Build example binaries
+        env:
+          BUILD_COMMAND: ${{ inputs.example-build-command }}
+        run: GOOS="$MATRIX_OS" GOARCH="$MATRIX_ARCH" $BUILD_COMMAND
+      # The build command writes one repo-root binary per example directory
+      # (named after the directory). Stage them under dist/ with release-asset
+      # names so both the upload and the attestation glob stay simple.
+      - name: Stage example binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for dir in "$EXAMPLES_DIR"/*/; do
+            name="$(basename "$dir")"
+            src="$name"
+            asset="${name}-${RELEASE_TAG}-${MATRIX_OS}-${MATRIX_ARCH}"
+            if [ -f "${src}.exe" ]; then
+              src="${src}.exe"
+              asset="${asset}.exe"
+            fi
+            if [ ! -f "$src" ]; then
+              echo "no binary produced for example '${name}', skipping"
+              continue
+            fi
+            mv "$src" "dist/${asset}"
+          done
+          ls -1 dist
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for f in dist/*; do
+            name="$(basename "$f")"
+            curl --fail --silent --show-error \
+              -X POST \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f" \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${name}"
+          done
+      - name: Attest example binaries
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
+        with:
+          subject-path: dist/*
