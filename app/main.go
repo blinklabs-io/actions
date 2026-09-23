@@ -1640,8 +1640,10 @@ func flushBatch(
 			Type: github.String("blob"),
 		}
 		if !op.remove {
-			// A nil Content with a nil SHA tells CreateTree to delete the path;
-			// setting Content is what makes this a write instead.
+			// Leaving both Content and SHA nil is how a deletion is expressed:
+			// go-github's CreateTree turns such an entry into one that
+			// serializes "sha":null, which the Git Data API reads as "remove
+			// this path". Setting Content is what makes this a write instead.
 			entry.Content = github.String(string(op.content))
 		}
 		entries = append(entries, entry)

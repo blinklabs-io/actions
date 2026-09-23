@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +29,11 @@ type recordingGitHub struct {
 	// treeBody is the raw JSON sent to POST /git/trees, so a test can assert the
 	// aggregated commit both writes the pipeline and deletes the wrappers.
 	treeBody string
+	// contents, when non-nil, drives GET /contents/: a workflow file whose path
+	// ends in one of the keys is returned with that exact content, and any other
+	// file 404s. It lets a test present a repository that already matches the
+	// desired state so nothing is staged.
+	contents map[string]string
 }
 
 func (g *recordingGitHub) record(method, path string) {
@@ -72,6 +79,24 @@ func (g *recordingGitHub) handler() http.Handler {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"default_branch":"main"}`))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
+			if g.contents != nil {
+				// Present only the files a test declares, byte-for-byte, so the
+				// engine's content comparison sees an exact match and stages
+				// nothing; everything else is absent.
+				for suffix, raw := range g.contents {
+					if strings.HasSuffix(r.URL.Path, "/"+suffix) {
+						enc := base64.StdEncoding.EncodeToString([]byte(raw))
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = w.Write([]byte(fmt.Sprintf(
+							`{"type":"file","name":"x","sha":"deadbeef","content":%q,"encoding":"base64"}`,
+							enc,
+						)))
+						return
+					}
+				}
+				http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+				return
+			}
 			// The pipeline file is absent so it gets created, and the wrappers
 			// it supersedes are present so removing them is a real deletion.
 			// Without both, a test asserting the commit does both would pass
@@ -207,5 +232,85 @@ func TestSyncWorkflowsRemovesWrappersAfterSuccessfulWrite(t *testing.T) {
 				tree,
 			)
 		}
+	}
+}
+
+// TestSyncWorkflowsNoOpMakesNoCommit locks in the guarantee that a sync with
+// nothing to change writes nothing. A single standalone workflow already holds
+// exactly the content the engine renders, and the obsolete wrappers are absent,
+// so the batch stays empty. If the content-comparison skip ever regressed, the
+// engine would stage a no-op change and push an empty commit — the very
+// per-file CI churn this change removes — so the test asserts the Git Data API
+// is never touched at all.
+func TestSyncWorkflowsNoOpMakesNoCommit(t *testing.T) {
+	t.Chdir("..")
+
+	wf := WorkflowConfig{
+		DestinationFile:  "conventional-commits.yml",
+		WorkflowName:     "Conventional Commits",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main",
+		Triggers:         map[string]interface{}{"pull_request": nil},
+	}
+
+	// Render exactly what the engine will produce and hand it back as the file
+	// already on disk, so the comparison matches and nothing is staged.
+	tmpl, err := buildWorkflowTemplate("templates/workflow.tmpl")
+	if err != nil {
+		t.Fatalf("buildWorkflowTemplate: %v", err)
+	}
+	rendered, err := renderWorkflow(tmpl, wf)
+	if err != nil {
+		t.Fatalf("renderWorkflow: %v", err)
+	}
+
+	g := &recordingGitHub{contents: map[string]string{
+		"conventional-commits.yml": string(rendered),
+	}}
+	client := newRecordingClient(t, g)
+
+	syncWorkflows(context.Background(), client, "o", "r", []WorkflowConfig{wf})
+
+	for _, probe := range []struct{ method, path string }{
+		{http.MethodGet, "/git/ref/"},
+		{http.MethodPost, "/git/trees"},
+		{http.MethodPost, "/git/commits"},
+		{http.MethodPatch, "/git/refs/"},
+	} {
+		if g.saw(probe.method, probe.path) {
+			t.Errorf(
+				"a no-op sync touched %s %s; it must produce no commit. Requests were %v",
+				probe.method, probe.path, g.requests,
+			)
+		}
+	}
+}
+
+// TestFlushBatchSerializesDeletionAsNullSHA pins the on-the-wire form of a
+// deletion. A removed file must reach the Git Data API as a tree entry with
+// "sha":null; a serialization that dropped the field (e.g. via omitempty) would
+// silently leave the file in place. This asserts the request body directly so a
+// future change to how deletions are built cannot regress the payload unnoticed.
+func TestFlushBatchSerializesDeletionAsNullSHA(t *testing.T) {
+	g := &recordingGitHub{}
+	client := newRecordingClient(t, g)
+
+	batch := &commitBatch{}
+	batch.remove(".github/workflows/go-test.yml", "remove go-test.yml")
+
+	flushBatch(context.Background(), client, "o", "r", "main", batch)
+
+	tree := g.tree()
+	if !strings.Contains(tree, "go-test.yml") {
+		t.Fatalf("tree did not reference the deleted path; tree was %s", tree)
+	}
+	if !strings.Contains(tree, `"sha":null`) {
+		t.Errorf(
+			"deletion was not serialized as \"sha\":null, so the file would not "+
+				"be removed; tree was %s",
+			tree,
+		)
+	}
+	if strings.Contains(tree, `"content"`) {
+		t.Errorf("deletion entry must not carry content; tree was %s", tree)
 	}
 }
