@@ -1325,8 +1325,11 @@ repositories:
           contents: write
   # gouroboros is a Go library (the Ouroboros protocol). go-test.yml runs a
   # custom GOARCH matrix (amd64/386) with git submodules and stays
-  # hand-maintained, as do benchmark.yml, fuzz.yml and build-examples.yml. The
-  # remaining checks map to the shared reusable workflows.
+  # hand-maintained, as do benchmark.yml, fuzz.yml and build-examples.yml
+  # (which only validates that the examples compile on pull requests). The
+  # release publishes the example binaries via reuseable-go-library-release's
+  # opt-in build-examples path. The remaining checks map to the shared reusable
+  # workflows.
   - name: blinklabs-io/gouroboros
     settings:
       delete_branch_on_merge: true
@@ -1376,6 +1379,11 @@ repositories:
             tags: ['v*.*.*']
         permissions:
           contents: write
+          id-token: write
+          attestations: write
+        params:
+          build-examples: "true"
+          submodules: "true"
   # ouroboros-mock is a Go library. go-test.yml (git submodules plus a separate
   # conformance job) and reproducibility.yml are repository-specific and stay
   # hand-maintained; the remaining checks map to the shared reusable workflows.
