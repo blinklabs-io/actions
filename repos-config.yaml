@@ -1323,10 +1323,9 @@ repositories:
             tags: ['v*.*.*']
         permissions:
           contents: write
-  # gouroboros is a Go library (the Ouroboros protocol). go-test.yml runs a
-  # custom GOARCH matrix (amd64/386) with git submodules and stays
-  # hand-maintained, as do benchmark.yml, fuzz.yml and build-examples.yml. The
-  # remaining checks map to the shared reusable workflows.
+  # gouroboros is a Go library (the Ouroboros protocol). Its tests cover
+  # amd64/386 with git submodules; benchmark.yml, fuzz.yml and build-examples.yml
+  # remain hand-maintained.
   - name: blinklabs-io/gouroboros
     settings:
       delete_branch_on_merge: true
@@ -1352,6 +1351,20 @@ repositories:
             branches: [main]
             tags: ['v*']
 
+      - destination_file: go-test.yml
+        pipeline: ci.yml
+        needs: [golangci-lint]
+        workflow_name: "go-test"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          go-arches: '["amd64","386"]'
+          submodules: "true"
+
       - destination_file: nilaway.yml
         pipeline: ci.yml
         needs: [golangci-lint]
@@ -1367,7 +1380,7 @@ repositories:
 
       - destination_file: publish.yml
         pipeline: ci.yml
-        needs: [nilaway]
+        needs: [go-test, nilaway]
         if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@main"
