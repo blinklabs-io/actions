@@ -1,7 +1,7 @@
 name: Reusable Go Library Release
 
-# Release workflow for Go *library* modules (no binary/container artifacts).
-# On a version tag it creates a GitHub release and (optionally) nudges the Go
+# Release workflow for Go library modules. On a version tag it creates a
+# GitHub release, optionally attaches example binaries, then nudges the Go
 # module proxy / pkg.go.dev to fetch the new version. Callers trigger this on
 # `push: tags: ['v*.*.*']`; the job self-guards to tag refs so an accidental
 # branch trigger is a no-op.
@@ -91,7 +91,7 @@ jobs:
           script: |
             try {
               const response = await github.rest.repos.createRelease({
-                draft: false,
+                draft: true,
                 generate_release_notes: process.env.GENERATE_RELEASE_NOTES === 'true',
                 name: process.env.RELEASE_TAG,
                 owner: context.repo.owner,
@@ -187,3 +187,28 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
         with:
           subject-path: dist/*
+
+  publish-release:
+    name: publish-release
+    if: >-
+      always() &&
+      needs.create-release.result == 'success' &&
+      (needs.publish-examples.result == 'success' || needs.publish-examples.result == 'skipped')
+    needs: [create-release, publish-examples]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.RELEASE_ID }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.updateRelease({
+              draft: false,
+              owner: context.repo.owner,
+              release_id: Number(process.env.RELEASE_ID),
+              repo: context.repo.repo,
+            });
