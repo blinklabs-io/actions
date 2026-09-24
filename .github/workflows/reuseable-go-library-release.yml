@@ -104,12 +104,6 @@ jobs:
             } catch (error) {
               core.setFailed(error.message);
             }
-      # Updates the documentation on pkg.go.dev and the latest version available
-      # via the Go module proxy.
-      - name: Pull new module version
-        if: inputs.pull-go-module
-        uses: andrewslotin/go-proxy-pull-action@00af8a5a49c844d6dde0bbbc116b72d8fd7ae97c # v1.5.0 https://github.com/andrewslotin/go-proxy-pull-action/releases/tag/v1.5.0
-
   publish-examples:
     name: publish-examples
     # Opt-in and tag-only: skipped for library callers that leave build-examples
@@ -163,8 +157,8 @@ jobs:
               asset="${asset}.exe"
             fi
             if [ ! -f "$src" ]; then
-              echo "no binary produced for example '${name}', skipping"
-              continue
+              echo "no binary produced for example '${name}'" >&2
+              exit 1
             fi
             mv "$src" "dist/${asset}"
           done
@@ -191,7 +185,7 @@ jobs:
   publish-release:
     name: publish-release
     if: >-
-      always() &&
+      !cancelled() &&
       needs.create-release.result == 'success' &&
       (needs.publish-examples.result == 'success' || needs.publish-examples.result == 'skipped')
     needs: [create-release, publish-examples]
@@ -212,3 +206,12 @@ jobs:
               release_id: Number(process.env.RELEASE_ID),
               repo: context.repo.repo,
             });
+
+  pull-go-module:
+    name: pull-go-module
+    if: needs.publish-release.result == 'success' && inputs.pull-go-module
+    needs: [publish-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull new module version
+        uses: andrewslotin/go-proxy-pull-action@00af8a5a49c844d6dde0bbbc116b72d8fd7ae97c # v1.5.0 https://github.com/andrewslotin/go-proxy-pull-action/releases/tag/v1.5.0
