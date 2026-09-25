@@ -1074,6 +1074,48 @@ repositories:
           create-google-services: "true"
           apk-artifact-name: "app-${{ github.ref_name }}-release.apk"
 
+  # bursa is a Cardano wallet monorepo: a Go service/CLI, a Node+Go embedded web
+  # UI (ui.yml), gomobile Android/iOS apps (mobile.yml, mobile-contracts.yml),
+  # and a CGO webview desktop wallet. Only the two checks that map 1:1 onto the
+  # shared reusable workflows are migrated here; the rest stay hand-maintained
+  # in-repo because the reusable workflows cannot express them without dropping
+  # behavior:
+  #   - go-test.yml runs against a Postgres service container
+  #     (BURSA_TEST_POSTGRES_DSN) and a cross-build matrix; reuseable-go-test.yml
+  #     cannot provision a service container.
+  #   - nilaway.yml scans two Go modules (repo root and ui/); the reusable scans
+  #     only the root ./..., so migrating would silently drop the ui module.
+  #   - ci-docker.yml bundles a repo-specific image-manifest-script job beside
+  #     the multi-arch build; the reusable renders only the build job.
+  #   - publish.yml does Apple notarization, Windows KMS/jsign signing, the
+  #     webview desktop wallet (.pkg/.msi/webkit2gtk), and release provenance.
+  #   - ui.yml (Node web bundle + embedded Go) and mobile.yml /
+  #     mobile-contracts.yml (gomobile Android/iOS) have no shared equivalent.
+  - name: blinklabs-io/bursa
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: golangci-lint.yml
+        workflow_name: "golangci-lint"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-golangci-lint.yml@main"
+        triggers:
+          pull_request:
+          push:
+            branches: [main]
+            tags: ['v*']
+        params:
+          go-version: "1.26.x"
+
   # cardano-compose-stacks provides docker-compose stacks for Cardano services.
   # It runs a weekly (and manually triggerable) job that compares upstream
   # container image versions against the compose file and opens update PRs. This
