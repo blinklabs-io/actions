@@ -1116,6 +1116,44 @@ repositories:
         params:
           go-version: "1.26.x"
 
+  # dingo is a Cardano node written in Go. Like bursa, its CI/release surface is
+  # a hand-tuned monorepo pipeline that the shared reusable workflows cannot
+  # express without dropping behavior, so only the one check that maps 1:1 onto
+  # a reusable — conventional-commits — is migrated here. The rest stay
+  # hand-maintained in-repo:
+  #   - go-test.yml (the `ci` pipeline) is a staged fan-out (lint + govulncheck
+  #     -> quick SQLite suite -> Postgres/MySQL/MinIO service-container suite,
+  #     race suite, macOS suite -> per-OS builds) tuned to the org's 20-job
+  #     concurrency cap; reuseable-go-test.yml runs a single flat job and cannot
+  #     provision service containers or gate stages with `needs:`.
+  #   - publish.yml duplicates those same stages ahead of signed release jobs
+  #     (Apple notarization, provenance attestations); `needs:` cannot cross
+  #     workflow files, so it cannot be factored into a reusable, and
+  #     internal/docsparity's TestPipelineStagesMatch enforces that the two
+  #     files stay in lockstep.
+  #   - lint runs golangci-lint across three Go modules (root,
+  #     internal/test/antithesis, examples/dingo-gov-lens) plus `make
+  #     config-parity`; reuseable-golangci-lint.yml scans only the root module,
+  #     so migrating would silently drop the other two modules and the parity
+  #     gate.
+  #   - antithesis.yml (scheduled Antithesis fault-injection runs),
+  #     benchmark.yml (weekly benchstat suite) and config-parity.yml (scheduled
+  #     upstream-config drift report) are repo-specific and have no shared
+  #     equivalent.
+  - name: blinklabs-io/dingo
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
   # cardano-compose-stacks provides docker-compose stacks for Cardano services.
   # It runs a weekly (and manually triggerable) job that compares upstream
   # container image versions against the compose file and opens update PRs. This
