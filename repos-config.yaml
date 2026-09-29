@@ -1363,8 +1363,15 @@ repositories:
         triggers:
           push:
             tags: ['v*.*.*']
+        # reuseable-go-library-release's publish-examples job statically
+        # declares id-token/attestations write. GitHub validates a called
+        # workflow's permission requirements at load time regardless of the
+        # job's runtime if: gate, so the caller must grant the full set even
+        # though plutigo leaves build-examples unset and never runs that job.
         permissions:
           contents: write
+          id-token: write
+          attestations: write
   # gouroboros is a Go library (the Ouroboros protocol). go-test.yml runs a
   # custom GOARCH matrix (amd64/386) with git submodules and stays
   # hand-maintained, as do benchmark.yml, fuzz.yml and build-examples.yml
@@ -1495,8 +1502,15 @@ repositories:
           # ouroboros-mock's original publish.yml did not nudge the Go module
           # proxy, so keep that behaviour to avoid a new side effect on release.
           pull-go-module: "false"
+        # reuseable-go-library-release's publish-examples job statically
+        # declares id-token/attestations write. GitHub validates a called
+        # workflow's permission requirements at load time regardless of the
+        # job's runtime if: gate, so the caller must grant the full set even
+        # though ouroboros-mock leaves build-examples unset and never runs it.
         permissions:
           contents: write
+          id-token: write
+          attestations: write
   # bark generates Go code from protobufs with buf. ci.yml (buf lint/format
   # plus buf-generate drift check) and publish.yml (regenerates and commits Go
   # code on main, and cuts a release on tags) are buf-specific and stay
