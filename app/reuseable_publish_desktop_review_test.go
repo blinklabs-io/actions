@@ -245,14 +245,14 @@ func TestLeastPrivilegeJobPermissions(t *testing.T) {
 }
 
 // TestBuildxPinnedToCurrentSHA asserts the buildx action is pinned to the same
-// v4.3.0 SHA the rest of the repo uses, not a rolled-back version. (P2: keep
+// v4.4.1 SHA the rest of the repo uses, not a rolled-back version. (P2: keep
 // Adder's current Buildx action)
 func TestBuildxPinnedToCurrentSHA(t *testing.T) {
 	data, err := os.ReadFile(reusablePublishDesktopPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantSHA = "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e"
+	const wantSHA = "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069"
 	const oldSHA = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c"
 	if strings.Contains(string(data), oldSHA) {
 		t.Error("reusable still pins the older docker/setup-buildx-action v4.2.0 SHA")
