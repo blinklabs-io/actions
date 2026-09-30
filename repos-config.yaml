@@ -1802,6 +1802,9 @@ repositories:
           include-pkgs: "github.com/blinklabs-io/dmq-lib"
 
       - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test, nilaway]
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-module-release.yml@main"
         triggers:
