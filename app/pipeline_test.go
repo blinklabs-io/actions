@@ -464,7 +464,7 @@ func TestGroupPipelinesKeepsStandaloneEntries(t *testing.T) {
 // same events and keeps starting its own run, so the repository would pay for
 // the pipeline and every wrapper it replaced.
 func TestSupersededWorkflowPathsListsFoldedWrappers(t *testing.T) {
-	got := supersededWorkflowPaths(goPipeline())
+	got := supersededWorkflowPaths(goPipeline(), goPipeline())
 	want := []string{
 		".github/workflows/ci-docker.yml",
 		".github/workflows/go-test.yml",
@@ -485,11 +485,80 @@ func TestSupersededWorkflowPathsKeepsReusedFileName(t *testing.T) {
 		members[i].Pipeline = "go-test.yml"
 	}
 
-	for _, path := range supersededWorkflowPaths(members) {
+	for _, path := range supersededWorkflowPaths(members, members) {
 		if path == ".github/workflows/go-test.yml" {
 			t.Fatalf("superseded list contains the pipeline's own file: %v",
-				supersededWorkflowPaths(members))
+				supersededWorkflowPaths(members, members))
 		}
+	}
+}
+
+func TestSupersededWorkflowPathsKeepsStandaloneConfiguredWorkflow(t *testing.T) {
+	wf := WorkflowConfig{
+		DestinationFile: "go-test.yml",
+		Pipeline:        "ci.yml",
+		Supersedes:      []string{"golangci-lint.yml", "release.yml"},
+	}
+	configured := []WorkflowConfig{wf, {DestinationFile: "release.yml"}}
+	want := []string{".github/workflows/go-test.yml", ".github/workflows/golangci-lint.yml"}
+	if got := supersededWorkflowPaths([]WorkflowConfig{wf}, configured); !equalStrings(got, want) {
+		t.Errorf("superseded = %v, want %v", got, want)
+	}
+}
+
+func TestSupersededWorkflowPathsForStandaloneWorkflow(t *testing.T) {
+	wf := WorkflowConfig{
+		DestinationFile: "go-test.yml",
+		Supersedes:      []string{"golangci-lint.yml", "nilaway.yml"},
+	}
+	want := []string{
+		".github/workflows/golangci-lint.yml",
+		".github/workflows/nilaway.yml",
+	}
+	if got := supersededStandaloneWorkflowPaths(wf, []WorkflowConfig{wf}); !equalStrings(got, want) {
+		t.Errorf("superseded = %v, want %v", got, want)
+	}
+}
+
+func TestSupersededStandaloneWorkflowKeepsConfiguredDestinations(t *testing.T) {
+	wf := WorkflowConfig{
+		DestinationFile: "go-test.yml",
+		Supersedes:      []string{"ci.yml", "golangci-lint.yml"},
+	}
+	configured := []WorkflowConfig{
+		wf,
+		{DestinationFile: "ci.yml"},
+	}
+	want := []string{".github/workflows/golangci-lint.yml"}
+	if got := supersededStandaloneWorkflowPaths(wf, configured); !equalStrings(got, want) {
+		t.Errorf("superseded = %v, want %v", got, want)
+	}
+}
+
+func TestRenderWorkflowKeepsJSONObjectInputAsString(t *testing.T) {
+	wf := WorkflowConfig{
+		DestinationFile:  "go-test.yml",
+		WorkflowName:     "go-test",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main",
+		Triggers:         map[string]interface{}{"pull_request": nil},
+		Params: map[string]string{
+			"services": `{"postgres":{"image":"postgres:16"}}`,
+		},
+	}
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("newWorkflowTemplate: %v", err)
+	}
+	out, err := renderWorkflow(tmpl, wf)
+	if err != nil {
+		t.Fatalf("renderWorkflow: %v", err)
+	}
+	var got parsedWorkflow
+	if err := yaml.Unmarshal(out, &got); err != nil {
+		t.Fatalf("rendered workflow is not valid YAML: %v\n%s", err, out)
+	}
+	if want := wf.Params["services"]; got.Jobs["orchestrate"].With["services"] != want {
+		t.Errorf("services input = %q, want %q", got.Jobs["orchestrate"].With["services"], want)
 	}
 }
 

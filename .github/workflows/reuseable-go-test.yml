@@ -18,6 +18,171 @@ on:
         required: false
         type: string
         default: ""
+      verify-modules:
+        description: Download and verify the Go module dependencies before other checks.
+        required: false
+        type: boolean
+        default: false
+      run-build:
+        description: Run `go build` for the selected test packages.
+        required: false
+        type: boolean
+        default: false
+      build-packages:
+        description: Package pattern(s) passed to `go build`. Empty falls back to test-packages.
+        required: false
+        type: string
+        default: ""
+      run-vet:
+        description: Run `go vet` for the selected test packages.
+        required: false
+        type: boolean
+        default: false
+      check-mod-tidy:
+        description: Run `go mod tidy` and fail if it changes go.mod or go.sum.
+        required: false
+        type: boolean
+        default: false
+      forbidden-go-imports:
+        description: Newline-separated Go regular expressions forbidden in .go files.
+        required: false
+        type: string
+        default: ""
+      services:
+        description: JSON object of job service containers, keyed by service name.
+        required: false
+        type: string
+        default: "{}"
+      extra-test-packages:
+        description: Optional package pattern(s) for a second `go test` invocation.
+        required: false
+        type: string
+        default: ""
+      extra-test-flags:
+        description: Flags for the second `go test` invocation.
+        required: false
+        type: string
+        default: ""
+      additional-module-directories:
+        description: Newline-separated nested Go module directories to test after the primary module.
+        required: false
+        type: string
+        default: ""
+      cross-build-targets:
+        description: JSON array of GOOS/GOARCH objects for a separate cross-build job.
+        required: false
+        type: string
+        default: "[]"
+      cross-build-go-version:
+        description: Go version used by the cross-build job.
+        required: false
+        type: string
+        default: "1.26.x"
+      run-buf-checks:
+        description: Run Buf formatting and lint checks in the Go test job.
+        required: false
+        type: boolean
+        default: false
+      verify-buf-generated:
+        description: Run buf generate and go mod tidy, then fail if generated files or module files changed.
+        required: false
+        type: boolean
+        default: false
+      run-golangci-lint:
+        description: Run golangci-lint in the test job after tests.
+        required: false
+        type: boolean
+        default: false
+      golangci-version:
+        description: golangci-lint version used when run-golangci-lint is true.
+        required: false
+        type: string
+        default: "latest"
+      golangci-go-version:
+        description: Go matrix version on which to run golangci-lint. Empty runs it on every matrix version.
+        required: false
+        type: string
+        default: ""
+      golangci-platform:
+        description: Runner platform on which to run golangci-lint. Empty runs it on every platform.
+        required: false
+        type: string
+        default: ""
+      golangci-cgo-enabled:
+        description: Optional CGO_ENABLED value for golangci-lint steps.
+        required: false
+        type: string
+        default: ""
+      golangci-extra-args:
+        description: Optional arguments for a second golangci-lint invocation.
+        required: false
+        type: string
+        default: ""
+      check-format:
+        description: Run `golangci-lint fmt --diff` after linting.
+        required: false
+        type: boolean
+        default: false
+      run-nilaway:
+        description: Run NilAway in the test job after tests and lint.
+        required: false
+        type: boolean
+        default: false
+      nilaway-version:
+        description: Version or commit to install for NilAway.
+        required: false
+        type: string
+        default: "ad240b12fb4c370017eb413f0388c71f3be8722c"
+      nilaway-cgo-enabled:
+        description: Optional CGO_ENABLED value for NilAway steps.
+        required: false
+        type: string
+        default: ""
+      nilaway-platform:
+        description: Runner platform on which to run NilAway. Empty runs it on every platform.
+        required: false
+        type: string
+        default: ""
+      nilaway-go-version:
+        description: Go matrix version on which to run NilAway. Empty runs it on every matrix version.
+        required: false
+        type: string
+        default: ""
+      nilaway-include-pkgs:
+        description: Package prefix passed to NilAway -include-pkgs.
+        required: false
+        type: string
+        default: ""
+      nilaway-exclude-pkgs:
+        description: Comma-separated package prefixes passed to NilAway -exclude-pkgs.
+        required: false
+        type: string
+        default: ""
+      nilaway-exclude-file-docstrings:
+        description: Value passed to NilAway -exclude-file-docstrings.
+        required: false
+        type: string
+        default: ""
+      nilaway-additional-working-directories:
+        description: Newline-separated nested module directories to scan with NilAway.
+        required: false
+        type: string
+        default: ""
+      golangci-additional-working-directories:
+        description: Newline-separated nested module directories to lint after the primary module.
+        required: false
+        type: string
+        default: ""
+      working-directory:
+        description: Go module directory relative to the repository root.
+        required: false
+        type: string
+        default: "."
+      run-race-test:
+        description: Run a second `go test -race` pass after the regular test pass. Use only with platforms and architectures supported by the Go race detector.
+        required: false
+        type: boolean
+        default: false
       setup-go-cache:
         description: Enable module/build cache in actions/setup-go.
         required: false
@@ -81,6 +246,10 @@ jobs:
         go-arch: ${{ fromJson(inputs.go-arches) }}
         platform: ${{ fromJson(inputs.platforms) }}
     runs-on: ${{ matrix.platform }}
+    services: ${{ fromJson(inputs.services) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
@@ -90,6 +259,18 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
           cache: ${{ inputs.setup-go-cache }}
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+      - name: Setup Buf
+        if: inputs.run-buf-checks || inputs.verify-buf-generated
+        uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0 https://github.com/bufbuild/buf-action/releases/tag/v1.6.0
+        with:
+          setup_only: true
+      - name: Check go.mod is tidy
+        if: inputs.check-mod-tidy
+        shell: bash
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
       - name: Install system dependencies
         if: runner.os == 'Linux' && inputs.system-dependencies != ''
         env:
@@ -98,6 +279,42 @@ jobs:
           sudo apt-get update
           # shellcheck disable=SC2086
           sudo apt-get install -y $SYSTEM_DEPENDENCIES
+      - name: Verify Go modules
+        if: inputs.verify-modules
+        shell: bash
+        run: |
+          go mod download
+          go mod verify
+      - name: go-build
+        if: inputs.run-build
+        shell: bash
+        env:
+          TEST_PACKAGES: ${{ inputs.test-packages }}
+          BUILD_PACKAGES: ${{ inputs.build-packages }}
+          WINDOWS_TEST_PACKAGES: ${{ inputs.windows-test-packages }}
+        run: |
+          _packages="$BUILD_PACKAGES"
+          if [ -z "$_packages" ]; then
+            _packages="$TEST_PACKAGES"
+          fi
+          if [ "$RUNNER_OS" = "Windows" ] && [ -n "$WINDOWS_TEST_PACKAGES" ]; then
+            _packages="$WINDOWS_TEST_PACKAGES"
+          fi
+          # shellcheck disable=SC2086
+          go build -v $_packages
+      - name: go-vet
+        if: inputs.run-vet
+        shell: bash
+        env:
+          TEST_PACKAGES: ${{ inputs.test-packages }}
+          WINDOWS_TEST_PACKAGES: ${{ inputs.windows-test-packages }}
+        run: |
+          _packages="$TEST_PACKAGES"
+          if [ "$RUNNER_OS" = "Windows" ] && [ -n "$WINDOWS_TEST_PACKAGES" ]; then
+            _packages="$WINDOWS_TEST_PACKAGES"
+          fi
+          # shellcheck disable=SC2086
+          go vet $_packages
       - name: Pre-test command
         if: runner.os == 'Linux' && inputs.pre-test-command != ''
         shell: bash
@@ -133,8 +350,207 @@ jobs:
           else
             go test $_packages
           fi
+      - name: go-test-extra
+        if: inputs.extra-test-packages != ''
+        shell: bash
+        env:
+          TEST_FLAGS: ${{ inputs.extra-test-flags }}
+          TEST_PACKAGES: ${{ inputs.extra-test-packages }}
+          TEST_ENV: ${{ inputs.test-env }}
+        run: |
+          if [ -n "$TEST_ENV" ]; then
+            while IFS= read -r _line; do
+              [ -z "$_line" ] && continue
+              export "${_line?}"
+            done <<< "$TEST_ENV"
+          fi
+          # shellcheck disable=SC2086
+          if [ -n "$TEST_FLAGS" ]; then
+            read -r -a _flags <<< "$TEST_FLAGS"
+            go test "${_flags[@]}" $TEST_PACKAGES
+          else
+            go test $TEST_PACKAGES
+          fi
+      - name: Test additional Go modules
+        if: inputs.additional-module-directories != ''
+        shell: bash
+        env:
+          MODULE_DIRECTORIES: ${{ inputs.additional-module-directories }}
+        run: |
+          while IFS= read -r _directory; do
+            [ -z "$_directory" ] && continue
+            (cd "$_directory" && go test ./...)
+          done <<< "$MODULE_DIRECTORIES"
+      - name: go-test-race
+        if: inputs.run-race-test && runner.os == 'Linux'
+        shell: bash
+        env:
+          TEST_FLAGS: ${{ inputs.test-flags }}
+          TEST_PACKAGES: ${{ inputs.test-packages }}
+          WINDOWS_TEST_PACKAGES: ${{ inputs.windows-test-packages }}
+          TEST_ENV: ${{ inputs.test-env }}
+          GOARCH: ${{ matrix.go-arch }}
+        run: |
+          if [ -n "$TEST_ENV" ]; then
+            while IFS= read -r _line; do
+              [ -z "$_line" ] && continue
+              export "${_line?}"
+            done <<< "$TEST_ENV"
+          fi
+          _packages="$TEST_PACKAGES"
+          if [ "$RUNNER_OS" = "Windows" ] && [ -n "$WINDOWS_TEST_PACKAGES" ]; then
+            _packages="$WINDOWS_TEST_PACKAGES"
+          fi
+          # shellcheck disable=SC2086
+          if [ -n "$TEST_FLAGS" ]; then
+            read -r -a _flags <<< "$TEST_FLAGS"
+            go test -race "${_flags[@]}" $_packages
+          else
+            go test -race $_packages
+          fi
+      - name: golangci-lint
+        if: inputs.run-golangci-lint && (inputs.golangci-go-version == '' || matrix.go-version == inputs.golangci-go-version) && (inputs.golangci-platform == '' || matrix.platform == inputs.golangci-platform)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0 https://github.com/golangci/golangci-lint-action/releases/tag/v9.3.0
+        env:
+          CGO_ENABLED: ${{ inputs.golangci-cgo-enabled }}
+        with:
+          version: ${{ inputs.golangci-version }}
+          working-directory: ${{ inputs.working-directory }}
+      - name: golangci-lint (additional checks)
+        if: inputs.run-golangci-lint && inputs.golangci-extra-args != '' && (inputs.golangci-go-version == '' || matrix.go-version == inputs.golangci-go-version) && (inputs.golangci-platform == '' || matrix.platform == inputs.golangci-platform)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0 https://github.com/golangci/golangci-lint-action/releases/tag/v9.3.0
+        env:
+          CGO_ENABLED: ${{ inputs.golangci-cgo-enabled }}
+        with:
+          version: ${{ inputs.golangci-version }}
+          working-directory: ${{ inputs.working-directory }}
+          args: ${{ inputs.golangci-extra-args }}
+      - name: golangci-lint (additional modules)
+        if: inputs.run-golangci-lint && inputs.golangci-additional-working-directories != '' && (inputs.golangci-go-version == '' || matrix.go-version == inputs.golangci-go-version) && (inputs.golangci-platform == '' || matrix.platform == inputs.golangci-platform)
+        shell: bash
+        env:
+          MODULE_DIRECTORIES: ${{ inputs.golangci-additional-working-directories }}
+          CGO_ENABLED: ${{ inputs.golangci-cgo-enabled }}
+        run: |
+          while IFS= read -r _directory; do
+            [ -z "$_directory" ] && continue
+            (cd "$_directory" && golangci-lint run)
+          done <<< "$MODULE_DIRECTORIES"
+      - name: Check formatting
+        if: inputs.run-golangci-lint && inputs.check-format && (inputs.golangci-go-version == '' || matrix.go-version == inputs.golangci-go-version) && (inputs.golangci-platform == '' || matrix.platform == inputs.golangci-platform)
+        shell: bash
+        run: |
+          if golangci-lint fmt --diff | grep -q .; then
+            echo "Code is not formatted"
+            golangci-lint fmt --diff
+            exit 1
+          fi
+      - name: Install NilAway
+        if: inputs.run-nilaway && (inputs.nilaway-go-version == '' || matrix.go-version == inputs.nilaway-go-version) && (inputs.nilaway-platform == '' || matrix.platform == inputs.nilaway-platform)
+        shell: bash
+        env:
+          NILAWAY_VERSION: ${{ inputs.nilaway-version }}
+          CGO_ENABLED: ${{ inputs.nilaway-cgo-enabled }}
+        run: go install "go.uber.org/nilaway/cmd/nilaway@${NILAWAY_VERSION}"
+      - name: Run NilAway
+        if: inputs.run-nilaway && (inputs.nilaway-go-version == '' || matrix.go-version == inputs.nilaway-go-version) && (inputs.nilaway-platform == '' || matrix.platform == inputs.nilaway-platform)
+        shell: bash
+        env:
+          INCLUDE_PKGS: ${{ inputs.nilaway-include-pkgs }}
+          EXCLUDE_PKGS: ${{ inputs.nilaway-exclude-pkgs }}
+          EXCLUDE_FILE_DOCSTRINGS: ${{ inputs.nilaway-exclude-file-docstrings }}
+          ADDITIONAL_WORKING_DIRECTORIES: ${{ inputs.nilaway-additional-working-directories }}
+          CGO_ENABLED: ${{ inputs.nilaway-cgo-enabled }}
+        run: |
+          _args=()
+          if [ -n "$EXCLUDE_PKGS" ]; then
+            _args+=(-exclude-pkgs "$EXCLUDE_PKGS")
+          fi
+          if [ -n "$INCLUDE_PKGS" ]; then
+            _args+=(-include-pkgs "$INCLUDE_PKGS")
+          fi
+          if [ -n "$EXCLUDE_FILE_DOCSTRINGS" ]; then
+            _args+=(-exclude-file-docstrings "$EXCLUDE_FILE_DOCSTRINGS")
+          fi
+          nilaway "${_args[@]}" ./...
+          while IFS= read -r _directory; do
+            [ -z "$_directory" ] && continue
+            (cd "$_directory" && nilaway "${_args[@]}" ./...)
+          done <<< "$ADDITIONAL_WORKING_DIRECTORIES"
+      - name: Check forbidden Go imports
+        if: inputs.forbidden-go-imports != ''
+        shell: bash
+        env:
+          FORBIDDEN_GO_IMPORTS: ${{ inputs.forbidden-go-imports }}
+        run: |
+          while IFS= read -r _pattern; do
+            [ -z "$_pattern" ] && continue
+            if grep -RInE --exclude-dir=docs --exclude-dir=.git --include='*.go' "$_pattern" .; then
+              echo "Forbidden Go import pattern found: $_pattern" >&2
+              exit 1
+            else
+              _status=$?
+              if [ "$_status" -ne 1 ]; then
+                exit "$_status"
+              fi
+            fi
+          done <<< "$FORBIDDEN_GO_IMPORTS"
+      - name: Buf format check
+        if: inputs.run-buf-checks
+        shell: bash
+        run: |
+          buf format -d || {
+            echo "Proto files are not formatted. Run 'buf format -w' to fix."
+            exit 1
+          }
+      - name: Buf lint
+        if: inputs.run-buf-checks
+        shell: bash
+        run: buf lint
+      - name: Verify generated code is up to date
+        if: inputs.verify-buf-generated
+        shell: bash
+        run: |
+          buf generate
+          go mod tidy
+          git diff --exit-code || {
+            echo "Generated code is out of date. Run 'buf generate && go mod tidy' to fix."
+            exit 1
+          }
       - name: Upload coverage to Codecov
         if: runner.os == 'Linux' && inputs.upload-coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1 https://github.com/codecov/codecov-action/releases/tag/v7.1.1
         with:
           files: ${{ inputs.coverage-file }}
+
+  cross-build:
+    if: inputs.cross-build-targets != '[]'
+    name: cross-build
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(inputs.cross-build-targets) }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6 https://github.com/actions/setup-go/releases/tag/v6
+        with:
+          go-version: ${{ inputs.cross-build-go-version }}
+      - name: Cross-build
+        env:
+          TARGET_OS: ${{ matrix.target.os }}
+          TARGET_ARCH: ${{ matrix.target.arch }}
+          BUILD_PACKAGES: ${{ inputs.build-packages }}
+          TEST_PACKAGES: ${{ inputs.test-packages }}
+        run: |
+          _packages="$BUILD_PACKAGES"
+          if [ -z "$_packages" ]; then
+            _packages="$TEST_PACKAGES"
+          fi
+          # shellcheck disable=SC2086
+          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build -o /dev/null $_packages

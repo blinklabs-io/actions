@@ -112,7 +112,7 @@ func TestConfiguredPipelinesSupersedeTheirWrappers(t *testing.T) {
 		_, pipelines := groupPipelines(repo.Workflows)
 		for _, members := range pipelines {
 			superseded := make(map[string]bool)
-			for _, path := range supersededWorkflowPaths(members) {
+			for _, path := range supersededWorkflowPaths(members, repo.Workflows) {
 				superseded[path] = true
 			}
 			for _, wf := range members {

@@ -129,7 +129,9 @@ type BranchProtection struct {
 }
 
 type WorkflowConfig struct {
-	DestinationFile  string                 `yaml:"destination_file"`
+	DestinationFile string `yaml:"destination_file"`
+	// Supersedes names workflow wrappers removed atomically with this entry.
+	Supersedes       []string               `yaml:"supersedes"`
 	WorkflowName     string                 `yaml:"workflow_name"`
 	ReusableWorkflow string                 `yaml:"reusable_workflow"`
 	Triggers         map[string]interface{} `yaml:"triggers"`
@@ -907,14 +909,15 @@ func syncCollaborators(ctx context.Context, client *github.Client, owner, repo s
 // [[ ]] delimiters so GitHub Actions ${{ }} expressions inside param values are
 // emitted verbatim.
 //
-// quoteForYAML wraps values that look like JSON arrays (start with "[") in YAML
-// single-quotes so they are parsed as strings rather than sequences, and renders
-// multiline values as an indented block scalar (|-).
+// quoteForYAML wraps JSON arrays and objects in YAML single-quotes so they are
+// parsed as strings rather than collections, and renders multiline values as
+// an indented block scalar (|-).
 func buildWorkflowTemplate(templatePath string) (*template.Template, error) {
 	funcMap := template.FuncMap{
 		"quoteForYAML": func(s string) string {
-			if strings.HasPrefix(strings.TrimSpace(s), "[") {
-				return "'" + s + "'"
+			trimmed := strings.TrimSpace(s)
+			if strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
+				return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 			}
 			// Multiline values: render as an indented block scalar (|-).
 			// The "with:" key is at 4-space indent, param keys at 6 spaces,
@@ -1016,6 +1019,9 @@ func validatePipeline(members []WorkflowConfig) error {
 			return fmt.Errorf("pipeline %q: duplicate job id %q", file, id)
 		}
 		ids[id] = true
+		if err := validateSupersedes(file, wf); err != nil {
+			return err
+		}
 	}
 
 	conditions := make(map[string]string, len(members))
@@ -1078,6 +1084,23 @@ func validatePipeline(members []WorkflowConfig) error {
 	}
 
 	return validateNoCycle(file, members)
+}
+
+func validateSupersedes(destination string, wf WorkflowConfig) error {
+	for _, name := range wf.Supersedes {
+		if name == "" || strings.ContainsAny(name, `/\\`) ||
+			(!strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml")) {
+			return fmt.Errorf(
+				"workflow %q: superseded workflow %q must be a workflow file name ending in .yml or .yaml",
+				destination,
+				name,
+			)
+		}
+		if name == wf.Pipeline || name == wf.DestinationFile {
+			return fmt.Errorf("workflow %q: workflow cannot supersede its own destination", destination)
+		}
+	}
+	return nil
 }
 
 // validateNoCycle rejects a dependency cycle among a pipeline's jobs.
@@ -1368,31 +1391,61 @@ func renderPipeline(tmpl *template.Template, members []WorkflowConfig) ([]byte, 
 	return buf.Bytes(), nil
 }
 
-// supersededWorkflowPaths lists the wrapper files a repository no longer needs
-// because their entries were folded into a pipeline.
+// supersededWorkflowPaths lists wrapper files replaced by configured workflows.
 //
 // Deleting them is not tidiness. A wrapper left behind keeps matching the same
 // events and keeps starting its own run, so the repository would pay for both
 // the pipeline and every wrapper it replaced -- more fan-out than before the
 // change, and two check runs claiming the same name.
-func supersededWorkflowPaths(workflows []WorkflowConfig) []string {
-	keep := make(map[string]bool)
-	for _, wf := range workflows {
+func supersededWorkflowPaths(workflows, configured []WorkflowConfig) []string {
+	keep := make(map[string]bool, len(configured)*2)
+	for _, wf := range configured {
 		if wf.Pipeline != "" {
 			keep[wf.Pipeline] = true
+		} else if wf.DestinationFile != "" {
+			keep[wf.DestinationFile] = true
 		}
 	}
-	var paths []string
+	pathSet := make(map[string]bool)
 	for _, wf := range workflows {
-		if wf.Pipeline == "" || wf.DestinationFile == "" {
-			continue
+		if wf.Pipeline != "" && wf.DestinationFile != "" && !keep[wf.DestinationFile] {
+			// A pipeline that reuses one of its members' file names replaces that
+			// file rather than superseding it.
+			pathSet[".github/workflows/"+wf.DestinationFile] = true
 		}
-		// A pipeline that reuses one of its members' file names replaces that
-		// file rather than superseding it.
-		if keep[wf.DestinationFile] {
-			continue
+		for _, name := range wf.Supersedes {
+			if name != "" && !keep[name] {
+				pathSet[".github/workflows/"+name] = true
+			}
 		}
-		paths = append(paths, ".github/workflows/"+wf.DestinationFile)
+	}
+	paths := make([]string, 0, len(pathSet))
+	for path := range pathSet {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func supersededStandaloneWorkflowPaths(wf WorkflowConfig, configured []WorkflowConfig) []string {
+	keep := make(map[string]bool, len(configured)*2)
+	for _, entry := range configured {
+		if entry.DestinationFile != "" {
+			keep[entry.DestinationFile] = true
+		}
+		if entry.Pipeline != "" {
+			keep[entry.Pipeline] = true
+		}
+	}
+	pathSet := make(map[string]bool)
+	for _, name := range wf.Supersedes {
+		if name != "" && !keep[name] {
+			pathSet[".github/workflows/"+name] = true
+		}
+	}
+	paths := make([]string, 0, len(pathSet))
+	for path := range pathSet {
+		paths = append(paths, path)
 	}
 	sort.Strings(paths)
 	return paths
@@ -1400,6 +1453,9 @@ func supersededWorkflowPaths(workflows []WorkflowConfig) []string {
 
 // renderWorkflow renders a single workflow wrapper file from the parsed template.
 func renderWorkflow(tmpl *template.Template, wf WorkflowConfig) ([]byte, error) {
+	if err := validateSupersedes(wf.DestinationFile, wf); err != nil {
+		return nil, err
+	}
 	triggersYAML, err := renderTriggers(wf.Triggers)
 	if err != nil {
 		return nil, fmt.Errorf("renderTriggers: %w", err)
@@ -1454,6 +1510,7 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 			continue
 		}
 		stageWorkflowFile(ctx, client, owner, repo, batch, wf.DestinationFile, desiredContent)
+		stageRemovals(ctx, client, owner, repo, batch, supersededStandaloneWorkflowPaths(wf, workflows))
 	}
 
 	if len(pipelines) > 0 {
@@ -1477,7 +1534,7 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 			// be dropped without the pipeline that replaces them being written
 			// in the same push: the repository is never left with no CI.
 			stageWorkflowFile(ctx, client, owner, repo, batch, members[0].Pipeline, desiredContent)
-			stageRemovals(ctx, client, owner, repo, batch, supersededWorkflowPaths(members))
+			stageRemovals(ctx, client, owner, repo, batch, supersededWorkflowPaths(members, workflows))
 		}
 	}
 

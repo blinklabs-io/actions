@@ -7,6 +7,16 @@ on:
         description: Name of the compiled binary (e.g. tx-submit-api).
         required: true
         type: string
+      additional-binary-names:
+        description: JSON array of additional compiled binaries uploaded with the primary binary.
+        required: false
+        type: string
+        default: '[]'
+      attestation-subject-path:
+        description: Optional file path or glob matching all release binaries to attest.
+        required: false
+        type: string
+        default: ""
       docker-image:
         description: Docker Hub image name (e.g. blinklabs/tx-submit-api). Leave empty to skip Docker Hub and publish to GHCR only.
         required: false
@@ -17,16 +27,21 @@ on:
         required: false
         type: string
         default: ""
+      publish-container-image:
+        description: Build and publish the GHCR image and, when configured, the Docker Hub image.
+        required: false
+        type: boolean
+        default: true
       go-version:
         description: Go toolchain version to use for building binaries.
         required: false
         type: string
         default: "1.26.x"
-      binary-os-matrix:
-        description: JSON array of OS targets for binary builds (e.g. '["linux","darwin"]').
+      binary-target-matrix:
+        description: JSON array of OS/architecture objects for binary builds.
         required: false
         type: string
-        default: '["linux","darwin","freebsd","windows"]'
+        default: '[{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"darwin","arch":"amd64"},{"os":"darwin","arch":"arm64"},{"os":"freebsd","arch":"amd64"},{"os":"freebsd","arch":"arm64"},{"os":"windows","arch":"amd64"},{"os":"windows","arch":"arm64"}]'
       binary-compress:
         description: When true, the release binary is packed into a .tar.gz archive before uploading.
         required: false
@@ -37,9 +52,42 @@ on:
         required: false
         type: string
         default: ""
+      binary-build-command:
+        description: Optional shell command that builds the primary binary. Empty runs `make build`.
+        required: false
+        type: string
+        default: ""
+      create-checksums:
+        description: Upload a SHA-256 checksum manifest covering every release binary.
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: Mark the created release as a prerelease.
+        required: false
+        type: boolean
+        default: false
+      update-go-proxy:
+        description: Trigger a module refresh on proxy.golang.org after release creation.
+        required: false
+        type: boolean
+        default: false
+      pre-build-command:
+        description: Optional shell command run after checkout and before binary and Docker builds.
+        required: false
+        type: string
+        default: ""
+      pre-build-on-tags-only:
+        description: Run pre-build-command only for tag pushes.
+        required: false
+        type: boolean
+        default: false
     secrets:
       docker-password:
         description: Docker Hub access token. Required when docker-image is set.
+        required: false
+      maxmind-api-credentials:
+        description: MaxMind API credentials passed to pre-build-command as MAXMIND_API_CREDENTIALS.
         required: false
 
 concurrency: ${{ github.ref }}
@@ -67,7 +115,7 @@ jobs:
                 generate_release_notes: true,
                 name: process.env.RELEASE_TAG,
                 owner: context.repo.owner,
-                prerelease: false,
+                prerelease: ${{ inputs.prerelease }},
                 repo: context.repo.repo,
                 tag_name: process.env.RELEASE_TAG,
               });
@@ -79,8 +127,7 @@ jobs:
   build-binaries:
     strategy:
       matrix:
-        os: ${{ fromJson(inputs.binary-os-matrix) }}
-        arch: [amd64, arm64]
+        include: ${{ fromJson(inputs.binary-target-matrix) }}
     runs-on: ubuntu-latest
     needs: [create-draft-release]
     permissions:
@@ -101,44 +148,108 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6 https://github.com/actions/setup-go/releases/tag/v6
         with:
           go-version: ${{ inputs.go-version }}
+      - name: Build metadata
+        id: build-metadata
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Prepare build inputs
+        if: inputs.pre-build-command != '' && (!inputs.pre-build-on-tags-only || startsWith(github.ref, 'refs/tags/'))
+        shell: bash
+        env:
+          PRE_BUILD_COMMAND: ${{ inputs.pre-build-command }}
+          MAXMIND_API_CREDENTIALS: ${{ secrets.maxmind-api-credentials }}
+        run: bash -c "$PRE_BUILD_COMMAND"
       - name: Build binary
+        if: inputs.binary-build-command == ''
         env:
           MATRIX_OS: ${{ matrix.os }}
           MATRIX_ARCH: ${{ matrix.arch }}
         run: GOOS="$MATRIX_OS" GOARCH="$MATRIX_ARCH" make build
+      - name: Build custom binary
+        if: inputs.binary-build-command != ''
+        shell: bash
+        env:
+          BINARY_BUILD_COMMAND: ${{ inputs.binary-build-command }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_ARCH: ${{ matrix.arch }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          COMMIT_HASH: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.build-metadata.outputs.date }}
+        run: bash -c "$BINARY_BUILD_COMMAND"
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
         env:
           BINARY_NAME: ${{ inputs.binary-name }}
+          ADDITIONAL_BINARY_NAMES: ${{ inputs.additional-binary-names }}
           MATRIX_OS: ${{ matrix.os }}
           MATRIX_ARCH: ${{ matrix.arch }}
           BINARY_COMPRESS: ${{ inputs.binary-compress }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         run: |
-          _binary_src="$BINARY_NAME"
-          _base="${BINARY_NAME}-${RELEASE_TAG}-${MATRIX_OS}-${MATRIX_ARCH}"
-          if [[ "$MATRIX_OS" == "windows" ]]; then
-            _binary_src="${_binary_src}.exe"
-            _base="${_base}.exe"
-          fi
-          if [[ "$BINARY_COMPRESS" == "true" ]]; then
-            _filename="${_base}.tar.gz"
-            tar czf "${_filename}" "${_binary_src}"
-          else
-            _filename="${_base}"
-            cp "${_binary_src}" "${_filename}"
-          fi
-          echo "RELEASE_ASSET_FILENAME=${_filename}" >> "$GITHUB_ENV"
-          curl --fail \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @"${_filename}" \
-            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${_filename}"
+          _binary_names=("$BINARY_NAME")
+          while IFS= read -r _binary_name; do
+            [ -n "$_binary_name" ] && _binary_names+=("$_binary_name")
+          done < <(jq -r '.[]' <<< "$ADDITIONAL_BINARY_NAMES")
+          for _binary_name in "${_binary_names[@]}"; do
+            _binary_src="$_binary_name"
+            _base="${_binary_name}-${RELEASE_TAG}-${MATRIX_OS}-${MATRIX_ARCH}"
+            if [[ "$MATRIX_OS" == "windows" ]]; then
+              _binary_src="${_binary_src}.exe"
+              _base="${_base}.exe"
+            fi
+            if [[ "$BINARY_COMPRESS" == "true" ]]; then
+              _filename="${_base}.tar.gz"
+              tar czf "${_filename}" "${_binary_src}"
+            else
+              _filename="${_base}"
+              cp "${_binary_src}" "${_filename}"
+            fi
+            echo "RELEASE_ASSET_FILENAME=${_filename}" >> "$GITHUB_ENV"
+            curl --fail \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"${_filename}" \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${_filename}"
+          done
+      - name: Upload binaries for checksum manifest
+        if: inputs.create-checksums && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 https://github.com/actions/upload-artifact/releases/tag/v7.0.1
+        with:
+          name: binaries-${{ matrix.os }}-${{ matrix.arch }}
+          path: '*-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}*'
+          if-no-files-found: error
       - name: Attest binary
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
         with:
-          subject-path: '${{ env.RELEASE_ASSET_FILENAME || inputs.binary-name }}'
+          subject-path: "${{ inputs.attestation-subject-path || env.RELEASE_ASSET_FILENAME || format('{0}{1}', inputs.binary-name, matrix.os == 'windows' && '.exe' || '') }}"
+
+  checksum-assets:
+    runs-on: ubuntu-latest
+    needs: [create-draft-release, build-binaries]
+    permissions:
+      contents: write
+    steps:
+      - name: Download binaries
+        if: inputs.create-checksums && startsWith(github.ref, 'refs/tags/')
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 https://github.com/actions/download-artifact/releases/tag/v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create checksum manifest
+        if: inputs.create-checksums && startsWith(github.ref, 'refs/tags/')
+        working-directory: dist
+        run: sha256sum -- * > checksums.txt
+      - name: Upload checksum manifest
+        if: inputs.create-checksums && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
+        run: |
+          curl --fail \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @dist/checksums.txt \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=checksums.txt"
 
   # Native multi-arch image builds: separate amd64 / arm64 jobs on native
   # runners (no QEMU emulation), followed by a manifest-merge job. Each arch job
@@ -146,6 +257,7 @@ jobs:
   # into the final multi-arch tags. Docker Hub steps are skipped when docker-image
   # is empty (GHCR-only repositories).
   build-image-amd64:
+    if: inputs.publish-container-image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -157,6 +269,13 @@ jobs:
         with:
           fetch-depth: '0'
           persist-credentials: false
+      - name: Prepare build inputs
+        if: inputs.pre-build-command != '' && (!inputs.pre-build-on-tags-only || startsWith(github.ref, 'refs/tags/'))
+        shell: bash
+        env:
+          PRE_BUILD_COMMAND: ${{ inputs.pre-build-command }}
+          MAXMIND_API_CREDENTIALS: ${{ secrets.maxmind-api-credentials }}
+        run: bash -c "$PRE_BUILD_COMMAND"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1 https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1
       - name: Login to Docker Hub
         if: inputs.docker-image != ''
@@ -222,6 +341,7 @@ jobs:
           push-to-registry: true
 
   build-image-arm64:
+    if: inputs.publish-container-image
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -233,6 +353,13 @@ jobs:
         with:
           fetch-depth: '0'
           persist-credentials: false
+      - name: Prepare build inputs
+        if: inputs.pre-build-command != '' && (!inputs.pre-build-on-tags-only || startsWith(github.ref, 'refs/tags/'))
+        shell: bash
+        env:
+          PRE_BUILD_COMMAND: ${{ inputs.pre-build-command }}
+          MAXMIND_API_CREDENTIALS: ${{ secrets.maxmind-api-credentials }}
+        run: bash -c "$PRE_BUILD_COMMAND"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1 https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1
       - name: Login to Docker Hub
         if: inputs.docker-image != ''
@@ -298,6 +425,7 @@ jobs:
           push-to-registry: true
 
   image-manifest:
+    if: inputs.publish-container-image
     runs-on: ubuntu-latest
     needs: [build-image-amd64, build-image-arm64]
     permissions:
@@ -424,10 +552,11 @@ jobs:
           short-description: ${{ inputs.description }}
 
   finalize-release:
+    if: always() && needs.create-draft-release.result == 'success' && needs.build-binaries.result == 'success' && needs.checksum-assets.result == 'success' && (needs.image-manifest.result == 'success' || needs.image-manifest.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    needs: [create-draft-release, build-binaries, image-manifest]
+    needs: [create-draft-release, build-binaries, image-manifest, checksum-assets]
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 https://github.com/actions/github-script/releases/tag/v9
         if: startsWith(github.ref, 'refs/tags/')
@@ -444,3 +573,6 @@ jobs:
             } catch (error) {
               core.setFailed(error.message);
             }
+      - name: Pull new module version
+        if: inputs.update-go-proxy && startsWith(github.ref, 'refs/tags/')
+        uses: andrewslotin/go-proxy-pull-action@00af8a5a49c844d6dde0bbbc116b72d8fd7ae97c # v1.5.0 https://github.com/andrewslotin/go-proxy-pull-action/releases/tag/v1.5.0

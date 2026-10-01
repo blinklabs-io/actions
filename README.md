@@ -33,10 +33,10 @@ downstream repositories via `workflow_call`. The current set:
 
 - `reuseable-ci-docker-multiarch.yml` — native multi-arch Docker CI build (no QEMU).
 - `reuseable-publish-docker-multiarch.yml` — native multi-arch Docker publish to Docker Hub + GHCR, with build provenance attestations always enabled and Trivy vulnerability scanning enabled by default (override with `enable-trivy-scan: false`).
-- `reuseable-publish.yml` — Go binary + native multi-arch Docker image publish for Go services.
+- `reuseable-publish.yml` — Go release binaries + native multi-arch Docker image publish; supports explicit target pairs, custom build commands, extra binaries, checksums, prereleases, and optional tag-only build preparation shared by binary and image builds.
 - `reuseable-publish-desktop.yml` — full release pipeline for desktop-style Go apps that ship a Fyne GUI tray alongside a CLI: macOS signed + notarized `.pkg` installers, Windows signed `.msi` installers (jsign + WiX), Linux/FreeBSD tarballs, native multi-arch Docker images, and build-provenance attestations for every binary, installer, and image. The packaging scripts and `make` targets it drives live in the calling repository.
-- `reuseable-go-test.yml` — Go test suite.
-- `reuseable-golangci-lint.yml` — golangci-lint.
+- `reuseable-go-test.yml` — Go module verification, tidy checks, build, vet, tests, in-job golangci-lint and NilAway, Buf checks, generated-code drift checks, forbidden-import guards, nested modules, service containers, additional test passes, and explicit cross-build targets; supports an optional Linux race-detection pass.
+- `reuseable-golangci-lint.yml` — golangci-lint with a configurable tool version, additional invocation, and optional formatting-diff check.
 - `reuseable-nilaway.yml` — NilAway static analysis.
 - `reuseable-conventional-commits.yml` — conventional-commit PR title check.
 - `reuseable-check-versions.yml` — check upstream image versions against a docker-compose file and open update PRs.
@@ -52,10 +52,10 @@ performs an observe → compare → act loop:
 1. `syncRepoSettings` — reconciles repository settings (e.g. `delete_branch_on_merge`).
 2. `syncCollaborators` — reconciles collaborators and their permission levels.
 3. `syncBranchProtection` — reconciles branch protection rules.
-4. `syncWorkflows` — renders each workflow wrapper from `templates/workflow.tmpl`
-   and, if the rendered content differs from what is already on the repository's
-   default branch, writes it via the GitHub Contents API. Files that already
-   match are skipped.
+4. `syncWorkflows` — renders standalone wrappers from `templates/workflow.tmpl`
+   and grouped pipelines from `templates/pipeline.tmpl`. Configured workflows
+   can replace old wrappers in the same commit. Files that already match are
+   skipped.
 
 Writes go **directly to each repository's default branch**; the engine does not
 open pull requests.
@@ -168,8 +168,12 @@ repositories:
 To onboard or change a repository, edit `repos-config.yaml` and push to `main`.
 Each reconciliation run processes **every** managed repository (all configured
 and discovered targets), not only the ones touched by the edit. The
-`actions` repository manages other repositories and is not part of the managed
-set.
+`actions` repository is included in the managed set. `repository-standard`
+applies the shared repository settings, `main` branch protection, and
+Conventional Commits check to repositories whose CI and release workflows have
+not yet been migrated to shared workflows. The explicit public-repository set
+covers active, non-fork repositories; archived repositories are read-only, and
+forks are excluded from governance writes.
 
 ## Auto-discovery (opt-in)
 
