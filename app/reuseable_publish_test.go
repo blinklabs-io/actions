@@ -49,6 +49,40 @@ func TestReusablePublishReleaseAssetAuthentication(t *testing.T) {
 	t.Fatal("build-binaries job has no Upload release asset step")
 }
 
+func TestReusablePublishPassesPrereleaseToScriptThroughEnvironment(t *testing.T) {
+	workflowData, err := os.ReadFile("../.github/workflows/reuseable-publish.yml")
+	if err != nil {
+		t.Fatalf("read reusable publish workflow: %v", err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				ID   string            `yaml:"id"`
+				Env  map[string]string `yaml:"env"`
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflowData, &workflow); err != nil {
+		t.Fatalf("parse reusable publish workflow: %v", err)
+	}
+	for _, step := range workflow.Jobs["create-draft-release"].Steps {
+		if step.ID != "create-release" {
+			continue
+		}
+		if step.Env["PRERELEASE"] != "${{ inputs.prerelease }}" {
+			t.Errorf("PRERELEASE env = %q, want workflow input", step.Env["PRERELEASE"])
+		}
+		script := step.With["script"]
+		if !strings.Contains(script, "process.env.PRERELEASE === 'true'") ||
+			strings.Contains(script, "${{ inputs.prerelease }}") {
+			t.Errorf("release script does not read prerelease from its environment:\n%s", script)
+		}
+		return
+	}
+	t.Fatal("create-draft-release job has no create-release script")
+}
+
 func TestReusablePublishAttestsEveryUploadedBinary(t *testing.T) {
 	workflowData, err := os.ReadFile("../.github/workflows/reuseable-publish.yml")
 	if err != nil {
