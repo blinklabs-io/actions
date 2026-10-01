@@ -229,7 +229,7 @@ jobs:
       - name: Set up MSYS2 MinGW64 for Windows amd64 CGO
         if: matrix.os == 'windows' && matrix.arch == 'amd64' && matrix.tray
         id: msys2-amd64
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0 https://github.com/msys2/setup-msys2/releases/tag/v2.32.0
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0 https://github.com/msys2/setup-msys2/releases/tag/v2.33.0
         with:
           msystem: MINGW64
           update: true
@@ -239,7 +239,7 @@ jobs:
       - name: Set up MSYS2 clangarm64 for Windows arm64 CGO
         if: matrix.os == 'windows' && matrix.arch == 'arm64' && matrix.tray
         id: msys2-arm64
-        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0 https://github.com/msys2/setup-msys2/releases/tag/v2.32.0
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0 https://github.com/msys2/setup-msys2/releases/tag/v2.33.0
         with:
           msystem: CLANGARM64
           update: true
@@ -887,7 +887,7 @@ jobs:
         # Distinct category per arch: upload-sarif keys results by category, so a
         # shared category would let the arm64 upload overwrite the amd64 one.
         if: always() && inputs.enable-trivy-scan && steps.meta.outputs.version != ''
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.38.1
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.38.2
         with:
           sarif_file: 'trivy-results-${{ matrix.arch }}.sarif'
           category: 'trivy-${{ matrix.arch }}'
