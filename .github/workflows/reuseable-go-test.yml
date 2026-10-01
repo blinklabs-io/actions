@@ -272,7 +272,11 @@ jobs:
         shell: bash
         run: |
           go mod tidy
-          git diff --exit-code -- go.mod go.sum
+          if [ -n "$(git status --porcelain --untracked-files=all -- go.mod go.sum)" ]; then
+            git status --short -- go.mod go.sum
+            echo "go.mod or go.sum is not tidy. Run 'go mod tidy' to fix."
+            exit 1
+          fi
       - name: Install system dependencies
         if: runner.os == 'Linux' && inputs.system-dependencies != ''
         env:
@@ -311,6 +315,7 @@ jobs:
         env:
           TEST_PACKAGES: ${{ inputs.test-packages }}
           WINDOWS_TEST_PACKAGES: ${{ inputs.windows-test-packages }}
+          GOARCH: ${{ matrix.go-arch }}
         run: |
           _packages="$TEST_PACKAGES"
           if [ "$RUNNER_OS" = "Windows" ] && [ -n "$WINDOWS_TEST_PACKAGES" ]; then
@@ -380,6 +385,7 @@ jobs:
         shell: bash
         env:
           MODULE_DIRECTORIES: ${{ inputs.additional-module-directories }}
+          GOARCH: ${{ matrix.go-arch }}
         run: |
           while IFS= read -r _directory; do
             [ -z "$_directory" ] && continue
@@ -417,6 +423,7 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0 https://github.com/golangci/golangci-lint-action/releases/tag/v9.3.0
         env:
           CGO_ENABLED: ${{ inputs.golangci-cgo-enabled }}
+          GOARCH: ${{ matrix.go-arch }}
         with:
           version: ${{ inputs.golangci-version }}
           working-directory: ${{ inputs.working-directory }}
@@ -425,6 +432,7 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0 https://github.com/golangci/golangci-lint-action/releases/tag/v9.3.0
         env:
           CGO_ENABLED: ${{ inputs.golangci-cgo-enabled }}
+          GOARCH: ${{ matrix.go-arch }}
         with:
           version: ${{ inputs.golangci-version }}
           working-directory: ${{ inputs.working-directory }}
@@ -435,6 +443,7 @@ jobs:
         env:
           MODULE_DIRECTORIES: ${{ inputs.golangci-additional-working-directories }}
           CGO_ENABLED: ${{ inputs.golangci-cgo-enabled }}
+          GOARCH: ${{ matrix.go-arch }}
         run: |
           while IFS= read -r _directory; do
             [ -z "$_directory" ] && continue
@@ -470,6 +479,7 @@ jobs:
           EXCLUDE_FILE_DOCSTRINGS: ${{ inputs.nilaway-exclude-file-docstrings }}
           ADDITIONAL_WORKING_DIRECTORIES: ${{ inputs.nilaway-additional-working-directories }}
           CGO_ENABLED: ${{ inputs.nilaway-cgo-enabled }}
+          GOARCH: ${{ matrix.go-arch }}
         run: |
           _args=()
           if [ -n "$EXCLUDE_PKGS" ]; then
@@ -547,6 +557,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
+          submodules: ${{ inputs.submodules }}
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6 https://github.com/actions/setup-go/releases/tag/v6
         with:

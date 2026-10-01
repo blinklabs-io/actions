@@ -83,6 +83,39 @@ func TestReusablePublishPassesPrereleaseToScriptThroughEnvironment(t *testing.T)
 	t.Fatal("create-draft-release job has no create-release script")
 }
 
+func TestReusablePublishCustomBuildUsesMatrixTarget(t *testing.T) {
+	workflowData, err := os.ReadFile("../.github/workflows/reuseable-publish.yml")
+	if err != nil {
+		t.Fatalf("read reusable publish workflow: %v", err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Env  map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflowData, &workflow); err != nil {
+		t.Fatalf("parse reusable publish workflow: %v", err)
+	}
+	for _, step := range workflow.Jobs["build-binaries"].Steps {
+		if step.Name != "Build custom binary" {
+			continue
+		}
+		for name, want := range map[string]string{
+			"GOOS":   "${{ matrix.os }}",
+			"GOARCH": "${{ matrix.arch }}",
+		} {
+			if got := step.Env[name]; got != want {
+				t.Errorf("custom build %s = %q, want %q", name, got, want)
+			}
+		}
+		return
+	}
+	t.Fatal("build-binaries job has no custom build step")
+}
+
 func TestReusablePublishAttestsEveryUploadedBinary(t *testing.T) {
 	workflowData, err := os.ReadFile("../.github/workflows/reuseable-publish.yml")
 	if err != nil {

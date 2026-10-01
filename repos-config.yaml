@@ -177,7 +177,7 @@ profiles:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d9c9947df1bb33a4eaa4dce8ae1025ae4a036677"
         triggers:
           pull_request:
           push:
@@ -232,7 +232,6 @@ profiles:
           test-flags: "-v -race"
           run-golangci-lint: "true"
           golangci-go-version: "1.26.x"
-          golangci-version: "v2.12.2"
 
       - destination_file: publish.yml
         pipeline: ci.yml
@@ -241,7 +240,7 @@ profiles:
         needs: [go-test]
         if: startsWith(github.ref, 'refs/tags/')
         workflow_name: publish
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d9c9947df1bb33a4eaa4dce8ae1025ae4a036677"
         triggers:
           pull_request:
           push:
@@ -303,9 +302,6 @@ repositories:
           nilaway-include-pkgs: "github.com/blinklabs-io/tx-submit-api"
 
       - destination_file: ci-docker.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'pull_request'
         workflow_name: "Docker CI"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
@@ -597,9 +593,6 @@ repositories:
           nilaway-include-pkgs: "github.com/blinklabs-io/shai"
 
       - destination_file: ci-docker.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'pull_request'
         workflow_name: "Docker CI"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
@@ -997,9 +990,6 @@ repositories:
           nilaway-exclude-pkgs: "github.com/go-gl/glfw"
 
       - destination_file: ci-docker.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'pull_request'
         workflow_name: "Docker CI"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
@@ -1282,9 +1272,6 @@ repositories:
           nilaway-include-pkgs: "github.com/blinklabs-io/cardano-up"
 
       - destination_file: ci-docker.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'pull_request'
         workflow_name: "Docker CI"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
@@ -2006,7 +1993,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: publish
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d9c9947df1bb33a4eaa4dce8ae1025ae4a036677"
         triggers:
           push:
             branches: [main]
@@ -2070,7 +2057,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d9c9947df1bb33a4eaa4dce8ae1025ae4a036677"
         triggers:
           pull_request:
           push:

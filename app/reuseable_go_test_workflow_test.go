@@ -46,7 +46,20 @@ func TestReusableGoTestWorkflowUsesMatrixArchitectureAndEffectiveGuards(t *testi
 			Env map[string]string `yaml:"env"`
 		}{Run: step.Run, Env: step.Env}
 	}
-	for _, name := range []string{"go-build", "go-test-extra"} {
+	for _, name := range []string{"go-build", "go-test", "go-test-extra", "go-test-race"} {
+		if got := steps[name].Env["GOARCH"]; got != "${{ matrix.go-arch }}" {
+			t.Errorf("%s GOARCH = %q, want matrix.go-arch", name, got)
+		}
+	}
+	for _, name := range []string{"go-vet", "Test additional Go modules", "Run NilAway", "golangci-lint (additional modules)"} {
+		if got := steps[name].Env["GOARCH"]; got != "${{ matrix.go-arch }}" {
+			t.Errorf("%s GOARCH = %q, want matrix.go-arch", name, got)
+		}
+	}
+	if _, ok := steps["Install NilAway"].Env["GOARCH"]; ok {
+		t.Error("Install NilAway must build a runner-native binary")
+	}
+	for _, name := range []string{"golangci-lint", "golangci-lint (additional checks)"} {
 		if got := steps[name].Env["GOARCH"]; got != "${{ matrix.go-arch }}" {
 			t.Errorf("%s GOARCH = %q, want matrix.go-arch", name, got)
 		}
@@ -62,10 +75,16 @@ func TestReusableGoTestWorkflowUsesMatrixArchitectureAndEffectiveGuards(t *testi
 	if run := steps["Verify generated code is up to date"].Run; !strings.Contains(run, "git status --porcelain --untracked-files=all") {
 		t.Errorf("generated-code check ignores untracked files:\n%s", run)
 	}
+	if run := steps["Check go.mod is tidy"].Run; !strings.Contains(run, "git status --porcelain --untracked-files=all -- go.mod go.sum") {
+		t.Errorf("module tidy check ignores untracked go.sum files:\n%s", run)
+	}
 
 	crossBuild := workflow.Jobs["cross-build"]
 	if len(crossBuild.Steps) == 0 {
 		t.Fatal("cross-build job has no steps")
+	}
+	if got := crossBuild.Steps[0].With["submodules"]; got != "${{ inputs.submodules }}" {
+		t.Errorf("cross-build checkout submodules = %q, want inputs.submodules", got)
 	}
 	buildRun := crossBuild.Steps[len(crossBuild.Steps)-1].Run
 	if !strings.Contains(buildRun, "GOOS=\"$TARGET_OS\" GOARCH=\"$TARGET_ARCH\" go build $_packages") ||

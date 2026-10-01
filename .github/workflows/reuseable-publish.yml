@@ -173,6 +173,8 @@ jobs:
           BINARY_BUILD_COMMAND: ${{ inputs.binary-build-command }}
           MATRIX_OS: ${{ matrix.os }}
           MATRIX_ARCH: ${{ matrix.arch }}
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
           RELEASE_TAG: ${{ github.ref_name }}
           COMMIT_HASH: ${{ github.sha }}
           BUILD_DATE: ${{ steps.build-metadata.outputs.date }}
