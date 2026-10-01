@@ -65,7 +65,9 @@ jobs:
         with:
           go-version: ${{ inputs.go-version }}
           cache: ${{ inputs.setup-go-cache }}
-          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+          cache-dependency-path: |
+            ${{ inputs.working-directory }}/go.mod
+            ${{ inputs.working-directory }}/go.sum
       - name: Install system dependencies
         if: inputs.system-dependencies != ''
         env:
@@ -93,8 +95,13 @@ jobs:
         if: inputs.check-format
         working-directory: ${{ inputs.working-directory }}
         run: |
-          if golangci-lint fmt --diff | grep -q .; then
+          if _diff="$(golangci-lint fmt --diff 2>&1)"; then
+            _format_status=0
+          else
+            _format_status=$?
+          fi
+          if [ "$_format_status" -ne 0 ] || [ -n "$_diff" ]; then
             echo "Code is not formatted"
-            golangci-lint fmt --diff
+            printf '%s\n' "$_diff"
             exit 1
           fi

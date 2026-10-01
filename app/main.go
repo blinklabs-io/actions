@@ -916,7 +916,7 @@ func buildWorkflowTemplate(templatePath string) (*template.Template, error) {
 	funcMap := template.FuncMap{
 		"quoteForYAML": func(s string) string {
 			trimmed := strings.TrimSpace(s)
-			if strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
+			if !strings.Contains(s, "\n") && (strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{")) {
 				return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 			}
 			// Multiline values: render as an indented block scalar (|-).

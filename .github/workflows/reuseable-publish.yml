@@ -187,6 +187,7 @@ jobs:
           RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         run: |
           _binary_names=("$BINARY_NAME")
+          _asset_filenames=()
           while IFS= read -r _binary_name; do
             [ -n "$_binary_name" ] && _binary_names+=("$_binary_name")
           done < <(jq -r '.[]' <<< "$ADDITIONAL_BINARY_NAMES")
@@ -204,13 +205,19 @@ jobs:
               _filename="${_base}"
               cp "${_binary_src}" "${_filename}"
             fi
-            echo "RELEASE_ASSET_FILENAME=${_filename}" >> "$GITHUB_ENV"
+            _asset_filenames+=("$_filename")
             curl --fail \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Content-Type: application/octet-stream" \
               --data-binary @"${_filename}" \
               "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${_filename}"
           done
+          _asset_delimiter="RELEASE_ASSET_FILENAMES_EOF_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "RELEASE_ASSET_FILENAMES<<${_asset_delimiter}"
+            printf '%s\n' "${_asset_filenames[@]}"
+            echo "${_asset_delimiter}"
+          } >> "$GITHUB_ENV"
       - name: Upload binaries for checksum manifest
         if: inputs.create-checksums && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 https://github.com/actions/upload-artifact/releases/tag/v7.0.1
@@ -221,7 +228,7 @@ jobs:
       - name: Attest binary
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
         with:
-          subject-path: "${{ inputs.attestation-subject-path || env.RELEASE_ASSET_FILENAME || format('{0}{1}', inputs.binary-name, matrix.os == 'windows' && '.exe' || '') }}"
+          subject-path: "${{ inputs.attestation-subject-path || env.RELEASE_ASSET_FILENAMES || format('{0}{1}', inputs.binary-name, matrix.os == 'windows' && '.exe' || '') }}"
 
   checksum-assets:
     runs-on: ubuntu-latest
@@ -552,7 +559,7 @@ jobs:
           short-description: ${{ inputs.description }}
 
   finalize-release:
-    if: always() && needs.create-draft-release.result == 'success' && needs.build-binaries.result == 'success' && needs.checksum-assets.result == 'success' && (needs.image-manifest.result == 'success' || needs.image-manifest.result == 'skipped')
+    if: always() && needs.create-draft-release.result == 'success' && needs.build-binaries.result == 'success' && needs.checksum-assets.result == 'success' && (!inputs.publish-container-image || needs.image-manifest.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write

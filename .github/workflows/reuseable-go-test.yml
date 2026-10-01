@@ -259,7 +259,9 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
           cache: ${{ inputs.setup-go-cache }}
-          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+          cache-dependency-path: |
+            ${{ inputs.working-directory }}/go.mod
+            ${{ inputs.working-directory }}/go.sum
       - name: Setup Buf
         if: inputs.run-buf-checks || inputs.verify-buf-generated
         uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0 https://github.com/bufbuild/buf-action/releases/tag/v1.6.0
@@ -292,6 +294,7 @@ jobs:
           TEST_PACKAGES: ${{ inputs.test-packages }}
           BUILD_PACKAGES: ${{ inputs.build-packages }}
           WINDOWS_TEST_PACKAGES: ${{ inputs.windows-test-packages }}
+          GOARCH: ${{ matrix.go-arch }}
         run: |
           _packages="$BUILD_PACKAGES"
           if [ -z "$_packages" ]; then
@@ -357,6 +360,7 @@ jobs:
           TEST_FLAGS: ${{ inputs.extra-test-flags }}
           TEST_PACKAGES: ${{ inputs.extra-test-packages }}
           TEST_ENV: ${{ inputs.test-env }}
+          GOARCH: ${{ matrix.go-arch }}
         run: |
           if [ -n "$TEST_ENV" ]; then
             while IFS= read -r _line; do
@@ -440,9 +444,14 @@ jobs:
         if: inputs.run-golangci-lint && inputs.check-format && (inputs.golangci-go-version == '' || matrix.go-version == inputs.golangci-go-version) && (inputs.golangci-platform == '' || matrix.platform == inputs.golangci-platform)
         shell: bash
         run: |
-          if golangci-lint fmt --diff | grep -q .; then
+          if _diff="$(golangci-lint fmt --diff 2>&1)"; then
+            _format_status=0
+          else
+            _format_status=$?
+          fi
+          if [ "$_format_status" -ne 0 ] || [ -n "$_diff" ]; then
             echo "Code is not formatted"
-            golangci-lint fmt --diff
+            printf '%s\n' "$_diff"
             exit 1
           fi
       - name: Install NilAway
@@ -499,7 +508,7 @@ jobs:
         if: inputs.run-buf-checks
         shell: bash
         run: |
-          buf format -d || {
+          buf format -d --exit-code || {
             echo "Proto files are not formatted. Run 'buf format -w' to fix."
             exit 1
           }
@@ -513,10 +522,11 @@ jobs:
         run: |
           buf generate
           go mod tidy
-          git diff --exit-code || {
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            git status --short
             echo "Generated code is out of date. Run 'buf generate && go mod tidy' to fix."
             exit 1
-          }
+          fi
       - name: Upload coverage to Codecov
         if: runner.os == 'Linux' && inputs.upload-coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1 https://github.com/codecov/codecov-action/releases/tag/v7.1.1
@@ -541,6 +551,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6 https://github.com/actions/setup-go/releases/tag/v6
         with:
           go-version: ${{ inputs.cross-build-go-version }}
+          cache: ${{ inputs.setup-go-cache }}
+          cache-dependency-path: |
+            ${{ inputs.working-directory }}/go.mod
+            ${{ inputs.working-directory }}/go.sum
       - name: Cross-build
         env:
           TARGET_OS: ${{ matrix.target.os }}
@@ -553,4 +567,4 @@ jobs:
             _packages="$TEST_PACKAGES"
           fi
           # shellcheck disable=SC2086
-          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build -o /dev/null $_packages
+          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build $_packages

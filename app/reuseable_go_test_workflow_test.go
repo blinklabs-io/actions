@@ -1,0 +1,118 @@
+package main
+
+import (
+	"os"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+type reusableWorkflowFile struct {
+	Jobs map[string]struct {
+		Steps []struct {
+			Name string            `yaml:"name"`
+			Run  string            `yaml:"run"`
+			Uses string            `yaml:"uses"`
+			Env  map[string]string `yaml:"env"`
+			With map[string]string `yaml:"with"`
+		} `yaml:"steps"`
+	} `yaml:"jobs"`
+}
+
+func readReusableWorkflow(t *testing.T, path string) reusableWorkflowFile {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read workflow %s: %v", path, err)
+	}
+	var workflow reusableWorkflowFile
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatalf("parse workflow %s: %v", path, err)
+	}
+	return workflow
+}
+
+func TestReusableGoTestWorkflowUsesMatrixArchitectureAndEffectiveGuards(t *testing.T) {
+	workflow := readReusableWorkflow(t, "../.github/workflows/reuseable-go-test.yml")
+	job := workflow.Jobs["go-test"]
+	steps := make(map[string]struct {
+		Run string            `yaml:"run"`
+		Env map[string]string `yaml:"env"`
+	})
+	for _, step := range job.Steps {
+		steps[step.Name] = struct {
+			Run string            `yaml:"run"`
+			Env map[string]string `yaml:"env"`
+		}{Run: step.Run, Env: step.Env}
+	}
+	for _, name := range []string{"go-build", "go-test-extra"} {
+		if got := steps[name].Env["GOARCH"]; got != "${{ matrix.go-arch }}" {
+			t.Errorf("%s GOARCH = %q, want matrix.go-arch", name, got)
+		}
+	}
+	formatRun := steps["Check formatting"].Run
+	if !strings.Contains(formatRun, "_diff=\"$(golangci-lint fmt --diff 2>&1)\"") ||
+		!strings.Contains(formatRun, "_format_status") || strings.Contains(formatRun, "| grep") {
+		t.Errorf("format check does not preserve tool failures and diff output:\n%s", formatRun)
+	}
+	if run := steps["Buf format check"].Run; !strings.Contains(run, "buf format -d --exit-code") {
+		t.Errorf("Buf format check does not fail on formatting differences:\n%s", run)
+	}
+	if run := steps["Verify generated code is up to date"].Run; !strings.Contains(run, "git status --porcelain --untracked-files=all") {
+		t.Errorf("generated-code check ignores untracked files:\n%s", run)
+	}
+
+	crossBuild := workflow.Jobs["cross-build"]
+	if len(crossBuild.Steps) == 0 {
+		t.Fatal("cross-build job has no steps")
+	}
+	buildRun := crossBuild.Steps[len(crossBuild.Steps)-1].Run
+	if !strings.Contains(buildRun, "GOOS=\"$TARGET_OS\" GOARCH=\"$TARGET_ARCH\" go build $_packages") ||
+		strings.Contains(buildRun, "-o /dev/null") {
+		t.Errorf("cross-build does not build all packages for the selected target:\n%s", buildRun)
+	}
+}
+
+func TestReusableGoWorkflowsCacheFromModuleFiles(t *testing.T) {
+	for _, path := range []string{
+		"../.github/workflows/reuseable-go-test.yml",
+		"../.github/workflows/reuseable-golangci-lint.yml",
+		"../.github/workflows/reuseable-nilaway.yml",
+	} {
+		workflow := readReusableWorkflow(t, path)
+		found := false
+		for _, job := range workflow.Jobs {
+			for _, step := range job.Steps {
+				if !strings.Contains(step.Uses, "actions/setup-go@") {
+					continue
+				}
+				cachePath := step.With["cache-dependency-path"]
+				if !strings.Contains(cachePath, "${{ inputs.working-directory }}/go.mod") ||
+					!strings.Contains(cachePath, "${{ inputs.working-directory }}/go.sum") {
+					t.Errorf("%s cache dependency path = %q, want go.mod and go.sum", path, cachePath)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s has no actions/setup-go step", path)
+		}
+	}
+}
+
+func TestReusableGolangciLintFormattingCheckPreservesToolFailures(t *testing.T) {
+	workflow := readReusableWorkflow(t, "../.github/workflows/reuseable-golangci-lint.yml")
+	var formatRun string
+	for _, job := range workflow.Jobs {
+		for _, step := range job.Steps {
+			if step.Name == "Check formatting" {
+				formatRun = step.Run
+			}
+		}
+	}
+	if !strings.Contains(formatRun, "_diff=\"$(golangci-lint fmt --diff 2>&1)\"") ||
+		!strings.Contains(formatRun, "_format_status") || strings.Contains(formatRun, "| grep") {
+		t.Errorf("format check does not preserve tool failures and diff output:\n%s", formatRun)
+	}
+}
