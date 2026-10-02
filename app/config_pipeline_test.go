@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -101,6 +102,63 @@ func TestConfiguredPipelinesGate(t *testing.T) {
 	}
 }
 
+func TestConfiguredPipelinesKeepPathFilteredWorkflowsStandalone(t *testing.T) {
+	cfg := loadRealConfig(t)
+	for _, repo := range cfg.Repositories {
+		_, pipelines := groupPipelines(repo.Workflows)
+		for _, members := range pipelines {
+			for _, wf := range members {
+				for eventName, rawEvent := range wf.Triggers {
+					event, ok := rawEvent.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					if _, hasPaths := event["paths"]; hasPaths {
+						t.Errorf("%s pipeline %s job %s has %s path filters; keep it standalone to preserve job-level filtering", repo.Name, wf.Pipeline, wf.jobID(), eventName)
+					}
+					if _, hasPathsIgnore := event["paths-ignore"]; hasPathsIgnore {
+						t.Errorf("%s pipeline %s job %s has %s path-ignore filters; keep it standalone to preserve job-level filtering", repo.Name, wf.Pipeline, wf.jobID(), eventName)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestConfiguredPublishWorkflowsUseMain(t *testing.T) {
+	cfg := loadRealConfig(t)
+	found := 0
+	for _, repo := range cfg.Repositories {
+		for _, wf := range repo.Workflows {
+			if !strings.Contains(wf.ReusableWorkflow, "/reuseable-publish.yml@") {
+				continue
+			}
+			found++
+			if !strings.HasSuffix(wf.ReusableWorkflow, "@main") {
+				t.Errorf("%s %s uses publish workflow ref %q, want @main", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatal("no reusable publish workflows found in config")
+	}
+}
+
+func TestConfiguredCustomPublishBuildsUseMatrixTarget(t *testing.T) {
+	cfg := loadRealConfig(t)
+	for _, repo := range cfg.Repositories {
+		for _, wf := range repo.Workflows {
+			command := wf.Params["binary-build-command"]
+			if command == "" {
+				continue
+			}
+			if !strings.Contains(command, `GOOS="$MATRIX_OS" GOARCH="$MATRIX_ARCH" go build`) {
+				t.Errorf("%s %s custom binary build does not use the matrix target", repo.Name, wf.DestinationFile)
+			}
+		}
+	}
+}
+
 // TestConfiguredPipelinesSupersedeTheirWrappers checks that every entry folded
 // into a pipeline is listed for removal. A wrapper left in a repository keeps
 // matching the same events and keeps starting its own run, so a half-applied
@@ -112,7 +170,7 @@ func TestConfiguredPipelinesSupersedeTheirWrappers(t *testing.T) {
 		_, pipelines := groupPipelines(repo.Workflows)
 		for _, members := range pipelines {
 			superseded := make(map[string]bool)
-			for _, path := range supersededWorkflowPaths(members) {
+			for _, path := range supersededWorkflowPaths(members, repo.Workflows) {
 				superseded[path] = true
 			}
 			for _, wf := range members {

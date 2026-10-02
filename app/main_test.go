@@ -579,6 +579,36 @@ func TestWorkflowTemplate_MultilineBuildArgs(t *testing.T) {
 	}
 }
 
+func TestWorkflowTemplate_MultilineJSONObjectParamIsAString(t *testing.T) {
+	tmpl, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatalf("unexpected template parse error: %v", err)
+	}
+	services := "{\n  \"postgres\": {\n    \"image\": \"postgres:16\"\n  }\n}"
+	data := templateData{
+		WorkflowName:     "ci",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main",
+		TriggersYAML:     "  pull_request:\n",
+		Params:           map[string]string{"services": services},
+	}
+
+	var rendered bytes.Buffer
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		t.Fatalf("unexpected template execution error: %v", err)
+	}
+	var got struct {
+		Jobs map[string]struct {
+			With map[string]string `yaml:"with"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(rendered.Bytes(), &got); err != nil {
+		t.Fatalf("rendered workflow is not valid YAML: %v\n%s", err, rendered.String())
+	}
+	if got.Jobs["orchestrate"].With["services"] != services {
+		t.Errorf("services param = %q, want %q", got.Jobs["orchestrate"].With["services"], services)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // docker-wireguard: test-flags, optional include-pkgs, binary-compress
 // ---------------------------------------------------------------------------
