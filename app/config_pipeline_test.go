@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -119,6 +120,43 @@ func TestConfiguredPipelinesKeepPathFilteredWorkflowsStandalone(t *testing.T) {
 						t.Errorf("%s pipeline %s job %s has %s path-ignore filters; keep it standalone to preserve job-level filtering", repo.Name, wf.Pipeline, wf.jobID(), eventName)
 					}
 				}
+			}
+		}
+	}
+}
+
+func TestConfiguredPublishWorkflowsUseImmutableRefs(t *testing.T) {
+	cfg := loadRealConfig(t)
+	for _, repo := range cfg.Repositories {
+		for _, wf := range repo.Workflows {
+			if !strings.Contains(wf.ReusableWorkflow, "/reuseable-publish.yml@") {
+				continue
+			}
+			_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
+			if !ok || len(ref) != 40 {
+				t.Errorf("%s %s uses mutable publish workflow ref %q; pin a full commit SHA", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
+				continue
+			}
+			for _, r := range ref {
+				if !strings.ContainsRune("0123456789abcdef", r) {
+					t.Errorf("%s %s publish workflow ref %q is not a full commit SHA", repo.Name, wf.DestinationFile, ref)
+					break
+				}
+			}
+		}
+	}
+}
+
+func TestConfiguredCustomPublishBuildsUseMatrixTarget(t *testing.T) {
+	cfg := loadRealConfig(t)
+	for _, repo := range cfg.Repositories {
+		for _, wf := range repo.Workflows {
+			command := wf.Params["binary-build-command"]
+			if command == "" {
+				continue
+			}
+			if !strings.Contains(command, `GOOS="$MATRIX_OS" GOARCH="$MATRIX_ARCH" go build`) {
+				t.Errorf("%s %s custom binary build does not use the matrix target", repo.Name, wf.DestinationFile)
 			}
 		}
 	}
