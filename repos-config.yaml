@@ -505,9 +505,21 @@ repositories:
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
           pull_request:
+            paths:
+              - '**/*.go'
+              - go.*
+              - Makefile
+              - Dockerfile
+              - scripts/**
           push:
             branches: [main]
             tags: ['v*']
+            paths:
+              - '**/*.go'
+              - go.*
+              - Makefile
+              - Dockerfile
+              - scripts/**
         params:
           run-golangci-lint: "true"
           run-nilaway: "true"
@@ -539,6 +551,12 @@ repositories:
           push:
             branches: [main]
             tags: ['v*.*.*']
+            paths:
+              - '**/*.go'
+              - go.*
+              - Makefile
+              - Dockerfile
+              - scripts/**
         permissions:
           actions: write
           attestations: write
