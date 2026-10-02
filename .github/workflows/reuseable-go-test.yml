@@ -229,7 +229,7 @@ on:
         type: boolean
         default: false
       coverage-file:
-        description: Path to the coverage file uploaded to Codecov when upload-coverage is true.
+        description: Path relative to working-directory for the coverage file uploaded to Codecov.
         required: false
         type: string
         default: "coverage.out"
@@ -255,7 +255,7 @@ jobs:
         with:
           submodules: ${{ inputs.submodules }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6 https://github.com/actions/setup-go/releases/tag/v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: ${{ matrix.go-version }}
           cache: ${{ inputs.setup-go-cache }}
@@ -414,7 +414,20 @@ jobs:
           # shellcheck disable=SC2086
           if [ -n "$TEST_FLAGS" ]; then
             read -r -a _flags <<< "$TEST_FLAGS"
-            go test -race "${_flags[@]}" $_packages
+            _race_flags=()
+            _skip_flag_value=false
+            for _flag in "${_flags[@]}"; do
+              if [ "$_skip_flag_value" = true ]; then
+                _skip_flag_value=false
+                continue
+              fi
+              case "$_flag" in
+                -cover|-cover=*|-covermode=*|-coverpkg=*|-coverprofile=*) ;;
+                -covermode|-coverpkg|-coverprofile) _skip_flag_value=true ;;
+                *) _race_flags+=("$_flag") ;;
+              esac
+            done
+            go test -race "${_race_flags[@]}" $_packages
           else
             go test -race $_packages
           fi
@@ -541,7 +554,7 @@ jobs:
         if: runner.os == 'Linux' && inputs.upload-coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1 https://github.com/codecov/codecov-action/releases/tag/v7.1.1
         with:
-          files: ${{ inputs.coverage-file }}
+          files: ${{ inputs.working-directory }}/${{ inputs.coverage-file }}
 
   cross-build:
     if: inputs.cross-build-targets != '[]'
@@ -559,7 +572,7 @@ jobs:
         with:
           submodules: ${{ inputs.submodules }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6 https://github.com/actions/setup-go/releases/tag/v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: ${{ inputs.cross-build-go-version }}
           cache: ${{ inputs.setup-go-cache }}

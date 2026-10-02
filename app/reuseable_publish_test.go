@@ -156,14 +156,22 @@ func TestReusablePublishAttestsEveryUploadedBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, content := range map[string]string{
-		"jq":   "#!/bin/sh\nprintf '%s\\n' extra\n",
+		"jq": `#!/bin/sh
+json=$(cat)
+values=$(printf '%s\n' "$json" | sed -e 's/^\[//' -e 's/\]$//' -e 's/"//g' -e 's/,/\n/g')
+case "$2" in
+  '.[]') printf '%s\n' "$values" ;;
+  '.[0]') printf '%s\n' "$values" | head -n 1 ;;
+  *) exit 2 ;;
+esac
+`,
 		"curl": "#!/bin/sh\nexit 0\n",
 	} {
 		if err := os.WriteFile(filepath.Join(fakeBin, name), []byte(content), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"primary", "extra"} {
+	for _, name := range []string{"primary", "extra-one", "extra-two"} {
 		if err := os.WriteFile(filepath.Join(tmp, name), []byte(name), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -178,7 +186,7 @@ func TestReusablePublishAttestsEveryUploadedBinary(t *testing.T) {
 		"GITHUB_RUN_ATTEMPT=1",
 		"GITHUB_REPOSITORY=blinklabs-io/actions",
 		"BINARY_NAME=primary",
-		"ADDITIONAL_BINARY_NAMES=[\"extra\"]",
+		"ADDITIONAL_BINARY_NAMES=[\"extra-one\",\"extra-two\"]",
 		"MATRIX_OS=linux",
 		"MATRIX_ARCH=amd64",
 		"BINARY_COMPRESS=false",
@@ -194,14 +202,14 @@ func TestReusablePublishAttestsEveryUploadedBinary(t *testing.T) {
 		t.Fatalf("read GitHub environment file: %v", err)
 	}
 	want := "RELEASE_ASSET_FILENAMES<<RELEASE_ASSET_FILENAMES_EOF_42_1\n" +
-		"primary-v1.2.3-linux-amd64\nextra-v1.2.3-linux-amd64\n" +
+		"primary-v1.2.3-linux-amd64\nextra-one-v1.2.3-linux-amd64\nextra-two-v1.2.3-linux-amd64\n" +
 		"RELEASE_ASSET_FILENAMES_EOF_42_1\n"
 	if string(got) != want {
 		t.Errorf("release asset filenames = %q, want %q", got, want)
 	}
 }
 
-func TestReusablePublishFinalizationRequiresSuccessfulContainerManifest(t *testing.T) {
+func TestReusablePublishFinalizationGatesOptionalArtifacts(t *testing.T) {
 	workflowData, err := os.ReadFile("../.github/workflows/reuseable-publish.yml")
 	if err != nil {
 		t.Fatalf("read reusable publish workflow: %v", err)
@@ -218,9 +226,21 @@ func TestReusablePublishFinalizationRequiresSuccessfulContainerManifest(t *testi
 	for _, required := range []string{
 		"!inputs.publish-container-image",
 		"needs.image-manifest.result == 'success'",
+		"needs.checksum-assets.result == 'success'",
+		"needs.checksum-assets.result == 'skipped'",
 	} {
 		if !strings.Contains(condition, required) {
 			t.Errorf("finalize-release condition %q is missing %q", condition, required)
+		}
+	}
+
+	checksumCondition := workflow.Jobs["checksum-assets"].If
+	for _, required := range []string{
+		"inputs.create-checksums",
+		"startsWith(github.ref, 'refs/tags/')",
+	} {
+		if !strings.Contains(checksumCondition, required) {
+			t.Errorf("checksum-assets condition %q is missing %q", checksumCondition, required)
 		}
 	}
 }
