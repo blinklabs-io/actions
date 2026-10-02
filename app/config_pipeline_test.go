@@ -125,25 +125,30 @@ func TestConfiguredPipelinesKeepPathFilteredWorkflowsStandalone(t *testing.T) {
 	}
 }
 
-func TestConfiguredPublishWorkflowsUseImmutableRefs(t *testing.T) {
+func TestConfiguredPublishWorkflowsResolveToControllerCommit(t *testing.T) {
 	cfg := loadRealConfig(t)
+	const controllerSHA = "0123456789abcdef0123456789abcdef01234567"
+	found := 0
 	for _, repo := range cfg.Repositories {
-		for _, wf := range repo.Workflows {
+		workflows := append([]WorkflowConfig(nil), repo.Workflows...)
+		if err := resolveControllerWorkflowRefs(workflows, controllerSHA); err != nil {
+			t.Fatalf("resolve controller workflow refs for %s: %v", repo.Name, err)
+		}
+		for i, wf := range repo.Workflows {
 			if !strings.Contains(wf.ReusableWorkflow, "/reuseable-publish.yml@") {
 				continue
 			}
-			_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
-			if !ok || len(ref) != 40 {
-				t.Errorf("%s %s uses mutable publish workflow ref %q; pin a full commit SHA", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
-				continue
+			found++
+			if !strings.HasSuffix(wf.ReusableWorkflow, "@controller") {
+				t.Errorf("%s %s config ref = %q, want @controller", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
 			}
-			for _, r := range ref {
-				if !strings.ContainsRune("0123456789abcdef", r) {
-					t.Errorf("%s %s publish workflow ref %q is not a full commit SHA", repo.Name, wf.DestinationFile, ref)
-					break
-				}
+			if got := workflows[i].ReusableWorkflow; !strings.HasSuffix(got, "@"+controllerSHA) {
+				t.Errorf("%s %s rendered ref = %q, want controller commit %s", repo.Name, wf.DestinationFile, got, controllerSHA)
 			}
 		}
+	}
+	if found == 0 {
+		t.Fatal("no reusable publish workflows found in config")
 	}
 }
 
