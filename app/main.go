@@ -273,13 +273,6 @@ func main() {
 		fmt.Printf("Failed to expand profiles: %v\n", err)
 		os.Exit(1)
 	}
-	for i := range cfg.Repositories {
-		if err := resolveControllerWorkflowRefs(cfg.Repositories[i].Workflows, os.Getenv("GITHUB_SHA")); err != nil {
-			fmt.Printf("Failed to resolve controller workflow refs for %s: %v\n", cfg.Repositories[i].Name, err)
-			os.Exit(1)
-		}
-	}
-
 	for _, repo := range cfg.Repositories {
 		owner, repoName := parseRepoString(repo.Name)
 		fmt.Printf("⚡ Starting sync for %s/%s\n", owner, repoName)
@@ -306,28 +299,6 @@ func parseRepoString(fullName string) (string, string) {
 		os.Exit(1)
 	}
 	return parts[0], parts[1]
-}
-
-var gitCommitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
-
-// resolveControllerWorkflowRefs replaces @controller with the commit that is
-// running the governance sync. This lets generated workflows pin to the
-// squash-merged controller revision without storing a pre-merge SHA in config.
-func resolveControllerWorkflowRefs(workflows []WorkflowConfig, controllerSHA string) error {
-	for i := range workflows {
-		workflow := workflows[i].ReusableWorkflow
-		if !strings.Contains(workflow, "@controller") {
-			continue
-		}
-		if !strings.HasSuffix(workflow, "@controller") {
-			return fmt.Errorf("workflow %q has @controller outside the ref suffix", workflow)
-		}
-		if !gitCommitSHA.MatchString(controllerSHA) {
-			return fmt.Errorf("GITHUB_SHA %q is not a full lowercase commit SHA", controllerSHA)
-		}
-		workflows[i].ReusableWorkflow = strings.TrimSuffix(workflow, "@controller") + "@" + controllerSHA
-	}
-	return nil
 }
 
 // ---------------------------------------------------------------------------
