@@ -483,6 +483,94 @@ repositories:
           docker-image: "blinklabs/txtop"
           description: "txtop is a mempool display tool for a Cardano Node"
           go-version: "1.26.x"
+  - name: blinklabs-io/cardano-txpump
+    settings:
+      delete_branch_on_merge: true
+    collaborators: []
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
+      - destination_file: go-test.yml
+        pipeline: ci.yml
+        pipeline_name: ci
+        supersedes: [golangci-lint.yml, nilaway.yml]
+        workflow_name: "go-test"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        triggers:
+          pull_request:
+            paths:
+              - '**/*.go'
+              - go.*
+              - Makefile
+              - Dockerfile
+              - scripts/**
+          push:
+            branches: [main]
+            tags: ['v*.*.*']
+            paths:
+              - '**/*.go'
+              - go.*
+              - Makefile
+              - Dockerfile
+              - scripts/**
+        params:
+          run-golangci-lint: "true"
+          run-nilaway: "true"
+          nilaway-version: "latest"
+          test-flags: "-race"
+
+      - destination_file: ci-docker.yml
+        workflow_name: "Docker CI"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
+        triggers:
+          pull_request:
+            branches: [main]
+            paths:
+              - Dockerfile
+              - '**/*.go'
+              - go.*
+              - scripts/**
+              - .github/workflows/ci-docker.yml
+        params:
+          image-name: "blinklabs-io/cardano-txpump"
+
+      - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test]
+        if: github.event_name == 'push'
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        triggers:
+          push:
+            branches: [main]
+            tags: ['v*.*.*']
+            paths:
+              - '**/*.go'
+              - go.*
+              - Makefile
+              - Dockerfile
+              - scripts/**
+        permissions:
+          actions: write
+          attestations: write
+          checks: write
+          contents: write
+          id-token: write
+          packages: write
+          # reuseable-publish uploads Trivy SARIF from its manifest job; the
+          # called workflow cannot elevate this caller permission.
+          security-events: write
+          statuses: write
+        params:
+          binary-name: "cardano-txpump"
+          go-version: "1.26.x"
   - name: blinklabs-io/docker-go
     profile: docker-standard
     vars:
@@ -1208,13 +1296,10 @@ repositories:
         triggers:
           pull_request:
 
-  # cardano-compose-stacks provides docker-compose stacks for Cardano services.
-  # It runs a weekly (and manually triggerable) job that compares upstream
-  # container image versions against the compose file and opens update PRs. This
-  # is handled by the shared reusable check-versions workflow. The repository's
-  # scripts/upstream-versions.json, scripts/add-version.sh and docker-compose.yaml
-  # match the reusable workflow's defaults, so no params or secrets are needed
-  # (the workflow falls back to the built-in github.token).
+  # cardano-compose-stacks provides Docker Compose stacks, including the Dingo
+  # Antithesis harness and archive demo. The nested Go modules get independent
+  # reusable CI workflows scoped to their paths. Its weekly image-version
+  # checker uses the shared reusable workflow and the built-in github.token.
   - name: blinklabs-io/cardano-compose-stacks
     settings:
       delete_branch_on_merge: true
@@ -1223,6 +1308,12 @@ repositories:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+
       - destination_file: check-versions.yml
         workflow_name: "check-versions"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-check-versions.yml@main"
@@ -1233,6 +1324,43 @@ repositories:
         permissions:
           contents: write
           pull-requests: write
+
+      - destination_file: antithesis-go-test.yml
+        workflow_name: "Antithesis Go tests"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        triggers:
+          pull_request:
+            paths:
+              - antithesis/dingo-praos/**
+          push:
+            branches: [main]
+            paths:
+              - antithesis/dingo-praos/**
+        params:
+          working-directory: "antithesis/dingo-praos"
+          test-flags: "-race"
+          run-golangci-lint: "true"
+          run-nilaway: "true"
+          nilaway-version: "latest"
+
+      - destination_file: archive-demo-go-test.yml
+        workflow_name: "Archive demo Go checks"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        triggers:
+          pull_request:
+            paths:
+              - dingo-archive-demo/**
+          push:
+            branches: [main]
+            paths:
+              - dingo-archive-demo/**
+        params:
+          working-directory: "dingo-archive-demo"
+          # Compile the Docker-backed suite without starting its local devnet.
+          test-flags: "-race -tags=archive_demo -run=^$"
+          run-golangci-lint: "true"
+          run-nilaway: "true"
+          nilaway-version: "latest"
 
   # cardano-up is a Go command line utility for managing Cardano services for
   # local development. Its CI (conventional commits, go-test, golangci-lint,
