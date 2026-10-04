@@ -135,9 +135,25 @@ repositories:
 ```
 
 Profile-based repositories inherit `settings`, `collaborators`,
-`branch_protection`, and `workflows` from the profile and must **not** set those
-fields directly — doing so is rejected as a configuration error. Use `vars` for
-substitution and `overrides` for per-workflow tweaks.
+`branch_protection`, `workflows`, and `dependabot` from the profile and must
+**not** set those fields directly — doing so is rejected as a configuration
+error. Use `vars` for substitution and `overrides` for per-workflow tweaks.
+
+A repository or profile can also set `dependabot` to a YAML block containing
+the complete Dependabot manifest. The engine validates its required fields and
+reconciles it to `.github/dependabot.yml`:
+
+```yaml
+repositories:
+  - name: blinklabs-io/example
+    dependabot: |
+      version: 2
+      updates:
+        - package-ecosystem: gomod
+          directory: /
+          schedule:
+            interval: weekly
+```
 
 For a genuinely one-off repository, omit `profile` and specify the full schema
 explicitly instead:

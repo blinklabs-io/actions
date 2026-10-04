@@ -61,14 +61,15 @@ type RepoMarker struct {
 const defaultMarkerPath = ".blinklabs/profile.yml"
 
 // Profile is a reusable template for a class of repositories. A repository that
-// references a profile inherits its settings, collaborators, branch protection
-// and workflows, supplying only per-repo values via `vars` (and, for genuinely
-// special cases, `overrides`).
+// references a profile inherits its settings, collaborators, branch protection,
+// workflows, and Dependabot manifest, supplying only per-repo values via `vars`
+// (and, for genuinely special cases, `overrides`).
 type Profile struct {
 	Settings         RepoSettings       `yaml:"settings"`
 	Collaborators    []Collaborator     `yaml:"collaborators"`
 	BranchProtection []BranchProtection `yaml:"branch_protection"`
 	Workflows        []WorkflowConfig   `yaml:"workflows"`
+	Dependabot       string             `yaml:"dependabot"`
 }
 
 // WorkflowOverride patches a single profile workflow for one repository. Only
@@ -86,6 +87,8 @@ type WorkflowOverride struct {
 type RepoConfig struct {
 	Name    string `yaml:"name"`
 	Profile string `yaml:"profile"`
+	// Dependabot is the complete manifest written to .github/dependabot.yml.
+	Dependabot string `yaml:"dependabot"`
 	// Vars supplies the per-repo values substituted into ${var} placeholders in
 	// the referenced profile's workflow params.
 	Vars map[string]string `yaml:"vars"`
@@ -274,6 +277,10 @@ func main() {
 		fmt.Printf("Failed to expand profiles: %v\n", err)
 		os.Exit(1)
 	}
+	if err := validateDependabotConfigs(cfg.Repositories); err != nil {
+		fmt.Printf("Invalid Dependabot config: %v\n", err)
+		os.Exit(1)
+	}
 	for _, repo := range cfg.Repositories {
 		owner, repoName := parseRepoString(repo.Name)
 		fmt.Printf("⚡ Starting sync for %s/%s\n", owner, repoName)
@@ -285,7 +292,7 @@ func main() {
 			fmt.Printf("Error syncing branch protection for %s/%s: %v\n", owner, repoName, err)
 			os.Exit(1)
 		}
-		syncWorkflows(ctx, client, owner, repoName, repo.Workflows)
+		syncWorkflows(ctx, client, owner, repoName, repo.Workflows, repo.Dependabot)
 	}
 }
 
@@ -425,11 +432,12 @@ func expandRepo(cfg *Config, repo *RepoConfig) error {
 	if len(repo.Workflows) > 0 {
 		return fmt.Errorf("repository %q sets both profile %q and explicit workflows", repo.Name, repo.Profile)
 	}
-	// Profile-based repos inherit settings/collaborators/branch_protection
-	// from the profile; setting them directly would be silently discarded,
-	// so reject it explicitly (mirrors the workflows check above). Because
-	// DeleteBranchOnMerge is a *bool, an explicit `delete_branch_on_merge:
-	// false` yields a non-nil pointer and is caught here too.
+	if repo.Dependabot != "" {
+		return fmt.Errorf("repository %q sets both profile %q and explicit dependabot config", repo.Name, repo.Profile)
+	}
+	// Profile-based repos inherit these settings, so supplying them directly
+	// would be silently discarded. A non-nil DeleteBranchOnMerge also catches
+	// an explicit `delete_branch_on_merge: false`.
 	if repo.Settings != (RepoSettings{}) {
 		return fmt.Errorf("repository %q sets both profile %q and explicit settings; profile-based repos inherit settings from the profile", repo.Name, repo.Profile)
 	}
@@ -443,6 +451,7 @@ func expandRepo(cfg *Config, repo *RepoConfig) error {
 	repo.Settings = profile.Settings
 	repo.Collaborators = profile.Collaborators
 	repo.BranchProtection = profile.BranchProtection
+	repo.Dependabot = profile.Dependabot
 
 	workflows := make([]WorkflowConfig, 0, len(profile.Workflows))
 	for _, pwf := range profile.Workflows {
@@ -470,6 +479,47 @@ func expandRepo(cfg *Config, repo *RepoConfig) error {
 	repo.Profile = ""
 	repo.Vars = nil
 	repo.Overrides = nil
+	return nil
+}
+
+// validateDependabotConfigs checks the required manifest fields while leaving
+// Dependabot's optional fields untouched in the raw content sent to GitHub.
+func validateDependabotConfigs(repositories []RepoConfig) error {
+	for _, repo := range repositories {
+		if repo.Dependabot == "" {
+			continue
+		}
+
+		var manifest struct {
+			Version int `yaml:"version"`
+			Updates []struct {
+				PackageEcosystem string `yaml:"package-ecosystem"`
+				Directory        string `yaml:"directory"`
+				Schedule         struct {
+					Interval string `yaml:"interval"`
+				} `yaml:"schedule"`
+			} `yaml:"updates"`
+		}
+		if err := yaml.Unmarshal([]byte(repo.Dependabot), &manifest); err != nil {
+			return fmt.Errorf("repository %q: %w", repo.Name, err)
+		}
+		if manifest.Version != 2 {
+			return fmt.Errorf("repository %q: dependabot.version must be 2", repo.Name)
+		}
+		if len(manifest.Updates) == 0 {
+			return fmt.Errorf("repository %q: dependabot.updates must contain at least one entry", repo.Name)
+		}
+		for i, update := range manifest.Updates {
+			if strings.TrimSpace(update.PackageEcosystem) == "" ||
+				strings.TrimSpace(update.Directory) == "" ||
+				strings.TrimSpace(update.Schedule.Interval) == "" {
+				return fmt.Errorf(
+					"repository %q: dependabot.updates[%d] must set package-ecosystem, directory, and schedule.interval",
+					repo.Name, i,
+				)
+			}
+		}
+	}
 	return nil
 }
 
@@ -1510,7 +1560,7 @@ func renderWorkflow(tmpl *template.Template, wf WorkflowConfig) ([]byte, error) 
 	return buf.Bytes(), nil
 }
 
-func syncWorkflows(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig) {
+func syncWorkflows(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig, dependabotConfig ...string) {
 	// Fetch repo info once to get the actual default branch name.
 	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
 	if err != nil {
@@ -1518,6 +1568,10 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 		return
 	}
 	defaultBranch := repoInfo.GetDefaultBranch()
+	dependabot := ""
+	if len(dependabotConfig) > 0 {
+		dependabot = dependabotConfig[0]
+	}
 
 	tmpl, err := buildWorkflowTemplate("templates/workflow.tmpl")
 	if err != nil {
@@ -1527,10 +1581,9 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 
 	standalone, pipelines := groupPipelines(workflows)
 
-	// Every workflow change this repository needs is staged here and written as
-	// one commit. Pushing a commit per file made a run that touches N files
-	// start N CI runs; a change that hit many repositories multiplied that
-	// across the org and clogged the runners. One commit per repo means one run.
+	// Every managed file change this repository needs is staged here and written
+	// as one commit, so a reconciliation that touches several files starts one
+	// CI run instead of one run per file.
 	batch := &commitBatch{}
 
 	for _, wf := range standalone {
@@ -1571,8 +1624,41 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 	// Fold obsolete-wrapper cleanup into the same commit so it does not start a
 	// separate CI run of its own.
 	stageRemovals(ctx, client, owner, repo, batch, obsoleteIssueCloseWorkflowPaths)
+	if dependabot != "" {
+		stageManagedFile(ctx, client, owner, repo, batch, ".github/dependabot.yml", []byte(dependabot))
+	}
 
 	flushBatch(ctx, client, owner, repo, defaultBranch, batch)
+}
+
+// stageManagedFile stages a managed file only when its contents differ from the
+// repository's current version.
+func stageManagedFile(
+	ctx context.Context,
+	client *github.Client,
+	owner, repo string,
+	batch *commitBatch,
+	path string,
+	desiredContent []byte,
+) {
+	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
+	if err == nil {
+		existingContent, decErr := fileContent.GetContent()
+		if decErr == nil && existingContent == string(desiredContent) {
+			fmt.Printf("✅ Managed file %s matches perfectly. Skipping push.\n", path)
+			return
+		}
+		fmt.Printf("  Drift detected in %s. Staging update...\n", path)
+		batch.upsert(path, desiredContent, fmt.Sprintf("update %s", path))
+		return
+	}
+	if !isNotFound(err) {
+		fmt.Printf("  Error reading managed file %s: %v\n", path, err)
+		return
+	}
+
+	fmt.Printf("  Staging creation of missing managed file %s...\n", path)
+	batch.upsert(path, desiredContent, fmt.Sprintf("add %s", path))
 }
 
 // stageWorkflowFile stages one generated workflow file for the aggregated
@@ -1677,7 +1763,7 @@ func (b *commitBatch) remove(path, desc string) {
 // message renders the aggregated commit message: a fixed title plus one bullet
 // per staged change so the single commit still records what it touched.
 func (b *commitBatch) message() string {
-	const title = "chore: sync managed workflows"
+	const title = "chore: sync managed files"
 	if len(b.summary) == 0 {
 		return title
 	}
@@ -1760,7 +1846,7 @@ func flushBatch(
 	}
 
 	fmt.Printf(
-		"✅ Committed %d workflow change(s) to %s/%s@%s in one commit.\n",
+		"✅ Committed %d managed file change(s) to %s/%s@%s in one commit.\n",
 		len(batch.ops), owner, repo, defaultBranch,
 	)
 }

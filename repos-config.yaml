@@ -490,6 +490,21 @@ repositories:
     branch_protection:
       - branch: main
         <<: *branch_protection_defaults
+    dependabot: |
+      version: 2
+      updates:
+        - package-ecosystem: docker
+          directory: /
+          schedule:
+            interval: weekly
+        - package-ecosystem: github-actions
+          directory: /
+          schedule:
+            interval: weekly
+        - package-ecosystem: gomod
+          directory: /
+          schedule:
+            interval: weekly
     workflows:
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
