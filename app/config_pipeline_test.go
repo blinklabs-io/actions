@@ -102,24 +102,13 @@ func TestConfiguredPipelinesGate(t *testing.T) {
 	}
 }
 
-func TestConfiguredPipelinesKeepPathFilteredWorkflowsStandalone(t *testing.T) {
+func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 	cfg := loadRealConfig(t)
 	for _, repo := range cfg.Repositories {
 		_, pipelines := groupPipelines(repo.Workflows)
 		for _, members := range pipelines {
-			for _, wf := range members {
-				for eventName, rawEvent := range wf.Triggers {
-					event, ok := rawEvent.(map[string]interface{})
-					if !ok {
-						continue
-					}
-					if _, hasPaths := event["paths"]; hasPaths {
-						t.Errorf("%s pipeline %s job %s has %s path filters; keep it standalone to preserve job-level filtering", repo.Name, wf.Pipeline, wf.jobID(), eventName)
-					}
-					if _, hasPathsIgnore := event["paths-ignore"]; hasPathsIgnore {
-						t.Errorf("%s pipeline %s job %s has %s path-ignore filters; keep it standalone to preserve job-level filtering", repo.Name, wf.Pipeline, wf.jobID(), eventName)
-					}
-				}
+			if err := validatePipelinePathFilters(members); err != nil {
+				t.Errorf("%s pipeline %s path filters: %v", repo.Name, members[0].Pipeline, err)
 			}
 		}
 	}

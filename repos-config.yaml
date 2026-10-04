@@ -513,7 +513,7 @@ repositories:
               - scripts/**
           push:
             branches: [main]
-            tags: ['v*']
+            tags: ['v*.*.*']
             paths:
               - '**/*.go'
               - go.*
@@ -564,6 +564,9 @@ repositories:
           contents: write
           id-token: write
           packages: write
+          # reuseable-publish uploads Trivy SARIF from its manifest job; the
+          # called workflow cannot elevate this caller permission.
+          security-events: write
           statuses: write
         params:
           binary-name: "cardano-txpump"
@@ -1353,6 +1356,7 @@ repositories:
               - dingo-archive-demo/**
         params:
           working-directory: "dingo-archive-demo"
+          # Compile the Docker-backed suite without starting its local devnet.
           test-flags: "-race -tags=archive_demo -run=^$"
           run-golangci-lint: "true"
           run-nilaway: "true"

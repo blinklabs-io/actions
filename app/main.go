@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -980,6 +981,9 @@ func validatePipeline(members []WorkflowConfig) error {
 	}
 
 	file := members[0].Pipeline
+	if err := validatePipelinePathFilters(members); err != nil {
+		return fmt.Errorf("pipeline %q: %w", file, err)
+	}
 
 	// A pipeline declares its `on:` block once, or every member declares the
 	// same triggers. The second form is what a pipeline confined to one event
@@ -1083,6 +1087,34 @@ func validatePipeline(members []WorkflowConfig) error {
 	}
 
 	return validateNoCycle(file, members)
+}
+
+// validatePipelinePathFilters rejects event filters that would broaden when
+// member workflows are combined into one file. Unlike job conditions, path
+// filters cannot be restored per job after GitHub applies the pipeline-level
+// trigger, so every member handling an event must use the same path filters.
+func validatePipelinePathFilters(members []WorkflowConfig) error {
+	filtersByEvent := make(map[string]map[string]interface{})
+	for _, wf := range members {
+		for eventName, rawFilter := range wf.Triggers {
+			filter := make(map[string]interface{})
+			if event, ok := rawFilter.(map[string]interface{}); ok {
+				for _, key := range []string{"paths", "paths-ignore"} {
+					if value, exists := event[key]; exists {
+						filter[key] = value
+					}
+				}
+			}
+			if previous, exists := filtersByEvent[eventName]; exists && !reflect.DeepEqual(previous, filter) {
+				return fmt.Errorf(
+					"jobs sharing %s use different path filters; leave filtered workflows standalone or make the filters identical",
+					eventName,
+				)
+			}
+			filtersByEvent[eventName] = filter
+		}
+	}
+	return nil
 }
 
 func validateSupersedes(destination string, wf WorkflowConfig) error {
@@ -1202,10 +1234,9 @@ func pipelineTriggers(members []WorkflowConfig) map[string]interface{} {
 // list without silencing the bare one. Each member's `if` is what narrows it
 // back to the events that member belongs to.
 //
-// Note that a paths filter cannot be expressed as an `if`, so folding a
-// paths-filtered wrapper into a pipeline drops that filter. Do that only where
-// the filter was under-inclusive to begin with; a filter that accurately
-// describes what the job depends on is cheaper left in its own wrapper.
+// Path filters are unioned with the event, so a missing or different filter on
+// one member broadens the trigger for every job. validatePipeline rejects that
+// mismatch because job-level `if` conditions cannot restore path filtering.
 func mergeTrigger(merged map[string]interface{}, event string, filter interface{}) {
 	existing, seen := merged[event]
 	if !seen {

@@ -211,6 +211,43 @@ func TestValidatePipelineAcceptsNarrowedMember(t *testing.T) {
 	}
 }
 
+func TestValidatePipelineAcceptsMatchingPathFilters(t *testing.T) {
+	members := goPipeline()
+	triggers := map[string]interface{}{
+		"pull_request": map[string]interface{}{
+			"paths": []interface{}{"**/*.go", "go.*"},
+		},
+	}
+	for i := range members {
+		members[i].Triggers = triggers
+	}
+
+	if err := validatePipeline(members); err != nil {
+		t.Fatalf("validatePipeline rejected matching path filters: %v", err)
+	}
+}
+
+func TestValidatePipelineRejectsDifferentPathFilters(t *testing.T) {
+	members := goPipeline()
+	for i := range members {
+		members[i].Triggers = map[string]interface{}{
+			"pull_request": map[string]interface{}{
+				"paths": []interface{}{"**/*.go", "go.*"},
+			},
+		}
+	}
+	members[1].Triggers = map[string]interface{}{
+		"pull_request": map[string]interface{}{
+			"paths": []interface{}{"Dockerfile"},
+		},
+	}
+
+	err := validatePipeline(members)
+	if err == nil || !strings.Contains(err.Error(), "different path filters") {
+		t.Fatalf("validatePipeline error = %v, want different-path-filters error", err)
+	}
+}
+
 // TestPipelineTriggersUnionsMembers checks the `on:` block covers every event
 // any member ran on. A union that dropped one would stop that member running at
 // all, which is a silent loss of a check rather than a visible failure.
