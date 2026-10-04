@@ -155,6 +155,11 @@ repositories:
             interval: weekly
 ```
 
+An omitted or empty `dependabot` value leaves an existing
+`.github/dependabot.yml` untouched. This lets repositories keep manifests they
+manage outside the central configuration; removing a central value does not
+delete a repository file.
+
 For a genuinely one-off repository, omit `profile` and specify the full schema
 explicitly instead:
 

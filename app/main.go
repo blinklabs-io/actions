@@ -482,8 +482,18 @@ func expandRepo(cfg *Config, repo *RepoConfig) error {
 	return nil
 }
 
-// validateDependabotConfigs checks the required manifest fields while leaving
-// Dependabot's optional fields untouched in the raw content sent to GitHub.
+var supportedDependabotEcosystems = map[string]struct{}{
+	"bazel": {}, "bun": {}, "bundler": {}, "cargo": {}, "composer": {},
+	"conda": {}, "deno": {}, "devcontainers": {}, "docker": {},
+	"docker-compose": {}, "dotnet-sdk": {}, "elm": {}, "gitsubmodule": {},
+	"github-actions": {}, "gomod": {}, "gradle": {}, "helm": {}, "julia": {},
+	"maven": {}, "mix": {}, "nix": {}, "npm": {}, "nuget": {}, "opentofu": {},
+	"pip": {}, "pre-commit": {}, "pub": {}, "rust-toolchain": {}, "sbt": {},
+	"swift": {}, "terraform": {}, "uv": {}, "vcpkg": {},
+}
+
+// validateDependabotConfigs checks required fields while leaving optional
+// fields untouched in the raw content sent to GitHub.
 func validateDependabotConfigs(repositories []RepoConfig) error {
 	for _, repo := range repositories {
 		if repo.Dependabot == "" {
@@ -493,8 +503,9 @@ func validateDependabotConfigs(repositories []RepoConfig) error {
 		var manifest struct {
 			Version int `yaml:"version"`
 			Updates []struct {
-				PackageEcosystem string `yaml:"package-ecosystem"`
-				Directory        string `yaml:"directory"`
+				PackageEcosystem string   `yaml:"package-ecosystem"`
+				Directory        *string  `yaml:"directory"`
+				Directories      []string `yaml:"directories"`
 				Schedule         struct {
 					Interval string `yaml:"interval"`
 				} `yaml:"schedule"`
@@ -510,13 +521,49 @@ func validateDependabotConfigs(repositories []RepoConfig) error {
 			return fmt.Errorf("repository %q: dependabot.updates must contain at least one entry", repo.Name)
 		}
 		for i, update := range manifest.Updates {
-			if strings.TrimSpace(update.PackageEcosystem) == "" ||
-				strings.TrimSpace(update.Directory) == "" ||
-				strings.TrimSpace(update.Schedule.Interval) == "" {
+			ecosystem := strings.TrimSpace(update.PackageEcosystem)
+			if ecosystem == "" || strings.TrimSpace(update.Schedule.Interval) == "" {
 				return fmt.Errorf(
-					"repository %q: dependabot.updates[%d] must set package-ecosystem, directory, and schedule.interval",
+					"repository %q: dependabot.updates[%d] must set package-ecosystem and schedule.interval",
 					repo.Name, i,
 				)
+			}
+			if _, ok := supportedDependabotEcosystems[ecosystem]; !ok {
+				return fmt.Errorf(
+					"repository %q: dependabot.updates[%d] has unsupported package-ecosystem %q",
+					repo.Name, i, ecosystem,
+				)
+			}
+
+			hasDirectory := update.Directory != nil
+			hasDirectories := update.Directories != nil
+			if hasDirectory == hasDirectories {
+				return fmt.Errorf(
+					"repository %q: dependabot.updates[%d] must set either directory or directories",
+					repo.Name, i,
+				)
+			}
+			if hasDirectory && strings.TrimSpace(*update.Directory) == "" {
+				return fmt.Errorf(
+					"repository %q: dependabot.updates[%d].directory must be nonblank",
+					repo.Name, i,
+				)
+			}
+			if hasDirectories {
+				if len(update.Directories) == 0 {
+					return fmt.Errorf(
+						"repository %q: dependabot.updates[%d].directories must contain at least one location",
+						repo.Name, i,
+					)
+				}
+				for _, directory := range update.Directories {
+					if strings.TrimSpace(directory) == "" {
+						return fmt.Errorf(
+							"repository %q: dependabot.updates[%d].directories must contain only nonblank locations",
+							repo.Name, i,
+						)
+					}
+				}
 			}
 		}
 	}
@@ -1643,6 +1690,10 @@ func stageManagedFile(
 ) {
 	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
 	if err == nil {
+		if fileContent == nil {
+			fmt.Printf("  Error reading managed file %s: path is not a file\n", path)
+			return
+		}
 		existingContent, decErr := fileContent.GetContent()
 		if decErr == nil && existingContent == string(desiredContent) {
 			fmt.Printf("✅ Managed file %s matches perfectly. Skipping push.\n", path)
