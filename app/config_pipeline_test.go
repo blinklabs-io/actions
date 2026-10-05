@@ -114,8 +114,7 @@ func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 	}
 }
 
-func TestConfiguredPublishWorkflowsUseReviewedRefs(t *testing.T) {
-	const txpumpMainCommit = "@e4e40087ef774af89b4f676edae936b86047fbbf"
+func TestConfiguredPublishWorkflowsUseMain(t *testing.T) {
 	cfg := loadRealConfig(t)
 	found := 0
 	for _, repo := range cfg.Repositories {
@@ -124,17 +123,45 @@ func TestConfiguredPublishWorkflowsUseReviewedRefs(t *testing.T) {
 				continue
 			}
 			found++
-			want := "@main"
-			if repo.Name == "blinklabs-io/cardano-txpump" {
-				want = txpumpMainCommit
-			}
-			if !strings.HasSuffix(wf.ReusableWorkflow, want) {
-				t.Errorf("%s %s uses publish workflow ref %q, want suffix %s", repo.Name, wf.DestinationFile, wf.ReusableWorkflow, want)
+			if !strings.HasSuffix(wf.ReusableWorkflow, "@main") {
+				t.Errorf("%s %s uses publish workflow ref %q, want @main", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
 			}
 		}
 	}
 	if found == 0 {
 		t.Fatal("no reusable publish workflows found in config")
+	}
+}
+
+func TestTxpumpReusableWorkflowsTrackActionsMain(t *testing.T) {
+	const (
+		repoName       = "blinklabs-io/cardano-txpump"
+		workflowPrefix = "blinklabs-io/actions/.github/workflows/"
+		wantWorkflows  = 4
+	)
+	cfg := loadRealConfig(t)
+	foundRepo := false
+	foundWorkflows := 0
+	for _, repo := range cfg.Repositories {
+		if repo.Name != repoName {
+			continue
+		}
+		foundRepo = true
+		for _, wf := range repo.Workflows {
+			if !strings.HasPrefix(wf.ReusableWorkflow, workflowPrefix) {
+				continue
+			}
+			foundWorkflows++
+			if !strings.HasSuffix(wf.ReusableWorkflow, "@main") {
+				t.Errorf("%s %s uses reusable workflow ref %q, want @main", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
+			}
+		}
+	}
+	if !foundRepo {
+		t.Fatalf("repository %s not found in config", repoName)
+	}
+	if foundWorkflows != wantWorkflows {
+		t.Errorf("txpump has %d actions reusable workflows, want %d", foundWorkflows, wantWorkflows)
 	}
 }
 

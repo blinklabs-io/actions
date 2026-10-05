@@ -493,7 +493,7 @@ repositories:
     workflows:
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@e4e40087ef774af89b4f676edae936b86047fbbf"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
         triggers:
           pull_request:
         permissions:
@@ -504,7 +504,7 @@ repositories:
         pipeline_name: ci
         supersedes: [golangci-lint.yml, nilaway.yml]
         workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@e4e40087ef774af89b4f676edae936b86047fbbf"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         triggers:
           pull_request:
             paths:
@@ -532,7 +532,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@e4e40087ef774af89b4f676edae936b86047fbbf"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
         triggers:
           pull_request:
             branches: [main]
@@ -552,7 +552,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e4e40087ef774af89b4f676edae936b86047fbbf"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
         triggers:
           push:
             branches: [main]
