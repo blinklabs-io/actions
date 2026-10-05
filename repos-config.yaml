@@ -493,16 +493,18 @@ repositories:
     workflows:
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@e4e40087ef774af89b4f676edae936b86047fbbf"
         triggers:
           pull_request:
+        permissions:
+          contents: read
 
       - destination_file: go-test.yml
         pipeline: ci.yml
         pipeline_name: ci
         supersedes: [golangci-lint.yml, nilaway.yml]
         workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@e4e40087ef774af89b4f676edae936b86047fbbf"
         triggers:
           pull_request:
             paths:
@@ -520,6 +522,8 @@ repositories:
               - Makefile
               - Dockerfile
               - scripts/**
+        permissions:
+          contents: read
         params:
           run-golangci-lint: "true"
           run-nilaway: "true"
@@ -528,7 +532,7 @@ repositories:
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@e4e40087ef774af89b4f676edae936b86047fbbf"
         triggers:
           pull_request:
             branches: [main]
@@ -538,6 +542,8 @@ repositories:
               - go.*
               - scripts/**
               - .github/workflows/ci-docker.yml
+        permissions:
+          contents: read
         params:
           image-name: "blinklabs-io/cardano-txpump"
 
@@ -546,7 +552,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e4e40087ef774af89b4f676edae936b86047fbbf"
         triggers:
           push:
             branches: [main]

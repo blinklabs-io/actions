@@ -114,7 +114,8 @@ func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 	}
 }
 
-func TestConfiguredPublishWorkflowsUseMain(t *testing.T) {
+func TestConfiguredPublishWorkflowsUseReviewedRefs(t *testing.T) {
+	const txpumpMainCommit = "@e4e40087ef774af89b4f676edae936b86047fbbf"
 	cfg := loadRealConfig(t)
 	found := 0
 	for _, repo := range cfg.Repositories {
@@ -123,8 +124,12 @@ func TestConfiguredPublishWorkflowsUseMain(t *testing.T) {
 				continue
 			}
 			found++
-			if !strings.HasSuffix(wf.ReusableWorkflow, "@main") {
-				t.Errorf("%s %s uses publish workflow ref %q, want @main", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
+			want := "@main"
+			if repo.Name == "blinklabs-io/cardano-txpump" {
+				want = txpumpMainCommit
+			}
+			if !strings.HasSuffix(wf.ReusableWorkflow, want) {
+				t.Errorf("%s %s uses publish workflow ref %q, want suffix %s", repo.Name, wf.DestinationFile, wf.ReusableWorkflow, want)
 			}
 		}
 	}
