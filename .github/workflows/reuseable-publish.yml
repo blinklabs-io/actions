@@ -179,6 +179,29 @@ jobs:
           COMMIT_HASH: ${{ github.sha }}
           BUILD_DATE: ${{ steps.build-metadata.outputs.date }}
         run: bash -c "$BINARY_BUILD_COMMAND"
+      # The upload and attestation steps expect Windows executables to have
+      # an .exe suffix, while a Makefile may pass a bare -o name to go build.
+      - name: Normalize Windows executable suffixes
+        if: matrix.os == 'windows'
+        shell: bash
+        env:
+          BINARY_NAME: ${{ inputs.binary-name }}
+          ADDITIONAL_BINARY_NAMES: ${{ inputs.additional-binary-names }}
+        run: |
+          _binary_names=("$BINARY_NAME")
+          while IFS= read -r _binary_name; do
+            [ -n "$_binary_name" ] && _binary_names+=("$_binary_name")
+          done < <(jq -r '.[]' <<< "$ADDITIONAL_BINARY_NAMES")
+          for _binary_name in "${_binary_names[@]}"; do
+            if [[ -f "${_binary_name}.exe" ]]; then
+              continue
+            fi
+            if [[ ! -f "$_binary_name" ]]; then
+              echo "Missing Windows binary: ${_binary_name}.exe or ${_binary_name}" >&2
+              exit 1
+            fi
+            mv "$_binary_name" "${_binary_name}.exe"
+          done
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
         env:
