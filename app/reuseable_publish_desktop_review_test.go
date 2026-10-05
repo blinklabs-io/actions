@@ -332,7 +332,7 @@ func TestMsys2PinnedToCurrentSHA(t *testing.T) {
 		t.Error("reusable still pins the older msys2/setup-msys2 v2.28.0 SHA")
 	}
 	if strings.Contains(string(data), badSHA) {
-		t.Error("reusable pins the non-existent msys2/setup-msys2 SHA 66cd2cc13f7515… (No commit found); use the real v2.32.0 commit")
+		t.Error("reusable pins the non-existent msys2/setup-msys2 SHA 66cd2cc13f7515… (No commit found); use the v2.33.0 commit")
 	}
 	// Both the MinGW64 (amd64) and CLANGARM64 (arm64) CGO rows must be bumped.
 	if got := strings.Count(string(data), wantSHA); got != 2 {
