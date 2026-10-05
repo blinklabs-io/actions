@@ -7,7 +7,7 @@ on:
         description: Trigger a module refresh on proxy.golang.org after release creation.
         required: false
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read

@@ -37,7 +37,10 @@ func TestGoLibraryProxyPullHandlesSkippedExamples(t *testing.T) {
 }
 
 func TestConfiguredLibraryReleasesPullGoModule(t *testing.T) {
-	for _, file := range []string{"reuseable-go-library-release.yml", "reuseable-go-module-release.yml"} {
+	for file, input := range map[string]string{
+		"reuseable-go-library-release.yml": "pull-go-module",
+		"reuseable-go-module-release.yml":  "update-go-proxy",
+	} {
 		data, err := os.ReadFile("../.github/workflows/" + file)
 		if err != nil {
 			t.Fatal(err)
@@ -46,7 +49,7 @@ func TestConfiguredLibraryReleasesPullGoModule(t *testing.T) {
 			On struct {
 				Call struct {
 					Inputs map[string]struct {
-						Default bool `yaml:"default"`
+						Default any `yaml:"default"`
 					} `yaml:"inputs"`
 				} `yaml:"workflow_call"`
 			} `yaml:"on"`
@@ -54,7 +57,7 @@ func TestConfiguredLibraryReleasesPullGoModule(t *testing.T) {
 		if err := yaml.Unmarshal(data, &workflow); err != nil {
 			t.Fatal(err)
 		}
-		if !workflow.On.Call.Inputs["pull-go-module"].Default {
+		if workflow.On.Call.Inputs[input].Default != true {
 			t.Errorf("%s does not index Go modules by default", file)
 		}
 	}
@@ -66,7 +69,11 @@ func TestConfiguredLibraryReleasesPullGoModule(t *testing.T) {
 				continue
 			}
 			count++
-			if value, ok := workflow.Params["pull-go-module"]; ok && value != "true" {
+			input := "pull-go-module"
+			if strings.Contains(workflow.ReusableWorkflow, "/reuseable-go-module-release.yml@") {
+				input = "update-go-proxy"
+			}
+			if value, ok := workflow.Params[input]; ok && value != "true" {
 				t.Errorf("%s release disables Go module indexing: %q", repo.Name, value)
 			}
 		}
