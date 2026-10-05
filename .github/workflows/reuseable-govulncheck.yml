@@ -18,6 +18,16 @@ on:
         required: false
         type: string
         default: "v1.7.0"
+      govulncheck-command:
+        description: Bash command that replaces the default `go run` invocation, for repositories whose scan is a Makefile target (e.g. "make govulncheck"). Empty runs govulncheck-version against ./... .
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Job backstop for the govulncheck job against a wedged runner.
+        required: false
+        type: number
+        default: 10
       run-gosec:
         description: "Also run gosec and upload its SARIF results to code scanning. Requires the caller to grant `security-events: write`."
         required: false
@@ -36,7 +46,7 @@ jobs:
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
@@ -47,9 +57,16 @@ jobs:
           go-version: ${{ inputs.go-version }}
           cache: ${{ inputs.setup-go-cache }}
       - name: govulncheck
+        shell: bash
         env:
           GOVULNCHECK_VERSION: ${{ inputs.govulncheck-version }}
-        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+          GOVULNCHECK_COMMAND: ${{ inputs.govulncheck-command }}
+        run: |
+          if [ -n "$GOVULNCHECK_COMMAND" ]; then
+            bash -c "$GOVULNCHECK_COMMAND"
+          else
+            go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+          fi
 
   gosec:
     name: gosec

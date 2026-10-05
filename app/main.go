@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -76,12 +77,20 @@ type Profile struct {
 // the fields that differ from the profile need to be set: triggers, matrix,
 // and secrets replace the profile value wholesale, while permissions and params
 // are merged into (and may override individual keys of) the profile's values.
+// Concurrency is a workflow's `concurrency:` block. Group and CancelInProgress
+// are emitted verbatim, so both may be GitHub Actions expressions.
+type Concurrency struct {
+	Group            string `yaml:"group"`
+	CancelInProgress string `yaml:"cancel_in_progress"`
+}
+
 type WorkflowOverride struct {
 	Triggers    map[string]interface{} `yaml:"triggers"`
 	Matrix      map[string]interface{} `yaml:"matrix"`
 	Permissions map[string]string      `yaml:"permissions"`
 	Params      map[string]string      `yaml:"params"`
 	Secrets     map[string]string      `yaml:"secrets"`
+	Concurrency *Concurrency           `yaml:"concurrency"`
 }
 
 type RepoConfig struct {
@@ -143,6 +152,12 @@ type WorkflowConfig struct {
 	Permissions      map[string]string      `yaml:"permissions"`
 	Params           map[string]string      `yaml:"params"`
 	Secrets          map[string]string      `yaml:"secrets"`
+
+	// Concurrency is the workflow's `concurrency:` block. A pull-request
+	// workflow sets it so a new push cancels the run for the commit it
+	// replaced instead of queueing both. In a pipeline the combined workflow has
+	// one block, so exactly one member declares it.
+	Concurrency *Concurrency `yaml:"concurrency"`
 
 	// Pipeline, when set, is the destination file of a combined workflow that
 	// this entry becomes one job of, instead of a wrapper file of its own.
@@ -210,6 +225,7 @@ type templateData struct {
 	Permissions      map[string]string
 	MatrixYAML       string
 	TriggersYAML     string
+	ConcurrencyYAML  string
 }
 
 // pipelineJobData is one caller job inside a combined workflow.
@@ -226,9 +242,10 @@ type pipelineJobData struct {
 
 // pipelineData is the value passed into the pipeline template.
 type pipelineData struct {
-	WorkflowName string
-	TriggersYAML string
-	Jobs         []pipelineJobData
+	WorkflowName    string
+	TriggersYAML    string
+	ConcurrencyYAML string
+	Jobs            []pipelineJobData
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +366,10 @@ func cloneWorkflow(w WorkflowConfig) WorkflowConfig {
 		}
 		out.Params = params
 	}
+	if w.Concurrency != nil {
+		c := *w.Concurrency
+		out.Concurrency = &c
+	}
 	if w.Permissions != nil {
 		perms := make(map[string]string, len(w.Permissions))
 		for k, v := range w.Permissions {
@@ -372,6 +393,10 @@ func applyOverride(wf *WorkflowConfig, ov WorkflowOverride) {
 	}
 	if ov.Secrets != nil {
 		wf.Secrets = ov.Secrets
+	}
+	if ov.Concurrency != nil {
+		c := *ov.Concurrency
+		wf.Concurrency = &c
 	}
 	if len(ov.Permissions) > 0 {
 		if wf.Permissions == nil {
@@ -1100,6 +1125,24 @@ func validatePipeline(members []WorkflowConfig) error {
 		)
 	}
 
+	concurrencyDeclared := 0
+	for _, wf := range members {
+		if wf.Concurrency != nil {
+			concurrencyDeclared++
+		}
+	}
+	if concurrencyDeclared > 1 {
+		return fmt.Errorf(
+			"pipeline %q: %d members declare concurrency; a combined "+
+				"workflow has one concurrency block, so exactly one member declares it",
+			file,
+			concurrencyDeclared,
+		)
+	}
+	if _, err := renderConcurrency(pipelineConcurrency(members)); err != nil {
+		return fmt.Errorf("pipeline %q: %w", file, err)
+	}
+
 	merged := pipelineTriggers(members)
 	if _, err := renderTriggers(merged); err != nil {
 		return fmt.Errorf("renderTriggers for pipeline %q: %w", file, err)
@@ -1307,6 +1350,52 @@ func triggersInclude(triggers map[string]interface{}, event string) bool {
 // pipelineTriggers returns the combined workflow's `on:` block: an explicit
 // pipeline_triggers when a member declares one, otherwise the union of what the
 // members would each have run on.
+// pipelineConcurrency returns the combined workflow's concurrency block: the one
+// member that declares it, or nil.
+func pipelineConcurrency(members []WorkflowConfig) *Concurrency {
+	for _, wf := range members {
+		if wf.Concurrency != nil {
+			return wf.Concurrency
+		}
+	}
+	return nil
+}
+
+// renderConcurrency renders a top-level `concurrency:` block, or "" when c is
+// nil.
+//
+// The group is emitted as a double-quoted scalar so an expression such as
+// `${{ github.workflow }}-${{ github.ref }}` is never read as YAML syntax.
+// cancel_in_progress must be a boolean or a single expression: anything else
+// would be written into the workflow unchecked and rejected by GitHub only
+// when the file is loaded.
+func renderConcurrency(c *Concurrency) (string, error) {
+	if c == nil {
+		return "", nil
+	}
+	if strings.TrimSpace(c.Group) == "" {
+		return "", errors.New("concurrency requires a non-empty group")
+	}
+	cancel := strings.TrimSpace(c.CancelInProgress)
+	isExpression := strings.HasPrefix(cancel, "${{") && strings.HasSuffix(cancel, "}}") &&
+		strings.Count(cancel, "${{") == 1
+	if cancel != "" && cancel != "true" && cancel != "false" && !isExpression {
+		return "", fmt.Errorf(
+			"concurrency cancel_in_progress %q must be true, false or an expression",
+			c.CancelInProgress,
+		)
+	}
+	group, err := json.Marshal(c.Group)
+	if err != nil {
+		return "", fmt.Errorf("concurrency group: %w", err)
+	}
+	out := "concurrency:\n  group: " + string(group)
+	if cancel != "" {
+		out += "\n  cancel-in-progress: " + cancel
+	}
+	return out, nil
+}
+
 func pipelineTriggers(members []WorkflowConfig) map[string]interface{} {
 	for _, wf := range members {
 		if len(wf.PipelineTriggers) > 0 {
@@ -1490,9 +1579,15 @@ func renderPipeline(tmpl *template.Template, members []WorkflowConfig) ([]byte, 
 		return nil, fmt.Errorf("renderTriggers: %w", err)
 	}
 
+	concurrencyYAML, err := renderConcurrency(pipelineConcurrency(members))
+	if err != nil {
+		return nil, err
+	}
+
 	data := pipelineData{
-		WorkflowName: pipelineWorkflowName(members),
-		TriggersYAML: triggersYAML,
+		WorkflowName:    pipelineWorkflowName(members),
+		TriggersYAML:    triggersYAML,
+		ConcurrencyYAML: concurrencyYAML,
 	}
 	for _, wf := range members {
 		matrixYAML, merr := renderMatrix(wf.Matrix)
@@ -1591,7 +1686,12 @@ func renderWorkflow(tmpl *template.Template, wf WorkflowConfig) ([]byte, error) 
 	if err != nil {
 		return nil, fmt.Errorf("renderMatrix: %w", err)
 	}
+	concurrencyYAML, err := renderConcurrency(wf.Concurrency)
+	if err != nil {
+		return nil, err
+	}
 	data := templateData{
+		ConcurrencyYAML:  concurrencyYAML,
 		WorkflowName:     wf.WorkflowName,
 		ReusableWorkflow: wf.ReusableWorkflow,
 		Params:           wf.Params,

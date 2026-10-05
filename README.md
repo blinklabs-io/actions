@@ -31,13 +31,14 @@ repos-config.yaml  # Declarative source of truth for every managed repository
 Central workflow templates live in `.github/workflows` and are called from
 downstream repositories via `workflow_call`. The current set:
 
-- `reuseable-ci-docker-multiarch.yml` — native multi-arch Docker CI build (no QEMU).
+- `reuseable-ci-docker-multiarch.yml` — native multi-arch Docker CI build (no QEMU); `architectures` limits it to the architectures an image ships for, `build-args` passes Dockerfile ARGs, and `check-dockerfile` runs `docker build --check` first.
 - `reuseable-publish-docker-multiarch.yml` — native multi-arch Docker publish to Docker Hub + GHCR, with build provenance attestations always enabled and Trivy vulnerability scanning enabled by default (override with `enable-trivy-scan: false`).
-- `reuseable-publish.yml` — Go release binaries + native multi-arch Docker image publish; supports explicit target pairs, custom build commands, extra binaries, checksums, prereleases, and optional tag-only build preparation shared by binary and image builds.
+- `reuseable-publish.yml` — Go release binaries + native multi-arch Docker image publish; supports explicit target pairs, custom build commands, extra binaries, checksums, prereleases, and optional tag-only build preparation shared by binary and image builds. A re-run of a failed tag build replaces its own stale draft release and refuses to touch a published one. `extra-image-target` publishes a second Dockerfile target as `<tag>-<extra-image-suffix>` on both architectures, and `homebrew-tap-repository` opens a formula-bump pull request on the tap after the release is published (skipped when `homebrew-tap-token` is unset).
 - `reuseable-publish-desktop.yml` — full release pipeline for desktop-style Go apps that ship a Fyne GUI tray alongside a CLI: macOS signed + notarized `.pkg` installers, Windows signed `.msi` installers (jsign + WiX), Linux/FreeBSD tarballs, native multi-arch Docker images, and build-provenance attestations for every binary, installer, and image. The packaging scripts and `make` targets it drives live in the calling repository.
-- `reuseable-go-test.yml` — Go module verification, tidy checks, build, vet, tests, in-job golangci-lint and NilAway, Buf checks, generated-code drift checks, forbidden-import guards, nested modules, service containers, additional test passes, and explicit cross-build targets; supports an optional Linux race-detection pass.
-- `reuseable-golangci-lint.yml` — golangci-lint with a configurable tool version, additional invocation, and optional formatting-diff check.
+- `reuseable-go-test.yml` — Go module verification, tidy checks, build, vet, tests, in-job golangci-lint and NilAway, Buf checks, generated-code drift checks, forbidden-import guards, nested modules, service containers, additional test passes, and explicit cross-build targets; supports an optional Linux race-detection pass. `test-tags`, `test-ldflags` and `build-flags` apply to the build and every test invocation (`test-ldflags` exists because `test-flags` is split on whitespace and cannot carry a quoted `-ldflags` value), and `timeout-minutes` sets the job backstop.
+- `reuseable-golangci-lint.yml` — golangci-lint with a configurable tool version, additional invocation, optional formatting-diff check, nested modules (`additional-working-directories`), and a `pre-lint-command` for repository checks that belong in the lint stage.
 - `reuseable-nilaway.yml` — NilAway static analysis.
+- `reuseable-govulncheck.yml` — govulncheck, with an optional gosec SARIF upload; `govulncheck-command` substitutes a repository's own scan (for example a Makefile target) for the default `go run` invocation.
 - `reuseable-conventional-commits.yml` — conventional-commit PR title check.
 - `reuseable-check-versions.yml` — check upstream image versions against a docker-compose file and open update PRs.
 - `reuseable-check-versions-packages.yml` — check upstream release/image versions against `packages/<pkg>/<pkg>-*.yaml` version files, validate with the cardano-up CLI, and open update PRs (for cardano-up package repositories).
@@ -195,6 +196,21 @@ Conventional Commits check to repositories whose CI and release workflows have
 not yet been migrated to shared workflows. The explicit public-repository set
 covers active, non-fork repositories; archived repositories are read-only, and
 forks are excluded from governance writes.
+
+### Concurrency
+
+A workflow, or the one member of a pipeline that declares it, can set a
+`concurrency` block so a new push cancels the run for the commit it replaced:
+
+```yaml
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}"
+  cancel_in_progress: "true"
+```
+
+`cancel_in_progress` is `true`, `false`, or a single `${{ }}` expression. A
+pipeline has one `concurrency:` block, so declaring it on more than one member
+is rejected. A per-repository `overrides` entry replaces the profile's block.
 
 ## Auto-discovery (opt-in)
 

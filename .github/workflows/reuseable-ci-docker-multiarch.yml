@@ -20,6 +20,28 @@ on:
         required: false
         type: string
         default: ""
+      architectures:
+        description: >
+          JSON array of architectures to build, each on its native runner.
+          Use '["amd64"]' for an image that is only published for amd64.
+        required: false
+        type: string
+        default: '["amd64","arm64"]'
+      build-args:
+        description: Build ARG values passed to the Docker build (multi-line KEY=VALUE pairs).
+        required: false
+        type: string
+        default: ""
+      check-dockerfile:
+        description: Run `docker build --check` against the Dockerfile before building.
+        required: false
+        type: boolean
+        default: false
+      timeout-minutes:
+        description: Job backstop against a wedged runner.
+        required: false
+        type: number
+        default: 360
 
 permissions:
   contents: read
@@ -28,8 +50,9 @@ jobs:
   build:
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        arch: ${{ fromJson(inputs.architectures) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
@@ -37,6 +60,17 @@ jobs:
           persist-credentials: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1 https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1
+
+      - name: Check Dockerfile
+        if: inputs.check-dockerfile
+        env:
+          BUILD_TARGET: ${{ inputs.build-target }}
+        run: |
+          if [ -n "$BUILD_TARGET" ]; then
+            docker build --check --target "$BUILD_TARGET" .
+          else
+            docker build --check .
+          fi
 
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0 https://github.com/docker/metadata-action/releases/tag/v6.2.0
@@ -52,6 +86,7 @@ jobs:
           context: .
           push: false
           target: ${{ inputs.build-target }}
+          build-args: ${{ inputs.build-args }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=buildkit-${{ matrix.arch }}

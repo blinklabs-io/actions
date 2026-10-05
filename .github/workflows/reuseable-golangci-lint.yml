@@ -43,6 +43,21 @@ on:
         required: false
         type: boolean
         default: false
+      additional-working-directories:
+        description: Newline-separated nested Go module directories to lint after the primary module, relative to the repository root.
+        required: false
+        type: string
+        default: ""
+      pre-lint-command:
+        description: Optional bash command run before golangci-lint, from the repository root (e.g. "make config-parity"). Empty skips it.
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Job backstop against a wedged runner.
+        required: false
+        type: number
+        default: 360
       working-directory:
         description: Go module directory relative to the repository root.
         required: false
@@ -56,6 +71,7 @@ jobs:
   golangci:
     name: lint
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
@@ -79,6 +95,13 @@ jobs:
       - name: Enable CGO
         if: inputs.cgo-enabled
         run: echo "CGO_ENABLED=1" >> "$GITHUB_ENV"
+      - name: Pre-lint command
+        if: inputs.pre-lint-command != ''
+        shell: bash
+        env:
+          PRE_LINT_COMMAND: ${{ inputs.pre-lint-command }}
+        run: |
+          bash -c "$PRE_LINT_COMMAND"
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0 https://github.com/golangci/golangci-lint-action/releases/tag/v9.3.0
         with:
@@ -91,6 +114,16 @@ jobs:
           version: ${{ inputs.version }}
           working-directory: ${{ inputs.working-directory }}
           args: ${{ inputs.extra-args }}
+      - name: golangci-lint (additional modules)
+        if: inputs.additional-working-directories != ''
+        shell: bash
+        env:
+          MODULE_DIRECTORIES: ${{ inputs.additional-working-directories }}
+        run: |
+          while IFS= read -r _directory; do
+            [ -z "$_directory" ] && continue
+            (cd "$_directory" && golangci-lint run)
+          done <<< "$MODULE_DIRECTORIES"
       - name: Check formatting
         if: inputs.check-format
         working-directory: ${{ inputs.working-directory }}

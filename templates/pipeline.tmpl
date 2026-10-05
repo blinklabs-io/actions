@@ -3,6 +3,10 @@ name: "[[ .WorkflowName ]]"
 
 on:
 [[ .TriggersYAML ]]
+[[- if .ConcurrencyYAML ]]
+
+[[ .ConcurrencyYAML ]]
+[[- end ]]
 
 jobs:
 [[- range .Jobs ]]

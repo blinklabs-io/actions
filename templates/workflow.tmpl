@@ -9,6 +9,10 @@ permissions:
 [[- range $k, $v := .Permissions ]]
   [[ $k ]]: [[ $v ]]
 [[- end ]][[- end ]]
+[[- if .ConcurrencyYAML ]]
+
+[[ .ConcurrencyYAML ]]
+[[- end ]]
 
 jobs:
   orchestrate:
