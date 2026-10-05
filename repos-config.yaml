@@ -511,6 +511,8 @@ repositories:
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
         triggers:
           pull_request:
+        permissions:
+          contents: read
 
       - destination_file: go-test.yml
         pipeline: ci.yml
@@ -535,6 +537,8 @@ repositories:
               - Makefile
               - Dockerfile
               - scripts/**
+        permissions:
+          contents: read
         params:
           run-golangci-lint: "true"
           run-nilaway: "true"
@@ -553,6 +557,8 @@ repositories:
               - go.*
               - scripts/**
               - .github/workflows/ci-docker.yml
+        permissions:
+          contents: read
         params:
           image-name: "blinklabs-io/cardano-txpump"
 
