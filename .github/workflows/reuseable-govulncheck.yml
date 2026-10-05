@@ -62,7 +62,7 @@ jobs:
           GOVULNCHECK_VERSION: ${{ inputs.govulncheck-version }}
           GOVULNCHECK_COMMAND: ${{ inputs.govulncheck-command }}
         run: |
-          if [ -n "$GOVULNCHECK_COMMAND" ]; then
+          if [[ "$GOVULNCHECK_COMMAND" == *[![:space:]]* ]]; then
             bash -c "$GOVULNCHECK_COMMAND"
           else
             go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...

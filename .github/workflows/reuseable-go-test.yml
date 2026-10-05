@@ -19,12 +19,12 @@ on:
         type: string
         default: ""
       test-tags:
-        description: Comma- or space-separated build tags passed as `-tags` to `go build` and every `go test` invocation.
+        description: Comma- or space-separated build tags passed as `-tags` to `go build`, `go vet`, the cross-build job and every `go test` invocation.
         required: false
         type: string
         default: ""
       test-ldflags:
-        description: Value for `-ldflags` on every `go test` invocation (e.g. "-s -w"). Kept apart from test-flags because that input is split on whitespace, which cannot carry a quoted value.
+        description: Value for `-ldflags` on every `go test` invocation, including nested modules (e.g. "-s -w"). Kept apart from test-flags because that input is split on whitespace, which cannot carry a quoted value.
         required: false
         type: string
         default: ""
@@ -345,14 +345,19 @@ jobs:
         env:
           TEST_PACKAGES: ${{ inputs.test-packages }}
           WINDOWS_TEST_PACKAGES: ${{ inputs.windows-test-packages }}
+          TEST_TAGS: ${{ inputs.test-tags }}
           GOARCH: ${{ matrix.go-arch }}
         run: |
           _packages="$TEST_PACKAGES"
           if [ "$RUNNER_OS" = "Windows" ] && [ -n "$WINDOWS_TEST_PACKAGES" ]; then
             _packages="$WINDOWS_TEST_PACKAGES"
           fi
+          _flags=()
+          if [ -n "$TEST_TAGS" ]; then
+            _flags+=(-tags "$TEST_TAGS")
+          fi
           # shellcheck disable=SC2086
-          go vet $_packages
+          go vet "${_flags[@]}" $_packages
       - name: Pre-test command
         if: runner.os == 'Linux' && inputs.pre-test-command != ''
         shell: bash
@@ -433,11 +438,20 @@ jobs:
         shell: bash
         env:
           MODULE_DIRECTORIES: ${{ inputs.additional-module-directories }}
+          TEST_TAGS: ${{ inputs.test-tags }}
+          TEST_LDFLAGS: ${{ inputs.test-ldflags }}
           GOARCH: ${{ matrix.go-arch }}
         run: |
+          _build_flags=()
+          if [ -n "$TEST_TAGS" ]; then
+            _build_flags+=(-tags "$TEST_TAGS")
+          fi
+          if [ -n "$TEST_LDFLAGS" ]; then
+            _build_flags+=("-ldflags=$TEST_LDFLAGS")
+          fi
           while IFS= read -r _directory; do
             [ -z "$_directory" ] && continue
-            (cd "$_directory" && go test ./...)
+            (cd "$_directory" && go test "${_build_flags[@]}" ./...)
           done <<< "$MODULE_DIRECTORIES"
       - name: go-test-race
         if: inputs.run-race-test && runner.os == 'Linux'
@@ -642,10 +656,19 @@ jobs:
           TARGET_ARCH: ${{ matrix.target.arch }}
           BUILD_PACKAGES: ${{ inputs.build-packages }}
           TEST_PACKAGES: ${{ inputs.test-packages }}
+          BUILD_FLAGS: ${{ inputs.build-flags }}
+          TEST_TAGS: ${{ inputs.test-tags }}
         run: |
           _packages="$BUILD_PACKAGES"
           if [ -z "$_packages" ]; then
             _packages="$TEST_PACKAGES"
           fi
+          _flags=()
+          if [ -n "$BUILD_FLAGS" ]; then
+            read -r -a _flags <<< "$BUILD_FLAGS"
+          fi
+          if [ -n "$TEST_TAGS" ]; then
+            _flags+=(-tags "$TEST_TAGS")
+          fi
           # shellcheck disable=SC2086
-          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build $_packages
+          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build "${_flags[@]}" $_packages

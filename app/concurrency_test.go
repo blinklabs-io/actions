@@ -63,17 +63,23 @@ func TestRenderWorkflowWithoutConcurrencyIsUnchanged(t *testing.T) {
 		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main",
 		Triggers:         map[string]interface{}{"pull_request": nil},
 		Permissions:      map[string]string{"contents": "read"},
+		Params:           map[string]string{"test-flags": "-race"},
 	}
 
 	out, err := renderWorkflow(tmpl, wf)
 	if err != nil {
 		t.Fatalf("renderWorkflow: %v", err)
 	}
-	if strings.Contains(string(out), "concurrency") {
-		t.Errorf("unexpected concurrency block\n%s", out)
-	}
-	if !strings.Contains(string(out), "\n\njobs:\n") {
-		t.Errorf("jobs block lost its blank-line separator\n%s", out)
+	// Captured from the template before concurrency support existed.
+	const want = "# Generated automatically by org-governance-bot. Do not edit manually.\n" +
+		"name: \"go-test\"\n\n" +
+		"on:\n  pull_request:\n\n" +
+		"permissions:\n  contents: read\n\n" +
+		"jobs:\n  orchestrate:\n" +
+		"    uses: blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main\n" +
+		"    with:\n      test-flags: -race\n"
+	if string(out) != want {
+		t.Errorf("rendering changed\n got: %q\nwant: %q", out, want)
 	}
 }
 
@@ -123,6 +129,16 @@ func TestRenderConcurrencyValidation(t *testing.T) {
 			name: "expression cancel",
 			in:   &Concurrency{Group: "g", CancelInProgress: "${{ github.event_name == 'pull_request' }}"},
 			want: "concurrency:\n  group: \"g\"\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+		},
+		{
+			name:    "newline cannot smuggle workflow keys",
+			in:      &Concurrency{Group: "g", CancelInProgress: "${{ a }}\npermissions: write-all"},
+			wantErr: "single line",
+		},
+		{
+			name:    "carriage return is rejected too",
+			in:      &Concurrency{Group: "g", CancelInProgress: "true\r"},
+			wantErr: "single line",
 		},
 		{name: "empty group", in: &Concurrency{CancelInProgress: "true"}, wantErr: "non-empty group"},
 		{name: "bad cancel value", in: &Concurrency{Group: "g", CancelInProgress: "yes"}, wantErr: "must be true, false or an expression"},

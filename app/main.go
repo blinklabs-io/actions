@@ -1347,9 +1347,6 @@ func triggersInclude(triggers map[string]interface{}, event string) bool {
 	return ok
 }
 
-// pipelineTriggers returns the combined workflow's `on:` block: an explicit
-// pipeline_triggers when a member declares one, otherwise the union of what the
-// members would each have run on.
 // pipelineConcurrency returns the combined workflow's concurrency block: the one
 // member that declares it, or nil.
 func pipelineConcurrency(members []WorkflowConfig) *Concurrency {
@@ -1376,6 +1373,11 @@ func renderConcurrency(c *Concurrency) (string, error) {
 	if strings.TrimSpace(c.Group) == "" {
 		return "", errors.New("concurrency requires a non-empty group")
 	}
+	// A newline would end the scalar and let the rest of the value be read as
+	// further top-level workflow keys.
+	if strings.ContainsAny(c.CancelInProgress, "\r\n") {
+		return "", errors.New("concurrency cancel_in_progress must be a single line")
+	}
 	cancel := strings.TrimSpace(c.CancelInProgress)
 	isExpression := strings.HasPrefix(cancel, "${{") && strings.HasSuffix(cancel, "}}") &&
 		strings.Count(cancel, "${{") == 1
@@ -1396,6 +1398,9 @@ func renderConcurrency(c *Concurrency) (string, error) {
 	return out, nil
 }
 
+// pipelineTriggers returns the combined workflow's `on:` block: an explicit
+// pipeline_triggers when a member declares one, otherwise the union of what the
+// members would each have run on.
 func pipelineTriggers(members []WorkflowConfig) map[string]interface{} {
 	for _, wf := range members {
 		if len(wf.PipelineTriggers) > 0 {

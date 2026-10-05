@@ -22,7 +22,7 @@ on:
         default: ""
       architectures:
         description: >
-          JSON array of architectures to build, each on its native runner.
+          JSON array of architectures to build, each on its native runner. Only amd64 and arm64 are accepted.
           Use '["amd64"]' for an image that is only published for amd64.
         required: false
         type: string
@@ -54,6 +54,15 @@ jobs:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
+      - name: Validate architecture
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          # The runner and tag suffix below are only defined for these two.
+          case "$ARCH" in
+            amd64|arm64) ;;
+            *) echo "::error::unsupported architecture '$ARCH'; use amd64 or arm64"; exit 1 ;;
+          esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
           fetch-depth: '0'
@@ -65,12 +74,17 @@ jobs:
         if: inputs.check-dockerfile
         env:
           BUILD_TARGET: ${{ inputs.build-target }}
+          BUILD_ARGS: ${{ inputs.build-args }}
         run: |
+          _flags=()
           if [ -n "$BUILD_TARGET" ]; then
-            docker build --check --target "$BUILD_TARGET" .
-          else
-            docker build --check .
+            _flags+=(--target "$BUILD_TARGET")
           fi
+          while IFS= read -r _arg; do
+            [ -z "$_arg" ] && continue
+            _flags+=(--build-arg "$_arg")
+          done <<< "$BUILD_ARGS"
+          docker build --check "${_flags[@]}" .
 
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0 https://github.com/docker/metadata-action/releases/tag/v6.2.0

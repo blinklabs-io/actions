@@ -143,12 +143,15 @@ jobs:
             const matching = releases.filter(
               candidate => candidate.tag_name === process.env.RELEASE_TAG,
             );
-            // A re-run of a failed tag build replaces its own stale draft.
-            // A published release is never touched: its assets and notes
-            // are already public.
-            if (matching.some(candidate => !candidate.draft)) {
+            // A re-run of a failed tag build replaces the draft this workflow
+            // created. A published release is never touched, and neither is a
+            // draft someone else prepared: its notes and assets are theirs.
+            const foreign = matching.filter(
+              candidate => candidate.draft && candidate.author?.login !== 'github-actions[bot]',
+            );
+            if (matching.some(candidate => !candidate.draft) || foreign.length > 0) {
               core.setFailed(
-                `release ${process.env.RELEASE_TAG} is already published; refusing to delete it`,
+                `release ${process.env.RELEASE_TAG} already exists and was not created by this workflow; refusing to replace it`,
               );
               return;
             }
@@ -775,14 +778,14 @@ jobs:
             echo "sha256=$sha256"
             echo "short_commit=${COMMIT_SHA:0:7}"
           } >> "$GITHUB_OUTPUT"
-      - name: Checkout homebrew tap
+      - name: Clone homebrew tap
         if: steps.gate.outputs.enabled == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
-        with:
-          repository: ${{ inputs.homebrew-tap-repository }}
-          token: ${{ secrets.homebrew-tap-token }}
-          path: homebrew-tap
-          persist-credentials: false
+        env:
+          GH_TOKEN: ${{ secrets.homebrew-tap-token }}
+        run: |
+          set -euo pipefail
+          gh repo clone "$TAP_REPO" homebrew-tap
+          gh auth setup-git
       - name: Update formula
         if: steps.gate.outputs.enabled == 'true'
         env:
@@ -831,18 +834,25 @@ jobs:
           branch="${BINARY_NAME}-${RELEASE_TAG}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -C "$branch"
-          git add "$FORMULA_PATH"
-          git commit -s -m "chore(${BINARY_NAME}): release ${RELEASE_TAG}"
-          # The checkout above does not persist credentials, so authenticate
-          # the push explicitly with the tap token.
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${TAP_REPO}.git"
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            # Build on the branch the open pull request already carries, so
+            # anything else on it survives the bump.
+            cp "$FORMULA_PATH" "${RUNNER_TEMP}/formula.rb"
             git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+            git checkout -q -f -B "$branch" "origin/$branch"
+            cp "${RUNNER_TEMP}/formula.rb" "$FORMULA_PATH"
+          else
+            git switch -q -C "$branch"
           fi
-          git push --force-with-lease origin "$branch"
+          if git diff --quiet -- "$FORMULA_PATH"; then
+            echo "Branch ${branch} already carries this formula."
+          else
+            git add "$FORMULA_PATH"
+            git commit -s -m "chore(${BINARY_NAME}): release ${RELEASE_TAG}"
+            git push origin "$branch"
+          fi
           if [ -z "$(gh pr list --repo "$TAP_REPO" --head "$branch" --state open --json number --jq '.[].number')" ]; then
-            gh pr create --repo "$TAP_REPO" --base main --head "$branch" \
+            gh pr create --repo "$TAP_REPO" --head "$branch" \
               --title "${BINARY_NAME} ${RELEASE_TAG}" \
               --body "Automated formula bump for [${BINARY_NAME} ${RELEASE_TAG}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG})."
           else
