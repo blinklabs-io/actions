@@ -209,7 +209,9 @@ jobs:
 
   pull-go-module:
     name: pull-go-module
-    if: needs.publish-release.result == 'success' && inputs.pull-go-module
+    if: >-
+      !cancelled() &&
+      needs.publish-release.result == 'success' && inputs.pull-go-module
     needs: [publish-release]
     runs-on: ubuntu-latest
     steps:

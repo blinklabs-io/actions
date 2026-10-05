@@ -313,7 +313,7 @@ func TestScanImagesNoOpWhenDisabled(t *testing.T) {
 }
 
 // TestMsys2PinnedToCurrentSHA asserts the Windows CGO toolchain action is pinned
-// to the real v2.32.0 commit SHA (verified to exist in msys2/setup-msys2), not a
+// to the v2.33.0 commit SHA used by the workflow, not a
 // rolled-back version or a non-existent SHA. An invalid pin fails every job at
 // the "Set up job" step — GitHub resolves every `uses:` up front, even for
 // `if:`-skipped steps — which would break a real tagged release. (P2: keep
@@ -323,7 +323,7 @@ func TestMsys2PinnedToCurrentSHA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantSHA = "msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884"
+	const wantSHA = "msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e"
 	const oldSHA = "msys2/setup-msys2@40677d36a502eb2cf0fb808cc9dec31bf6152638"
 	// The non-existent SHA that was mistakenly pinned as v2.32.0; it shares only
 	// the 66cd2cc short prefix with the real commit and returns "No commit found".
