@@ -89,7 +89,7 @@ func TestReusableGoTestWorkflowUsesMatrixArchitectureAndEffectiveGuards(t *testi
 		t.Errorf("cross-build checkout submodules = %q, want inputs.submodules", got)
 	}
 	buildRun := crossBuild.Steps[len(crossBuild.Steps)-1].Run
-	if !strings.Contains(buildRun, "GOOS=\"$TARGET_OS\" GOARCH=\"$TARGET_ARCH\" go build $_packages") ||
+	if !strings.Contains(buildRun, "GOOS=\"$TARGET_OS\" GOARCH=\"$TARGET_ARCH\" go build \"${_flags[@]}\" $_packages") ||
 		strings.Contains(buildRun, "-o /dev/null") {
 		t.Errorf("cross-build does not build all packages for the selected target:\n%s", buildRun)
 	}

@@ -77,6 +77,26 @@ on:
         required: false
         type: string
         default: ""
+      extra-image-target:
+        description: Dockerfile target built as a second image variant on each architecture and published with extra-image-suffix. Empty skips the variant.
+        required: false
+        type: string
+        default: ""
+      extra-image-suffix:
+        description: Tag suffix for the extra image variant (e.g. "antithesis" publishes <tag>-antithesis).
+        required: false
+        type: string
+        default: "extra"
+      homebrew-tap-repository:
+        description: Homebrew tap repository (owner/name) whose formula is bumped by pull request after the release is published. Empty skips the update.
+        required: false
+        type: string
+        default: ""
+      homebrew-formula-path:
+        description: Formula path inside the tap. Empty uses Formula/<binary-name>.rb.
+        required: false
+        type: string
+        default: ""
       pre-build-on-tags-only:
         description: Run pre-build-command only for tag pushes.
         required: false
@@ -88,6 +108,9 @@ on:
         required: false
       maxmind-api-credentials:
         description: MaxMind API credentials passed to pre-build-command as MAXMIND_API_CREDENTIALS.
+        required: false
+      homebrew-tap-token:
+        description: Token with push and pull-request access to homebrew-tap-repository. The update is skipped, not failed, when it is unset.
         required: false
 
 concurrency: ${{ github.ref }}
@@ -109,14 +132,42 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           result-encoding: string
           script: |
+            const release = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            };
+            const releases = await github.paginate(
+              github.rest.repos.listReleases,
+              {...release, per_page: 100},
+            );
+            const matching = releases.filter(
+              candidate => candidate.tag_name === process.env.RELEASE_TAG,
+            );
+            // A re-run of a failed tag build replaces the draft this workflow
+            // created. A published release is never touched, and neither is a
+            // draft someone else prepared: its notes and assets are theirs.
+            const foreign = matching.filter(
+              candidate => candidate.draft && candidate.author?.login !== 'github-actions[bot]',
+            );
+            if (matching.some(candidate => !candidate.draft) || foreign.length > 0) {
+              core.setFailed(
+                `release ${process.env.RELEASE_TAG} already exists and was not created by this workflow; refusing to replace it`,
+              );
+              return;
+            }
+            for (const draft of matching) {
+              await github.rest.repos.deleteRelease({
+                ...release,
+                release_id: draft.id,
+              });
+            }
             try {
               const response = await github.rest.repos.createRelease({
+                ...release,
                 draft: true,
                 generate_release_notes: true,
                 name: process.env.RELEASE_TAG,
-                owner: context.repo.owner,
                 prerelease: process.env.PRERELEASE === 'true',
-                repo: context.repo.repo,
                 tag_name: process.env.RELEASE_TAG,
               });
               return response.data.id;
@@ -351,6 +402,45 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+      - id: meta-extra
+        if: inputs.extra-image-target != ''
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0 https://github.com/docker/metadata-action/releases/tag/v6.2.0
+        with:
+          images: |
+            ${{ inputs.docker-image }}
+            ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=false
+            suffix=-${{ inputs.extra-image-suffix }}-amd64
+          tags: |
+            type=match,pattern=v(.*)-(.*),group=1
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+      - name: push extra image
+        id: push-extra
+        if: inputs.extra-image-target != ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0 https://github.com/docker/build-push-action/releases/tag/v7.4.0
+        with:
+          context: .
+          push: true
+          target: ${{ inputs.extra-image-target }}
+          build-args: ${{ inputs.build-args }}
+          tags: ${{ steps.meta-extra.outputs.tags }}
+          labels: ${{ steps.meta-extra.outputs.labels }}
+      - name: Attest Docker Hub extra image (amd64)
+        if: inputs.extra-image-target != '' && inputs.docker-image != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2 https://github.com/actions/attest-build-provenance/releases/tag/v4.2.2
+        with:
+          subject-name: index.docker.io/${{ inputs.docker-image }}
+          subject-digest: ${{ steps.push-extra.outputs.digest }}
+          push-to-registry: true
+      - name: Attest GHCR extra image (amd64)
+        if: inputs.extra-image-target != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2 https://github.com/actions/attest-build-provenance/releases/tag/v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push-extra.outputs.digest }}
+          push-to-registry: true
 
   build-image-arm64:
     if: inputs.publish-container-image
@@ -434,6 +524,45 @@ jobs:
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - id: meta-extra
+        if: inputs.extra-image-target != ''
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0 https://github.com/docker/metadata-action/releases/tag/v6.2.0
+        with:
+          images: |
+            ${{ inputs.docker-image }}
+            ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=false
+            suffix=-${{ inputs.extra-image-suffix }}-arm64v8
+          tags: |
+            type=match,pattern=v(.*)-(.*),group=1
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+      - name: push extra image
+        id: push-extra
+        if: inputs.extra-image-target != ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0 https://github.com/docker/build-push-action/releases/tag/v7.4.0
+        with:
+          context: .
+          push: true
+          target: ${{ inputs.extra-image-target }}
+          build-args: ${{ inputs.build-args }}
+          tags: ${{ steps.meta-extra.outputs.tags }}
+          labels: ${{ steps.meta-extra.outputs.labels }}
+      - name: Attest Docker Hub extra image (arm64)
+        if: inputs.extra-image-target != '' && inputs.docker-image != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2 https://github.com/actions/attest-build-provenance/releases/tag/v4.2.2
+        with:
+          subject-name: index.docker.io/${{ inputs.docker-image }}
+          subject-digest: ${{ steps.push-extra.outputs.digest }}
+          push-to-registry: true
+      - name: Attest GHCR extra image (arm64)
+        if: inputs.extra-image-target != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2 https://github.com/actions/attest-build-provenance/releases/tag/v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push-extra.outputs.digest }}
           push-to-registry: true
 
   image-manifest:
@@ -553,6 +682,29 @@ jobs:
               "${t}-amd64" "${t}-arm64v8"
           done
 
+      # The extra variant is published per architecture only; stitch it into
+      # <tag>-<suffix> manifests beside the base tags, never into :latest.
+      - name: manifest-ghcr-extra
+        if: inputs.extra-image-target != ''
+        env:
+          GHCR_TAGS: ${{ steps.meta-ghcr.outputs.tags }}
+          EXTRA_SUFFIX: ${{ inputs.extra-image-suffix }}
+        run: |
+          for t in $GHCR_TAGS; do
+            docker buildx imagetools create -t "${t}-${EXTRA_SUFFIX}" \
+              "${t}-${EXTRA_SUFFIX}-amd64" "${t}-${EXTRA_SUFFIX}-arm64v8"
+          done
+      - name: manifest-dockerhub-extra
+        if: inputs.extra-image-target != '' && inputs.docker-image != ''
+        env:
+          DH_TAGS: ${{ steps.meta-dockerhub.outputs.tags }}
+          EXTRA_SUFFIX: ${{ inputs.extra-image-suffix }}
+        run: |
+          for t in $DH_TAGS; do
+            docker buildx imagetools create -t "${t}-${EXTRA_SUFFIX}" \
+              "${t}-${EXTRA_SUFFIX}-amd64" "${t}-${EXTRA_SUFFIX}-arm64v8"
+          done
+
       - name: Update Docker Hub description
         if: inputs.docker-image != '' && inputs.description != ''
         uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5 https://github.com/peter-evans/dockerhub-description/releases/tag/v5
@@ -588,3 +740,121 @@ jobs:
       - name: Pull new module version
         if: inputs.update-go-proxy && startsWith(github.ref, 'refs/tags/')
         uses: andrewslotin/go-proxy-pull-action@00af8a5a49c844d6dde0bbbc116b72d8fd7ae97c # v1.5.0 https://github.com/andrewslotin/go-proxy-pull-action/releases/tag/v1.5.0
+
+  update-homebrew:
+    if: always() && startsWith(github.ref, 'refs/tags/') && inputs.homebrew-tap-repository != '' && needs.finalize-release.result == 'success'
+    runs-on: ubuntu-latest
+    needs: [finalize-release]
+    # The release is already public by now, so a tap problem must not turn
+    # the run red or hold up anything after it.
+    continue-on-error: true
+    permissions:
+      contents: read
+    env:
+      TAP_REPO: ${{ inputs.homebrew-tap-repository }}
+      HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.homebrew-tap-token }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Check tap token
+        id: gate
+        run: |
+          if [ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]; then
+            echo "homebrew-tap-token not set; skipping homebrew tap update."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compute release facts
+        id: facts
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tarball_url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${RELEASE_TAG}.tar.gz"
+          sha256="$(curl -fsSL "$tarball_url" | sha256sum | cut -d' ' -f1)"
+          {
+            echo "tarball_url=$tarball_url"
+            echo "sha256=$sha256"
+            echo "short_commit=${COMMIT_SHA:0:7}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Clone homebrew tap
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.homebrew-tap-token }}
+        run: |
+          set -euo pipefail
+          gh repo clone "$TAP_REPO" homebrew-tap
+          gh auth setup-git
+      - name: Update formula
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          TARBALL_URL: ${{ steps.facts.outputs.tarball_url }}
+          SHA256: ${{ steps.facts.outputs.sha256 }}
+          SHORT_COMMIT: ${{ steps.facts.outputs.short_commit }}
+          FORMULA_PATH: ${{ inputs.homebrew-formula-path || format('Formula/{0}.rb', inputs.binary-name) }}
+        run: |
+          set -euo pipefail
+          formula="homebrew-tap/${FORMULA_PATH}"
+          sed -i -E \
+            -e "s#^  url \".*\"#  url \"${TARBALL_URL}\"#" \
+            -e "s#^  sha256 \".*\"#  sha256 \"${SHA256}\"#" \
+            "$formula"
+          # Only formulas that stamp the commit into the binary carry this
+          # field; leave the others alone rather than require it.
+          if grep -qE 'version\.CommitHash=' "$formula"; then
+            sed -i -E "s#(version\.CommitHash=)[0-9a-f]+#\1${SHORT_COMMIT}#" "$formula"
+            grep -qF -- "version.CommitHash=${SHORT_COMMIT}" "$formula" || {
+              echo "::error::formula field not updated: version.CommitHash=${SHORT_COMMIT}"
+              exit 1
+            }
+          fi
+          for expected in "${TARBALL_URL}" "${SHA256}"; do
+            if ! grep -qF -- "$expected" "$formula"; then
+              echo "::error::formula field not updated: $expected"
+              exit 1
+            fi
+          done
+          echo "::group::Updated formula"
+          cat "$formula"
+          echo "::endgroup::"
+      - name: Open tap pull request
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.homebrew-tap-token }}
+          FORMULA_PATH: ${{ inputs.homebrew-formula-path || format('Formula/{0}.rb', inputs.binary-name) }}
+          BINARY_NAME: ${{ inputs.binary-name }}
+        run: |
+          set -euo pipefail
+          cd homebrew-tap
+          if git diff --quiet -- "$FORMULA_PATH"; then
+            echo "Formula already up to date for ${RELEASE_TAG}; nothing to do."
+            exit 0
+          fi
+          branch="${BINARY_NAME}-${RELEASE_TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            # Build on the branch the open pull request already carries, so
+            # anything else on it survives the bump.
+            cp "$FORMULA_PATH" "${RUNNER_TEMP}/formula.rb"
+            git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+            git checkout -q -f -B "$branch" "origin/$branch"
+            cp "${RUNNER_TEMP}/formula.rb" "$FORMULA_PATH"
+          else
+            git switch -q -C "$branch"
+          fi
+          if git diff --quiet -- "$FORMULA_PATH"; then
+            echo "Branch ${branch} already carries this formula."
+          else
+            git add "$FORMULA_PATH"
+            git commit -s -m "chore(${BINARY_NAME}): release ${RELEASE_TAG}"
+            git push origin "$branch"
+          fi
+          if [ -z "$(gh pr list --repo "$TAP_REPO" --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --repo "$TAP_REPO" --head "$branch" \
+              --title "${BINARY_NAME} ${RELEASE_TAG}" \
+              --body "Automated formula bump for [${BINARY_NAME} ${RELEASE_TAG}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG})."
+          else
+            echo "Open PR already exists for ${branch}; pushed updated formula to it."
+          fi
