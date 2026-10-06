@@ -341,6 +341,7 @@ repositories:
           binary-name: "tx-submit-api"
           docker-image: "blinklabs/tx-submit-api"
           description: "A Go implementation of the Cardano Submit API service"
+          update-go-proxy: "true"
   - name: blinklabs-io/tx-submit-api-mirror
     settings:
       delete_branch_on_merge: true
