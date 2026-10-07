@@ -635,7 +635,7 @@ jobs:
   cross-build:
     if: inputs.cross-build-targets != '[]'
     name: cross-build
-    needs: go-test
+    needs: [go-test]
     strategy:
       fail-fast: false
       max-parallel: ${{ fromJSON(inputs.cross-build-max-parallel) }}
