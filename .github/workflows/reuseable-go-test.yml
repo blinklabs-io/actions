@@ -98,6 +98,11 @@ on:
         required: false
         type: string
         default: "1.26.x"
+      cross-build-max-parallel:
+        description: Maximum number of cross-build matrix jobs running at once.
+        required: false
+        type: string
+        default: "2"
       run-buf-checks:
         description: Run Buf formatting and lint checks in the Go test job.
         required: false
@@ -630,8 +635,10 @@ jobs:
   cross-build:
     if: inputs.cross-build-targets != '[]'
     name: cross-build
+    needs: [go-test]
     strategy:
       fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.cross-build-max-parallel) }}
       matrix:
         target: ${{ fromJson(inputs.cross-build-targets) }}
     runs-on: ubuntu-latest
