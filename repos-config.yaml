@@ -1199,6 +1199,7 @@ repositories:
           services: |-
             {"postgres":{"image":"postgres:16","env":{"POSTGRES_DB":"bursa_test","POSTGRES_PASSWORD":"postgres","POSTGRES_USER":"postgres"},"ports":["5432:5432"],"options":"--health-cmd \"pg_isready -U postgres -d bursa_test\" --health-interval 10s --health-timeout 5s --health-retries 5"}}
           cross-build-go-version: "1.26.x"
+          cross-build-max-parallel: "2"
           build-packages: "./cmd/bursa"
           cross-build-targets: '[{"os":"darwin","arch":"arm64"},{"os":"freebsd","arch":"amd64"},{"os":"freebsd","arch":"arm64"},{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"windows","arch":"amd64"},{"os":"windows","arch":"arm64"}]'
 

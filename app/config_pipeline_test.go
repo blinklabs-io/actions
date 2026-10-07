@@ -71,6 +71,25 @@ func TestConfiguredPipelinesRender(t *testing.T) {
 	}
 }
 
+func TestBursaCrossBuildConcurrencyIsBounded(t *testing.T) {
+	cfg := loadRealConfig(t)
+	for _, repo := range cfg.Repositories {
+		if repo.Name != "blinklabs-io/bursa" {
+			continue
+		}
+		for _, workflow := range repo.Workflows {
+			if workflow.DestinationFile == "go-test.yml" {
+				if got, want := workflow.Params["cross-build-max-parallel"], "2"; got != want {
+					t.Fatalf("Bursa cross-build-max-parallel = %q, want %q", got, want)
+				}
+				return
+			}
+		}
+		t.Fatal("Bursa go-test workflow is missing")
+	}
+	t.Fatal("Bursa is missing from repos-config.yaml")
+}
+
 // TestConfiguredPipelinesGate checks that every configured pipeline actually
 // stages something. Grouping workflows without a needs edge changes nothing
 // that matters: GitHub's concurrency limit counts jobs, not workflow runs, so

@@ -44,6 +44,8 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-check-versions-packages.yml` — check upstream release/image versions against `packages/<pkg>/<pkg>-*.yaml` version files, validate with the cardano-up CLI, and open update PRs (for cardano-up package repositories).
 - `reuseable-package-validate.yml` — validate cardano-up package definitions with the cardano-up CLI (plus optional filename/content version-consistency check).
 
+The reusable Go test workflow starts cross-builds only after tests pass and limits them to two concurrent targets by default. Callers can set `cross-build-max-parallel` to choose another limit.
+
 ## How the engine works
 
 The engine (`app/main.go`) runs as a batch job — there is no long-running

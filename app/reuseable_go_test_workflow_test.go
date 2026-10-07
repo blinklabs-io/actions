@@ -12,6 +12,10 @@ import (
 
 type reusableWorkflowFile struct {
 	Jobs map[string]struct {
+		Needs    []string `yaml:"needs"`
+		Strategy struct {
+			MaxParallel string `yaml:"max-parallel"`
+		} `yaml:"strategy"`
 		Steps []struct {
 			Name string            `yaml:"name"`
 			Run  string            `yaml:"run"`
@@ -82,6 +86,12 @@ func TestReusableGoTestWorkflowUsesMatrixArchitectureAndEffectiveGuards(t *testi
 	}
 
 	crossBuild := workflow.Jobs["cross-build"]
+	if len(crossBuild.Needs) != 1 || crossBuild.Needs[0] != "go-test" {
+		t.Errorf("cross-build needs = %v, want [go-test]", crossBuild.Needs)
+	}
+	if got, want := crossBuild.Strategy.MaxParallel, "${{ fromJSON(inputs.cross-build-max-parallel) }}"; got != want {
+		t.Errorf("cross-build max-parallel = %q, want %q", got, want)
+	}
 	if len(crossBuild.Steps) == 0 {
 		t.Fatal("cross-build job has no steps")
 	}
