@@ -1373,7 +1373,9 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        # This workflow receives tap-write credentials, so pin its reviewed
+        # revision.
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@02b250527c9b7b20d017fe1cf456bc98dfbc3125"
         triggers:
           push:
             branches: [main]
@@ -1395,6 +1397,7 @@ repositories:
           description: "Command line utility for managing Cardano services for local development"
           binary-target-matrix: '[{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"darwin","arch":"amd64"},{"os":"darwin","arch":"arm64"}]'
           homebrew-tap-repository: "blinklabs-io/homebrew-cardano"
+          homebrew-formula-path: "Formula/cardano-up.rb"
 
   # cardano-up-packages hosts the package definitions installed by the
   # cardano-up CLI. Three governed workflows:
