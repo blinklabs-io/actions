@@ -1388,11 +1388,13 @@ repositories:
           statuses: write
         secrets:
           docker-password: DOCKER_PASSWORD
+          homebrew-tap-token: ORG_PROJECT_PAT
         params:
           binary-name: "cardano-up"
           docker-image: "blinklabs/cardano-up"
           description: "Command line utility for managing Cardano services for local development"
           binary-target-matrix: '[{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"darwin","arch":"amd64"},{"os":"darwin","arch":"arm64"}]'
+          homebrew-tap-repository: "blinklabs-io/homebrew-cardano"
 
   # cardano-up-packages hosts the package definitions installed by the
   # cardano-up CLI. Three governed workflows:
