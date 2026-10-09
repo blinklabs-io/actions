@@ -225,6 +225,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: ${{ inputs.go-version }}
+          check-latest: true
 
       - name: Set up MSYS2 MinGW64 for Windows amd64 CGO
         if: matrix.os == 'windows' && matrix.arch == 'amd64' && matrix.tray

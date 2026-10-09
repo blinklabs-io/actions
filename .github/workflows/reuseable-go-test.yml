@@ -284,6 +284,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: ${{ matrix.go-version }}
+          check-latest: true
           cache: ${{ inputs.setup-go-cache }}
           cache-dependency-path: |
             ${{ inputs.working-directory }}/go.mod
@@ -653,6 +654,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: ${{ inputs.cross-build-go-version }}
+          check-latest: true
           cache: ${{ inputs.setup-go-cache }}
           cache-dependency-path: |
             ${{ inputs.working-directory }}/go.mod

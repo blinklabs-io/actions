@@ -1009,7 +1009,6 @@ repositories:
             branches: [main]
             tags: ['v*']
         params:
-          go-versions: '["1.26.x"]'
           platforms: '["ubuntu-latest","windows-latest"]'
           system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
           pre-test-command: "make build"
@@ -1017,11 +1016,9 @@ repositories:
           windows-test-packages: "./tray/setup/..."
           test-env: "LANG=en_US.UTF-8"
           run-golangci-lint: "true"
-          golangci-go-version: "1.26.x"
           golangci-platform: "ubuntu-latest"
           golangci-cgo-enabled: "true"
           run-nilaway: "true"
-          nilaway-go-version: "1.26.x"
           nilaway-platform: "ubuntu-latest"
           nilaway-cgo-enabled: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/adder"
@@ -1098,7 +1095,6 @@ repositories:
           application-name: "adder"
           docker-image: "blinklabs/adder"
           description: "Adder is a tool for tailing the Cardano blockchain and emitting events"
-          go-version: "1.26.x"
           # Preserve the capitalized Authenticode display name the in-repo
           # workflow used (application-name is lowercase "adder").
           windows-signing-name: "Adder"
