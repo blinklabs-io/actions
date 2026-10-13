@@ -639,7 +639,7 @@ func TestWorkflowTemplate_GoTestWithFlags(t *testing.T) {
 		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@feat/docker-wireguard-governance",
 		TriggersYAML:     triggersYAML,
 		Params: map[string]string{
-			"go-versions": `["1.25.x"]`,
+			"go-versions": `["1.26.x"]`,
 			"test-flags":  "-race",
 		},
 	}
@@ -654,7 +654,7 @@ func TestWorkflowTemplate_GoTestWithFlags(t *testing.T) {
 		{"governance header", "# Generated automatically by org-governance-bot"},
 		{"workflow name", `name: "go-test"`},
 		{"reusable ref", "reuseable-go-test.yml@feat/docker-wireguard-governance"},
-		{"go-versions single-quoted array", `go-versions: '["1.25.x"]'`},
+		{"go-versions single-quoted array", `go-versions: '["1.26.x"]'`},
 		{"test-flags unquoted", "test-flags: -race"},
 	}
 	for _, c := range checks {
@@ -756,7 +756,7 @@ func TestWorkflowTemplate_DockerWireguardPublish(t *testing.T) {
 			"binary-os-matrix": `["linux"]`,
 			"docker-image":     "blinklabs/wireguard",
 			"description":      "WireGuard VPN container with JWT-authenticated peer API",
-			"go-version":       "1.25.x",
+			"go-version":       "1.26.x",
 			"build-args":       "VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}\nCOMMIT_HASH=${{ github.sha }}",
 		},
 	}
@@ -778,7 +778,7 @@ func TestWorkflowTemplate_DockerWireguardPublish(t *testing.T) {
 		{"binary-compress unquoted true", "binary-compress: true"},
 		{"binary-os-matrix single-quoted", `binary-os-matrix: '["linux"]'`},
 		{"docker-image unquoted", "docker-image: blinklabs/wireguard"},
-		{"go-version unquoted", "go-version: 1.25.x"},
+		{"go-version unquoted", "go-version: 1.26.x"},
 		{"description unquoted", "description: WireGuard VPN container with JWT-authenticated peer API"},
 		{"build-args block scalar", "build-args: |-"},
 		{"build-args VERSION line indented", "        VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}"},
