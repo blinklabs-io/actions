@@ -225,7 +225,7 @@ profiles:
             branches: [main]
             tags: ['v*']
         params:
-          go-versions: '["1.25.x","1.26.x"]'
+          go-versions: '["1.26.x"]'
           verify-modules: "true"
           run-build: "true"
           run-vet: "true"
@@ -1631,7 +1631,7 @@ repositories:
           push:
             branches: [main]
         params:
-          go-versions: '["1.25.x"]'
+          go-versions: '["1.26.x"]'
           verify-modules: "true"
           run-build: "true"
           run-vet: "true"
@@ -1654,7 +1654,7 @@ repositories:
           push:
             branches: [main]
         params:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
   - name: blinklabs-io/cardano-models
     settings:
       delete_branch_on_merge: true
@@ -2037,7 +2037,7 @@ repositories:
             branches: [main]
             tags: ['v*']
         params:
-          go-versions: '["1.25.x","1.26.x"]'
+          go-versions: '["1.26.x"]'
           run-golangci-lint: "true"
           golangci-go-version: "1.26.x"
           check-format: "true"
@@ -2200,12 +2200,12 @@ repositories:
             branches: [main]
             tags: ['v*']
         params:
-          go-versions: '["1.25.x"]'
+          go-versions: '["1.26.x"]'
           platforms: '["ubuntu-latest","macos-latest","windows-latest"]'
           pre-test-command: "make build"
           test-flags: "-v -race -timeout 10m"
           run-golangci-lint: "true"
-          golangci-go-version: "1.25.x"
+          golangci-go-version: "1.26.x"
           golangci-platform: "ubuntu-latest"
 
       - destination_file: govulncheck.yml
