@@ -1239,7 +1239,8 @@ repositories:
     workflows:
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        # Dingo requires every reusable workflow reference to be immutable.
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@2b1bfffc6d04dad1fd40ca753e8d01a410de054f"
         triggers:
           pull_request:
         permissions:
