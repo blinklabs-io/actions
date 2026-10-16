@@ -724,14 +724,26 @@ jobs:
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9 https://github.com/actions/github-script/releases/tag/v9
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const releaseID = process.env.RELEASE_ID;
+            if (!/^[1-9][0-9]*$/.test(releaseID ?? "")) {
+              core.setFailed("release ID must be a positive integer");
+              return;
+            }
+            const releaseIDNumber = Number(releaseID);
+            if (!Number.isSafeInteger(releaseIDNumber)) {
+              core.setFailed("release ID is outside the safe integer range");
+              return;
+            }
             try {
               await github.rest.repos.updateRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                release_id: ${{ needs.create-draft-release.outputs.RELEASE_ID }},
+                release_id: releaseIDNumber,
                 draft: false,
               });
             } catch (error) {

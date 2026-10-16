@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"os"
 	"strings"
 	"testing"
@@ -133,26 +134,53 @@ func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 	}
 }
 
-func TestConfiguredPublishWorkflowsUseMain(t *testing.T) {
+func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 	cfg := loadRealConfig(t)
 	found := 0
 	for _, repo := range cfg.Repositories {
 		for _, wf := range repo.Workflows {
-			if !strings.Contains(wf.ReusableWorkflow, "/reuseable-publish.yml@") {
+			if !strings.HasPrefix(
+				wf.ReusableWorkflow,
+				"blinklabs-io/actions/.github/workflows/",
+			) {
 				continue
 			}
 			found++
-			if !strings.HasSuffix(wf.ReusableWorkflow, "@main") {
-				t.Errorf("%s %s uses publish workflow ref %q, want @main", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
+			_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
+			if !ok {
+				t.Errorf(
+					"%s %s has no ref in %q",
+					repo.Name,
+					wf.DestinationFile,
+					wf.ReusableWorkflow,
+				)
+				continue
+			}
+			_, shaErr := hex.DecodeString(ref)
+			fullSHA := len(ref) == 40 && shaErr == nil && strings.ToLower(ref) == ref
+			mustPin := len(wf.Secrets) > 0
+			for _, permission := range wf.Permissions {
+				if permission == "write" {
+					mustPin = true
+					break
+				}
+			}
+			if (mustPin && !fullSHA) || (!mustPin && ref != "main" && !fullSHA) {
+				t.Errorf(
+					"%s %s uses reusable workflow ref %q; credentials or write permissions require a full commit SHA, otherwise use main or a full commit SHA",
+					repo.Name,
+					wf.DestinationFile,
+					wf.ReusableWorkflow,
+				)
 			}
 		}
 	}
 	if found == 0 {
-		t.Fatal("no reusable publish workflows found in config")
+		t.Fatal("no Actions reusable workflows found in config")
 	}
 }
 
-func TestTxpumpReusableWorkflowsTrackActionsMain(t *testing.T) {
+func TestTxpumpReusableWorkflowsUseSafeRefs(t *testing.T) {
 	const (
 		repoName       = "blinklabs-io/cardano-txpump"
 		workflowPrefix = "blinklabs-io/actions/.github/workflows/"
@@ -171,8 +199,13 @@ func TestTxpumpReusableWorkflowsTrackActionsMain(t *testing.T) {
 				continue
 			}
 			foundWorkflows++
-			if !strings.HasSuffix(wf.ReusableWorkflow, "@main") {
-				t.Errorf("%s %s uses reusable workflow ref %q, want @main", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
+			_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
+			_, shaErr := hex.DecodeString(ref)
+			fullSHA := len(ref) == 40 && shaErr == nil && strings.ToLower(ref) == ref
+			publishWorkflow := strings.Contains(wf.ReusableWorkflow, "/reuseable-publish.yml@")
+			if !ok || (publishWorkflow && !fullSHA) || (!publishWorkflow && ref != "main") {
+				want := "@main for CI workflows and a full commit SHA for publish"
+				t.Errorf("%s %s uses reusable workflow ref %q, want %s", repo.Name, wf.DestinationFile, wf.ReusableWorkflow, want)
 			}
 		}
 	}

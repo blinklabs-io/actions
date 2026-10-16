@@ -83,6 +83,47 @@ func TestReusablePublishPassesPrereleaseToScriptThroughEnvironment(t *testing.T)
 	t.Fatal("create-draft-release job has no create-release script")
 }
 
+func TestReusablePublishFinalizationPassesReleaseIDThroughEnvironment(t *testing.T) {
+	workflowData, err := os.ReadFile("../.github/workflows/reuseable-publish.yml")
+	if err != nil {
+		t.Fatalf("read reusable publish workflow: %v", err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Env  map[string]string `yaml:"env"`
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflowData, &workflow); err != nil {
+		t.Fatalf("parse reusable publish workflow: %v", err)
+	}
+	for _, step := range workflow.Jobs["finalize-release"].Steps {
+		if step.With["github-token"] == "" {
+			continue
+		}
+		if got, want := step.Env["RELEASE_ID"], "${{ needs.create-draft-release.outputs.RELEASE_ID }}"; got != want {
+			t.Errorf("finalize-release RELEASE_ID env = %q, want %q", got, want)
+		}
+		script := step.With["script"]
+		for _, required := range []string{
+			"process.env.RELEASE_ID",
+			"Number.isSafeInteger(releaseIDNumber)",
+			"release_id: releaseIDNumber",
+		} {
+			if !strings.Contains(script, required) {
+				t.Errorf("finalize-release script is missing %q:\n%s", required, script)
+			}
+		}
+		if strings.Contains(script, "${{") {
+			t.Errorf("finalize-release script contains a workflow expression:\n%s", script)
+		}
+		return
+	}
+	t.Fatal("finalize-release job has no release update script")
+}
+
 func TestReusablePublishCustomBuildUsesMatrixTarget(t *testing.T) {
 	workflowData, err := os.ReadFile("../.github/workflows/reuseable-publish.yml")
 	if err != nil {
