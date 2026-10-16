@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"os"
 	"strings"
 	"testing"
@@ -133,7 +134,7 @@ func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 	}
 }
 
-func TestConfiguredPublishWorkflowsUseMain(t *testing.T) {
+func TestConfiguredPublishWorkflowsUseMainOrFullSHA(t *testing.T) {
 	cfg := loadRealConfig(t)
 	found := 0
 	for _, repo := range cfg.Repositories {
@@ -142,8 +143,17 @@ func TestConfiguredPublishWorkflowsUseMain(t *testing.T) {
 				continue
 			}
 			found++
-			if !strings.HasSuffix(wf.ReusableWorkflow, "@main") {
-				t.Errorf("%s %s uses publish workflow ref %q, want @main", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
+			_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
+			_, shaErr := hex.DecodeString(ref)
+			if !ok ||
+				(ref != "main" &&
+					(len(ref) != 40 || shaErr != nil || strings.ToLower(ref) != ref)) {
+				t.Errorf(
+					"%s %s uses publish workflow ref %q, want main or a full commit SHA",
+					repo.Name,
+					wf.DestinationFile,
+					wf.ReusableWorkflow,
+				)
 			}
 		}
 	}

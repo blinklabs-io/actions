@@ -1242,6 +1242,8 @@ repositories:
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
         triggers:
           pull_request:
+        permissions:
+          contents: read
 
   # cardano-compose-stacks provides Docker Compose stacks, including the Dingo
   # Antithesis harness and archive demo. The nested Go modules get independent
