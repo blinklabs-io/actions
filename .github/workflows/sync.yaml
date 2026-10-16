@@ -1,5 +1,8 @@
 name: Central Governance Sync Engine
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]

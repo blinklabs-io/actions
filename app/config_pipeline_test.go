@@ -134,12 +134,15 @@ func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 	}
 }
 
-func TestConfiguredPublishWorkflowsUseSafeRefs(t *testing.T) {
+func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 	cfg := loadRealConfig(t)
 	found := 0
 	for _, repo := range cfg.Repositories {
 		for _, wf := range repo.Workflows {
-			if !strings.Contains(wf.ReusableWorkflow, "/reuseable-publish.yml@") {
+			if !strings.HasPrefix(
+				wf.ReusableWorkflow,
+				"blinklabs-io/actions/.github/workflows/",
+			) {
 				continue
 			}
 			found++
@@ -164,7 +167,7 @@ func TestConfiguredPublishWorkflowsUseSafeRefs(t *testing.T) {
 			}
 			if (mustPin && !fullSHA) || (!mustPin && ref != "main" && !fullSHA) {
 				t.Errorf(
-					"%s %s uses publish workflow ref %q; credentials or write permissions require a full commit SHA, otherwise use main or a full commit SHA",
+					"%s %s uses reusable workflow ref %q; credentials or write permissions require a full commit SHA, otherwise use main or a full commit SHA",
 					repo.Name,
 					wf.DestinationFile,
 					wf.ReusableWorkflow,
@@ -173,7 +176,7 @@ func TestConfiguredPublishWorkflowsUseSafeRefs(t *testing.T) {
 		}
 	}
 	if found == 0 {
-		t.Fatal("no reusable publish workflows found in config")
+		t.Fatal("no Actions reusable workflows found in config")
 	}
 }
 
