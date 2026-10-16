@@ -1,0 +1,50 @@
+name: dingo
+version: 0.9.0
+description: Dingo Cardano node software by Blink Labs
+dependencies:
+  - cardano-config = 20241028
+  - cardano-cli >= 10.1.1.0
+installSteps:
+  - docker:
+      containerName: dingo
+      image: ghcr.io/blinklabs-io/dingo:0.9.0
+      command: 
+        - dingo
+        - --debug
+      env:
+        CARDANO_CONFIG: /opt/cardano/config/{{ .Context.Network }}/config.json
+        CARDANO_NETWORK: '{{ .Context.Network }}'
+        CARDANO_PRIVATE_BIND_ADDR: '0.0.0.0'
+      binds:
+        - '{{ .Paths.ContextDir }}/config:/opt/cardano/config'
+        - '{{ .Paths.ContextDir }}/node-ipc:/ipc'
+        - '{{ .Paths.ContextDir }}/dingo-data:/data/db'
+      ports:
+        - "3001"
+        - "3002"
+        - "9090"
+        - "12798"
+      pullOnly: false
+  - file:
+      binary: true
+      filename: dingo-txtop
+      source: files/txtop.sh.gotmpl
+outputs:
+  - name: grpc
+    description: Dingo gRPC service
+    value: 'http://localhost:{{ index (index .Ports "dingo") "9090" }}'
+  - name: relay
+    description: Dingo Ouroboros Node-to-Node service
+    value: 'localhost:{{ index (index .Ports "dingo") "3001" }}'
+  - name: socket-path
+    description: Path to the Dingo Ouroboros Node-to-Client UNIX socket
+    value: '{{ .Paths.ContextDir }}/node-ipc/dingo.socket'
+  - name: socket-port
+    description: Dingo Ouroboros Node-to-Client service over TCP
+    value: 'localhost:{{ index (index .Ports "dingo") "3002" }}'
+tags:
+  - docker
+  - linux
+  - darwin
+  - amd64
+  - arm64

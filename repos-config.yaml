@@ -17,6 +17,13 @@ branch_protection_defaults: &branch_protection_defaults
   allow_deletions: false
   lock_branch: false
 
+# Commit SHA of actions main that generated release-fanout.yml wrappers pin
+# the dispatch workflow to. Set it, in a follow-up change after
+# reuseable-release-dispatch.yml is on main, to a full SHA that contains it.
+# While unset no wrapper is generated; the central release-fanout workflow
+# runs through workflow_dispatch and its daily backstop.
+# release_fanout_dispatch_ref: <40-hex commit sha>
+
 # Optional org-wide auto-discovery. Disabled by default: when absent or
 # `enabled: false`, the engine manages exactly the repositories listed under
 # `repositories:` below. When enabled, the engine additionally lists the
@@ -1229,6 +1236,11 @@ repositories:
   #     benchmark.yml (weekly benchstat suite) and config-parity.yml (scheduled
   #     upstream-config drift report) are repo-specific and have no shared
   #     equivalent.
+  #   - release_fanout lists the repositories that get the new version pushed
+  #     on a published release; the release-fanout.yml wrapper is generated
+  #     once release_fanout_dispatch_ref is set.
+  #     dingo itself is not a target: its own files hold no version string
+  #     the refs rules rewrite.
   - name: blinklabs-io/dingo
     settings:
       delete_branch_on_merge: true
@@ -1244,6 +1256,20 @@ repositories:
           pull_request:
         permissions:
           contents: read
+    release_fanout:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: dingo
+        refs:
+          - roles/dingo/README.md
+      - repo: blinklabs-io/helm-charts
+        type: helm-chart
+        chart: charts/dingo
+        refs:
+          - charts/dingo/README.md
+      - repo: blinklabs-io/cardano-up-packages
+        type: cardano-up-package
+        package: dingo
 
   # cardano-compose-stacks provides Docker Compose stacks, including the Dingo
   # Antithesis harness and archive demo. The nested Go modules get independent
