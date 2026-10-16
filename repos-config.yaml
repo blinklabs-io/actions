@@ -1520,6 +1520,8 @@ repositories:
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
         triggers:
           pull_request:
+        permissions:
+          contents: read
 
       - destination_file: go-test.yml
         pipeline: ci.yml
@@ -1531,6 +1533,8 @@ repositories:
           push:
             branches: [main]
             tags: ['v*']
+        permissions:
+          contents: read
         params:
           go-arches: '["amd64","386"]'
           submodules: "true"
@@ -1569,6 +1573,8 @@ repositories:
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
         triggers:
           pull_request:
+        permissions:
+          contents: read
 
       - destination_file: golangci-lint.yml
         pipeline: ci.yml
@@ -1580,6 +1586,8 @@ repositories:
           push:
             branches: [main]
             tags: ['v*']
+        permissions:
+          contents: read
 
       - destination_file: nilaway.yml
         pipeline: ci.yml
@@ -1591,6 +1599,8 @@ repositories:
           push:
             branches: [main]
             tags: ['v*']
+        permissions:
+          contents: read
         params:
           include-pkgs: "github.com/blinklabs-io/ouroboros-mock"
 
