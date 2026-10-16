@@ -177,7 +177,7 @@ profiles:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           pull_request:
           push:
@@ -240,7 +240,7 @@ profiles:
         needs: [go-test]
         if: startsWith(github.ref, 'refs/tags/')
         workflow_name: publish
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           pull_request:
           push:
@@ -322,7 +322,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           push:
             branches: [main]
@@ -394,7 +394,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           push:
             branches: [main]
@@ -464,7 +464,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           push:
             branches: [main]
@@ -568,7 +568,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           push:
             branches: [main]
@@ -649,7 +649,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           push:
             branches: [main]
@@ -867,7 +867,7 @@ repositories:
         needs: [go]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           push:
             branches: [main]
@@ -1901,7 +1901,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           push:
             branches: [main]
@@ -2068,7 +2068,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: publish
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           push:
             branches: [main]
@@ -2132,7 +2132,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
         triggers:
           pull_request:
           push:

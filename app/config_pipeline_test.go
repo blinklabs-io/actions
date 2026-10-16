@@ -134,7 +134,7 @@ func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 	}
 }
 
-func TestConfiguredPublishWorkflowsUseMainOrFullSHA(t *testing.T) {
+func TestConfiguredPublishWorkflowsUseSafeRefs(t *testing.T) {
 	cfg := loadRealConfig(t)
 	found := 0
 	for _, repo := range cfg.Repositories {
@@ -144,12 +144,27 @@ func TestConfiguredPublishWorkflowsUseMainOrFullSHA(t *testing.T) {
 			}
 			found++
 			_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
-			_, shaErr := hex.DecodeString(ref)
-			if !ok ||
-				(ref != "main" &&
-					(len(ref) != 40 || shaErr != nil || strings.ToLower(ref) != ref)) {
+			if !ok {
 				t.Errorf(
-					"%s %s uses publish workflow ref %q, want main or a full commit SHA",
+					"%s %s has no ref in %q",
+					repo.Name,
+					wf.DestinationFile,
+					wf.ReusableWorkflow,
+				)
+				continue
+			}
+			_, shaErr := hex.DecodeString(ref)
+			fullSHA := len(ref) == 40 && shaErr == nil && strings.ToLower(ref) == ref
+			mustPin := len(wf.Secrets) > 0
+			for _, permission := range wf.Permissions {
+				if permission == "write" {
+					mustPin = true
+					break
+				}
+			}
+			if (mustPin && !fullSHA) || (!mustPin && ref != "main" && !fullSHA) {
+				t.Errorf(
+					"%s %s uses publish workflow ref %q; credentials or write permissions require a full commit SHA, otherwise use main or a full commit SHA",
 					repo.Name,
 					wf.DestinationFile,
 					wf.ReusableWorkflow,
@@ -162,7 +177,7 @@ func TestConfiguredPublishWorkflowsUseMainOrFullSHA(t *testing.T) {
 	}
 }
 
-func TestTxpumpReusableWorkflowsTrackActionsMain(t *testing.T) {
+func TestTxpumpReusableWorkflowsUseSafeRefs(t *testing.T) {
 	const (
 		repoName       = "blinklabs-io/cardano-txpump"
 		workflowPrefix = "blinklabs-io/actions/.github/workflows/"
@@ -181,8 +196,13 @@ func TestTxpumpReusableWorkflowsTrackActionsMain(t *testing.T) {
 				continue
 			}
 			foundWorkflows++
-			if !strings.HasSuffix(wf.ReusableWorkflow, "@main") {
-				t.Errorf("%s %s uses reusable workflow ref %q, want @main", repo.Name, wf.DestinationFile, wf.ReusableWorkflow)
+			_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
+			_, shaErr := hex.DecodeString(ref)
+			fullSHA := len(ref) == 40 && shaErr == nil && strings.ToLower(ref) == ref
+			publishWorkflow := strings.Contains(wf.ReusableWorkflow, "/reuseable-publish.yml@")
+			if !ok || (publishWorkflow && !fullSHA) || (!publishWorkflow && ref != "main") {
+				want := "@main for CI workflows and a full commit SHA for publish"
+				t.Errorf("%s %s uses reusable workflow ref %q, want %s", repo.Name, wf.DestinationFile, wf.ReusableWorkflow, want)
 			}
 		}
 	}
