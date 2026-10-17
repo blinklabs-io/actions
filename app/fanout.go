@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/go-github/v60/github"
 	"gopkg.in/yaml.v3"
 )
 
@@ -54,6 +56,11 @@ func validateFanout(repo RepoConfig) error {
 		if missing {
 			return fmt.Errorf("%s: type %q is missing %s", where, t.Type, field)
 		}
+		for j, ref := range t.Refs {
+			if strings.TrimSpace(ref) == "" {
+				return fmt.Errorf("%s: refs[%d] is empty", where, j)
+			}
+		}
 		key := strings.ToLower(t.Repo) + "|" + t.Type
 		if seen[key] {
 			return fmt.Errorf("%s: duplicate %s target for %s", where, t.Type, t.Repo)
@@ -80,6 +87,51 @@ func injectFanoutWorkflow(repo *RepoConfig, ref string) {
 		Permissions: map[string]string{"contents": "read"},
 		Secrets:     map[string]string{"token": "ORG_PROJECT_PAT"},
 	})
+}
+
+// generatedWorkflowHeader is the first line of every workflow the engine
+// renders; its presence marks a file as safe for the engine to delete.
+const generatedWorkflowHeader = "# Generated automatically by org-governance-bot. Do not edit manually."
+
+// fanoutWrapperObsolete reports whether an existing release-fanout wrapper
+// should be removed: the desired workflows no longer include it and the file
+// carries the generated header, so a hand-written file of that name is kept.
+func fanoutWrapperObsolete(desired []WorkflowConfig, existing []byte) bool {
+	for _, wf := range desired {
+		if wf.DestinationFile == fanoutWorkflowFile || wf.Pipeline == fanoutWorkflowFile {
+			return false
+		}
+	}
+	first, _, _ := strings.Cut(string(existing), "\n")
+	return strings.TrimSuffix(first, "\r") == generatedWorkflowHeader
+}
+
+// stageObsoleteFanoutWrapper stages removal of a generated release-fanout
+// wrapper left behind after fan-out was disabled for the repository.
+func stageObsoleteFanoutWrapper(
+	ctx context.Context,
+	client *github.Client,
+	owner, repo string,
+	batch *commitBatch,
+	desired []WorkflowConfig,
+) {
+	path := ".github/workflows/" + fanoutWorkflowFile
+	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
+	if err != nil {
+		if !isNotFound(err) {
+			fmt.Printf("  Error checking %s for cleanup: %v\n", path, err)
+		}
+		return
+	}
+	if fileContent == nil || fileContent.SHA == nil {
+		return
+	}
+	existing, err := fileContent.GetContent()
+	if err != nil || !fanoutWrapperObsolete(desired, []byte(existing)) {
+		return
+	}
+	fmt.Printf("  Staging removal of %s...\n", path)
+	batch.remove(path, "remove "+fanoutWorkflowFile)
 }
 
 var fanoutRefPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)

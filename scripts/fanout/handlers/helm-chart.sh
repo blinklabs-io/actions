@@ -54,12 +54,15 @@ if fanout_gt "$version" "$cur"; then
   cp "$cdir/values.yaml" "$tmp/values.yaml"
   sed -i -E "s/^(appVersion: *\"?)[0-9]+\.[0-9]+\.[0-9]+/\1${version}/" "$tmp/Chart.yaml"
   sed -i -E "s/^(version: *[\"']?)[0-9]+\.[0-9]+\.[0-9]+/\1${new_chart_ver}/" "$tmp/Chart.yaml"
-  if [[ -n "$tag" ]]; then
+  # A tag already at or past the target is left alone; appVersion can lag it.
+  rewrite_tag=0
+  if [[ -n "$tag" ]] && fanout_gt "$version" "$tag"; then rewrite_tag=1; fi
+  if [[ "$rewrite_tag" -eq 1 ]]; then
     # Only the image block's tag; a later top-level key ends the range.
     sed -i -E '/^image:/,/^[^[:space:]#]/ s/^(  tag: *["'"'"']?)[0-9]+\.[0-9]+\.[0-9]+/\1'"$version"'/' "$tmp/values.yaml"
   fi
   new_tag=$(image_tag "$tmp/values.yaml")
-  if [[ -n "$new_tag" && "$new_tag" != "$version" ]]; then
+  if [[ "$rewrite_tag" -eq 1 && "$new_tag" != "$version" ]]; then
     echo "ERROR: could not rewrite image tag in $cdir/values.yaml" >&2
     exit 1
   fi

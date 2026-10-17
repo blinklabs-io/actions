@@ -103,6 +103,32 @@ interleaved=$(cat "$TMP/work/docs/interleaved.yaml")
 assert_contains     "interleaved dingo tag rewritten" "$interleaved" 'tag: "0.70.0"'
 assert_contains     "interleaved adder tag untouched" "$interleaved" 'tag: "0.40.0"'
 
+# A tag after the image block's mapping closed, or nested deeper, is not the image tag.
+cat >"$TMP/work/docs/scoped.yaml" <<'YAML'
+image:
+  repository: ghcr.io/blinklabs-io/dingo
+  # comment at the same level
+
+  tag: "0.69.0"
+  extra:
+    tag: "0.50.0"
+other:
+  tag: "0.10.0"
+nested:
+  image:
+    repository: ghcr.io/blinklabs-io/dingo
+    tag: 0.69.0
+top:
+  tag: "0.20.0"
+YAML
+run x perl "$HERE/refs.pl" dingo 0.70.0 "$TMP/work/docs/scoped.yaml"; assert_eq "scoped refs changed" "$RC" "0"
+scoped=$(cat "$TMP/work/docs/scoped.yaml")
+assert_contains     "sibling tag rewritten" "$scoped" '  tag: "0.70.0"'
+assert_contains     "nested image tag rewritten" "$scoped" '    tag: 0.70.0'
+assert_contains     "deeper tag untouched" "$scoped" '    tag: "0.50.0"'
+assert_contains     "later unrelated tag untouched" "$scoped" '  tag: "0.10.0"'
+assert_contains     "later top-level tag untouched" "$scoped" '  tag: "0.20.0"'
+
 # Handler tests are appended by later tasks below this line.
 
 # --- apply.sh dispatcher ----------------------------------------------------
@@ -224,8 +250,7 @@ run x perl "$HERE/refs.pl" dingo 99.0.0 "$TMP/work/live/helm.md"
 assert_eq "helm README rewritten" "$RC" "0"
 out=$(cat "$TMP/work/live/helm.md")
 assert_contains "image ref updated" "$out" 'dingo:99.0.0 \'
-assert_contains "image.tag row last value updated" "$out" '| `99.0.0`                       |
-| `image.digest`'
+assert_contains "image.tag row last value updated" "$(grep -F '| `image.tag`' <<<"$out")" '`99.0.0`'
 assert_contains "image.tag row keeps its description" "$out" 'Image tag (used when `image.digest` is empty)'
 assert_contains "arch suffixed tags untouched" "$out" '`0.83.0-amd64` or `0.83.0-arm64`'
 assert_contains "image.digest row untouched" "$out" '| `image.digest`                  | Image digest                                              | `0.83.0`'
@@ -265,6 +290,64 @@ before=$(tree_sum "$TMP/work/helm")
 run x "$HERE/apply.sh" helm-chart "$TMP/work/helm" dingo 0.70.0 "$hspec"
 assert_eq "helm non-semver tag is an error" "$RC" "1"
 assert_eq "helm non-semver tag writes nothing" "$(tree_sum "$TMP/work/helm")" "$before"
+
+# A tag newer than the target stays when appVersion is older.
+fresh
+sed -i -E 's/^(  tag: ).*/\1"0.75.0"/' "$hdir/values.yaml"
+valsum=$(sha256sum <"$hdir/values.yaml")
+run x "$HERE/apply.sh" helm-chart "$TMP/work/helm" dingo 0.70.0 "$hspec"
+assert_eq "helm newer tag exit" "$RC" "0"
+assert_eq "helm newer tag is not downgraded" "$(sha256sum <"$hdir/values.yaml")" "$valsum"
+assert_contains "helm newer tag appVersion bumped" "$(cat "$hdir/Chart.yaml")" 'appVersion: "0.70.0"'
+assert_contains "helm newer tag chart bumped" "$(cat "$hdir/Chart.yaml")" 'version: 0.1.14'
+
+fresh
+sed -i -E 's/^(  tag: ).*/\1"0.70.0"/' "$hdir/values.yaml"
+valsum=$(sha256sum <"$hdir/values.yaml")
+run x "$HERE/apply.sh" helm-chart "$TMP/work/helm" dingo 0.70.0 "$hspec"
+assert_eq "helm equal tag exit" "$RC" "0"
+assert_eq "helm equal tag unchanged" "$(sha256sum <"$hdir/values.yaml")" "$valsum"
+
+# --- refs.pl failures are fatal, never "unchanged" ---------------------------
+# A perl shim that crashes on one file name and delegates otherwise.
+mkdir -p "$TMP/shim"
+REAL_PERL=$(command -v perl)
+cat >"$TMP/shim/perl" <<SHIM
+#!/usr/bin/env bash
+if [[ "\${@: -1}" == *values.yaml ]]; then echo "shim: crash" >&2; exit 255; fi
+exec "$REAL_PERL" "\$@"
+SHIM
+chmod +x "$TMP/shim/perl"
+REAL_PATH=$PATH
+PATH="$TMP/shim:$REAL_PATH"
+
+fresh
+run x fanout_refs "$TMP/work" dingo 0.70.0 '{"refs":["docs/values.yaml"]}'
+assert_eq "fanout_refs crash on only file" "$RC" "$EXIT_REFS_FAILED"
+assert_contains "fanout_refs names the crashed file" "$(cat "$TMP/err")" "refs.pl failed on docs/values.yaml (status 255)"
+run x "$HERE/apply.sh" version-refs "$TMP/work" dingo 0.70.0 '{"repo":"o/dingo","type":"version-refs","refs":["docs/values.yaml"]}'
+assert_eq "version-refs crash on only file exits 1" "$RC" "1"
+
+fresh
+run x "$HERE/apply.sh" version-refs "$TMP/work" dingo 0.70.0 '{"repo":"o/dingo","type":"version-refs","refs":["docs/*.md","docs/*.yaml"]}'
+assert_eq "version-refs crash after a changed file exits 1" "$RC" "1"
+assert_contains "earlier file did change before the crash" "$(cat "$TMP/work/docs/README.md")" 'dingo:0.70.0'
+fresh
+run x "$HERE/apply.sh" ansible-role "$TMP/work/ansible" dingo 0.70.0 '{"repo":"o/a","type":"ansible-role","role":"dingo","refs":["../docs/*.md","../docs/*.yaml"]}'
+assert_eq "ansible-role crash after a changed file exits 1" "$RC" "1"
+fresh
+run x "$HERE/apply.sh" helm-chart "$TMP/work/helm" dingo 0.70.0 '{"repo":"o/h","type":"helm-chart","chart":"charts/dingo","refs":["../docs/*.md","../docs/*.yaml"]}'
+assert_eq "helm-chart crash after a changed file exits 1" "$RC" "1"
+fresh
+run x "$HERE/apply.sh" cardano-up-package "$TMP/work/packages" dingo 0.70.0 '{"repo":"o/p","type":"cardano-up-package","package":"dingo","refs":["../docs/*.md","../docs/*.yaml"]}'
+assert_eq "cardano-up-package crash after a changed file exits 1" "$RC" "1"
+
+fresh
+run x fanout_refs "$TMP/work" dingo 0.70.0 '{"refs":["docs/*.md"]}'
+assert_eq "shim delegates for other files (changed)" "$RC" "0"
+run x fanout_refs "$TMP/work" dingo 0.70.0 '{"refs":["docs/*.md"]}'
+assert_eq "shim delegates for other files (unchanged)" "$RC" "1"
+PATH=$REAL_PATH
 
 if [[ $fails -gt 0 ]]; then echo "$fails failure(s)"; exit 1; fi
 echo "all tests passed"

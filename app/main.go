@@ -1795,6 +1795,7 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 	// Fold obsolete-wrapper cleanup into the same commit so it does not start a
 	// separate CI run of its own.
 	stageRemovals(ctx, client, owner, repo, batch, obsoleteIssueCloseWorkflowPaths)
+	stageObsoleteFanoutWrapper(ctx, client, owner, repo, batch, workflows)
 	if dependabot != "" {
 		stageManagedFile(ctx, client, owner, repo, batch, ".github/dependabot.yml", []byte(dependabot))
 	}

@@ -137,6 +137,7 @@ jobs:
           token: ${{ steps.app.outputs.token }}
           path: target
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Apply
         id: apply
@@ -159,16 +160,15 @@ jobs:
       - name: Install cardano-up
         if: steps.apply.outputs.changed == 'true' && matrix.type == 'cardano-up-package'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # To bump: set the new release tag and copy that release's
+          # linux-amd64 asset digest (sha256) from its GitHub release page.
+          CARDANO_UP_VERSION: v0.18.0
+          CARDANO_UP_SHA256: 0265bef056eb359049d25050d817e96eb263f6786a0558601e5ae7b74e503287
         run: |
           set -euo pipefail
-          url=$(curl -sSf \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/blinklabs-io/cardano-up/releases/latest \
-            | jq -r '.assets[]? | select(.name | test("linux-amd64")) | .browser_download_url' | head -1)
-          [[ -n "$url" ]] || { echo "ERROR: no linux-amd64 cardano-up asset" >&2; exit 1; }
-          curl -sSLo cardano-up "$url"
+          curl -fsSL -o cardano-up \
+            "https://github.com/blinklabs-io/cardano-up/releases/download/${CARDANO_UP_VERSION}/cardano-up-${CARDANO_UP_VERSION}-linux-amd64"
+          echo "${CARDANO_UP_SHA256}  cardano-up" | sha256sum -c -
           chmod +x cardano-up
 
       - name: Validate
@@ -212,10 +212,15 @@ jobs:
           git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           git commit -s -m "$(fanout_commit_msg "$PRODUCT" "$VERSION" "$SELF")"
           branch=$(git symbolic-ref --short HEAD)
+          # The checkout does not persist credentials, so only the network
+          # commands below carry the token, as the checkout action would.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::${auth}"
+          authcfg="http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}"
           for attempt in 1 2 3; do
-            if git push origin "HEAD:$branch"; then break; fi
+            if git -c "$authcfg" push origin "HEAD:$branch"; then break; fi
             [[ "$attempt" -lt 3 ]] || { echo "ERROR: push failed after 3 attempts" >&2; exit 1; }
-            git pull --rebase origin "$branch"
+            git -c "$authcfg" pull --rebase origin "$branch"
           done
 
       - name: Summary

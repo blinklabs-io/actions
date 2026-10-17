@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -26,12 +28,14 @@ func TestValidateFanout(t *testing.T) {
 	}
 
 	bad := map[string][]FanoutTarget{
-		"owner/name":      {{Repo: "helm-charts", Type: "helm-chart", Chart: "c"}},
-		"unknown type":    {{Repo: "o/r", Type: "npm"}},
-		"missing chart":   {{Repo: "o/r", Type: "helm-chart"}},
-		"missing role":    {{Repo: "o/r", Type: "ansible-role"}},
-		"missing package": {{Repo: "o/r", Type: "cardano-up-package"}},
-		"missing refs":    {{Repo: "o/r", Type: "version-refs"}},
+		"owner/name":       {{Repo: "helm-charts", Type: "helm-chart", Chart: "c"}},
+		"unknown type":     {{Repo: "o/r", Type: "npm"}},
+		"missing chart":    {{Repo: "o/r", Type: "helm-chart"}},
+		"missing role":     {{Repo: "o/r", Type: "ansible-role"}},
+		"missing package":  {{Repo: "o/r", Type: "cardano-up-package"}},
+		"missing refs":     {{Repo: "o/r", Type: "version-refs"}},
+		"refs[0] is empty": {{Repo: "o/r", Type: "version-refs", Refs: []string{""}}},
+		"refs[1] is empty": {{Repo: "o/r", Type: "version-refs", Refs: []string{"README.md", "  "}}},
 		"duplicate": {
 			{Repo: "o/r", Type: "ansible-role", Role: "a"},
 			{Repo: "O/R", Type: "ansible-role", Role: "b"},
@@ -283,5 +287,90 @@ func TestFanoutRealConfigPlansDingo(t *testing.T) {
 		if !types[want] {
 			t.Errorf("real config missing %s target for dingo", want)
 		}
+	}
+}
+
+func TestFanoutWrapperObsolete(t *testing.T) {
+	generated := []byte(generatedWorkflowHeader + "\nname: release-fanout\n")
+	handwritten := []byte("name: release-fanout\non: push\n")
+	other := []WorkflowConfig{{DestinationFile: "go.yml"}}
+	withWrapper := []WorkflowConfig{{DestinationFile: fanoutWorkflowFile}}
+	asPipeline := []WorkflowConfig{{DestinationFile: "x.yml", Pipeline: fanoutWorkflowFile}}
+
+	cases := []struct {
+		name     string
+		desired  []WorkflowConfig
+		existing []byte
+		want     bool
+	}{
+		{"desired keeps generated file", withWrapper, generated, false},
+		{"desired pipeline keeps generated file", asPipeline, generated, false},
+		{"not desired, generated header", other, generated, true},
+		{"not desired, CRLF generated header", other, []byte(generatedWorkflowHeader + "\r\nname: x\n"), true},
+		{"not desired, no sentinel header", other, handwritten, false},
+		{"header only on a later line", other, []byte("name: x\n" + generatedWorkflowHeader + "\n"), false},
+		{"empty file", other, nil, false},
+		{"nothing desired, generated header", nil, generated, true},
+	}
+	for _, tc := range cases {
+		if got := fanoutWrapperObsolete(tc.desired, tc.existing); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestSyncWorkflowsRemovesObsoleteFanoutWrapper(t *testing.T) {
+	t.Chdir("..")
+
+	cases := []struct {
+		name       string
+		content    string
+		wantDelete bool
+	}{
+		{"generated wrapper is removed", generatedWorkflowHeader + "\nname: release-fanout\n", true},
+		{"hand-written wrapper is kept", "name: release-fanout\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := &recordingGitHub{contents: map[string]string{fanoutWorkflowFile: tc.content}}
+			client := newRecordingClient(t, g)
+
+			syncWorkflows(context.Background(), client, "o", "r", nil)
+
+			deleted := strings.Contains(g.tree(), fanoutWorkflowFile) && strings.Contains(g.tree(), `"sha":null`)
+			if deleted != tc.wantDelete {
+				t.Errorf("deleted=%v want %v; tree %q requests %v", deleted, tc.wantDelete, g.tree(), g.requests)
+			}
+			if !tc.wantDelete && g.saw(http.MethodPost, "/git/trees") {
+				t.Errorf("kept file still produced a commit; requests %v", g.requests)
+			}
+		})
+	}
+}
+
+func TestSyncWorkflowsKeepsDesiredFanoutWrapper(t *testing.T) {
+	t.Chdir("..")
+
+	wf := WorkflowConfig{
+		DestinationFile:  fanoutWorkflowFile,
+		WorkflowName:     "release-fanout",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-release-dispatch.yml@" + testFanoutRef,
+		Triggers:         map[string]interface{}{"release": map[string]interface{}{"types": []string{"published"}}},
+	}
+	tmpl, err := buildWorkflowTemplate("templates/workflow.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := renderWorkflow(tmpl, wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &recordingGitHub{contents: map[string]string{fanoutWorkflowFile: string(rendered)}}
+	client := newRecordingClient(t, g)
+
+	syncWorkflows(context.Background(), client, "o", "r", []WorkflowConfig{wf})
+
+	if g.saw(http.MethodPost, "/git/trees") {
+		t.Errorf("a desired wrapper must not be removed or rewritten; requests %v", g.requests)
 	}
 }

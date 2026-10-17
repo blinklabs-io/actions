@@ -10,6 +10,10 @@ EXIT_NOOP=10
 # fanout_refs returns this when refs is non-empty but no glob matched a file.
 # shellcheck disable=SC2034 # consumed by fanout_refs callers
 EXIT_NOMATCH=3
+# fanout_refs returns this when refs.pl failed on a file, so a crash is never
+# mistaken for "unchanged" and a partial update is never reported as success.
+# shellcheck disable=SC2034 # consumed by fanout_refs callers
+EXIT_REFS_FAILED=4
 
 fanout_normalize() {
   local v="${1#v}"
@@ -28,17 +32,26 @@ fanout_gt() {
 # fanout_refs DIR PRODUCT VERSION SPEC_JSON: rewrite version references in the
 # files matched by spec.refs (globs relative to DIR). Success when any file
 # changed; status 1 when nothing did; status EXIT_NOMATCH when refs is
-# non-empty but no glob matched any file, so a renamed file fails loudly.
+# non-empty but no glob matched any file, so a renamed file fails loudly; and
+# status EXIT_REFS_FAILED when refs.pl failed on any file, even after an earlier
+# file changed.
 fanout_refs() {
-  local dir=$1 product=$2 version=$3 spec=$4 changed=1 matched=0 declared=0 glob file
+  local dir=$1 product=$2 version=$3 spec=$4 changed=1 matched=0 declared=0 glob file rc
   while IFS= read -r glob; do
     [[ -n "$glob" ]] || continue
     declared=$((declared + 1))
     while IFS= read -r file; do
       matched=$((matched + 1))
-      if perl "$FANOUT_DIR/refs.pl" "$product" "$version" "$dir/$file"; then
-        changed=0
-      fi
+      rc=0
+      perl "$FANOUT_DIR/refs.pl" "$product" "$version" "$dir/$file" || rc=$?
+      case "$rc" in
+        0) changed=0 ;;
+        1) ;;
+        *)
+          echo "ERROR: refs.pl failed on $file (status $rc)" >&2
+          return "$EXIT_REFS_FAILED"
+          ;;
+      esac
     done < <(
       cd "$dir" || exit 1
       shopt -s globstar nullglob

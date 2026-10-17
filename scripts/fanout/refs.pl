@@ -1,9 +1,13 @@
 #!/usr/bin/env perl
 # Rewrite a product's version references in one documentation or example file.
 # Usage: refs.pl PRODUCT VERSION FILE   (VERSION is X.Y.Z, no "v")
-# Exit 0 when the file changed, 1 when it did not. Never lowers a version.
+# Exit 0 when the file changed, 1 when it did not, 255 on any failure. Never
+# lowers a version.
 use strict;
 use warnings;
+
+# A bare die exits with errno, which can be 1 and read as "unchanged".
+BEGIN { $SIG{__DIE__} = sub { print STDERR @_; exit 255 } }
 
 my ($product, $new, $file) = @ARGV;
 die "usage: refs.pl PRODUCT VERSION FILE\n" unless defined $file;
@@ -37,15 +41,24 @@ my $orig = $text;
 # 1. Image references: ghcr.io/blinklabs-io/<product>:<version>
 $text =~ s{($img:)(v?)($ver)$end}{rep($1, $2, $3, '')}ge;
 
-# 2. Helm values: rewrite a "tag:" line only when the nearest preceding
-#    "repository:" line names this product's image.
+# 2. Helm values: rewrite a "tag:" line only when it is a sibling of the
+#    nearest preceding "repository:" line and that line names this product's
+#    image. The state ends when a line is indented less than the repository
+#    line (its mapping closed) or another repository line appears.
 my @lines = split /^/, $text, -1;
-my $current_is_product = 0;
+my $repo_indent;
 for my $l (@lines) {
-    if ($l =~ m{^\s*repository:\s*["']?(\S+?)["']?(?:[ \t]+\#.*)?\s*$}) {
-        $current_is_product = ($1 =~ m{^$img$}) ? 1 : 0;
-    } elsif ($current_is_product) {
-        $l =~ s{^(\s*tag:\s*["']?)(v?)($ver)(["']?[ \t]*(?:\#.*)?)(\r?\n?)$}{rep($1, $2, $3, $4) . $5}e;
+    if ($l =~ m{^(\s*)repository:\s*["']?(\S+?)["']?(?:[ \t]+\#.*)?\s*$}) {
+        my ($indent, $name) = (length($1), $2);
+        $repo_indent = ($name =~ m{^$img$}) ? $indent : undef;
+    } elsif (defined $repo_indent) {
+        next if $l =~ m{^\s*(?:\#.*)?$};
+        my ($lead) = $l =~ m{^([ \t]*)};
+        if (length($lead) < $repo_indent) {
+            undef $repo_indent;
+        } elsif (length($lead) == $repo_indent) {
+            $l =~ s{^(\s*tag:\s*["']?)(v?)($ver)(["']?[ \t]*(?:\#.*)?)(\r?\n?)$}{rep($1, $2, $3, $4) . $5}e;
+        }
     }
 }
 $text = join '', @lines;
@@ -74,7 +87,7 @@ $text = join '', @lines;
 
 exit 1 if $text eq $orig;
 open my $out, '>', $file or die "write $file: $!\n";
-print $out $text;
-close $out;
+print $out $text or die "write $file: $!\n";
+close $out or die "write $file: $!\n";
 print STDERR "refs: updated $file\n";
 exit 0;
