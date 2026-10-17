@@ -42,6 +42,7 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-conventional-commits.yml` — conventional-commit PR title check.
 - `reuseable-check-versions.yml` — check upstream image versions against a docker-compose file and open update PRs.
 - `reuseable-check-versions-packages.yml` — check upstream release/image versions against `packages/<pkg>/<pkg>-*.yaml` version files, validate with the cardano-up CLI, and open update PRs (for cardano-up package repositories).
+- `reuseable-release-dispatch.yml` — announce a published release to the central `release-fanout.yml` workflow (used by the generated `release-fanout.yml` wrapper).
 - `reuseable-package-validate.yml` — validate cardano-up package definitions with the cardano-up CLI (plus optional filename/content version-consistency check).
 
 The reusable Go test workflow starts cross-builds only after tests pass and limits them to two concurrent targets by default. Callers can set `cross-build-max-parallel` to choose another limit.
@@ -62,6 +63,60 @@ performs an observe → compare → act loop:
 
 Writes go **directly to each repository's default branch**; the engine does not
 open pull requests.
+
+## Release fan-out
+
+A repository can declare downstream repositories that pin its released version
+under `release_fanout` in `repos-config.yaml`. The central `release-fanout.yml`
+workflow pushes a release's version straight to each target's default branch
+with the governance app token; there are no pull requests. It runs from a
+manual `workflow_dispatch`, from the product's generated wrapper once
+`release_fanout_dispatch_ref` is set (see below), and from a daily backstop, so
+until that key is set a release reaches its targets within about a day. A
+manual or dispatched version must be an existing published release: the
+workflow rejects a tag that does not exist or is a draft or prerelease.
+
+```yaml
+- name: blinklabs-io/dingo
+  release_fanout:
+    - repo: blinklabs-io/helm-charts
+      type: helm-chart
+      chart: charts/dingo
+```
+
+| `type` | Required field | Changes |
+|---|---|---|
+| `ansible-role` | `role` | `<role>_version` in `roles/<role>/defaults/main.yml` |
+| `helm-chart` | `chart` | `appVersion`, `image.tag`, patch bump of the chart `version` |
+| `cardano-up-package` | `package` | new `packages/<pkg>/<pkg>-<ver>.yaml` via `scripts/add-version.sh` |
+| `version-refs` | `refs` | version strings in the listed files |
+
+Every type also accepts `refs`, a list of globs (relative to the target repo,
+`**` supported) whose version references are rewritten in the same commit.
+Only the product's own image tags (`ghcr.io/blinklabs-io/<product>:X.Y.Z`), a
+helm `tag:` under its `repository:`, a `<product>_version` table cell or
+assignment, the last backticked version on an `image.tag` table row, and prose
+of the form ``<Product> `X.Y.Z` `` are changed. Versions are never lowered and prereleases are ignored. The prose
+rule matches any ``<Product> `X.Y.Z` ``, so `refs` globs must not include files
+whose prose gives a minimum version ("0.68.0 or newer"). A target whose `refs`
+are all unmatched fails the run instead of doing nothing.
+
+The engine generates `release-fanout.yml` in each repository that declares
+`release_fanout` once the top-level `release_fanout_dispatch_ref` is set to a
+full lowercase commit SHA of this repository that contains
+`reuseable-release-dispatch.yml` (the wrapper passes a secret, so it is pinned
+by commit). While the key is unset no wrapper is generated, and wrappers appear
+after the ref is set in a follow-up change.
+
+The wrapper sends a `repository_dispatch` using `ORG_PROJECT_PAT`, which needs
+only Contents read/write on `blinklabs-io/actions`. The central
+`.github/workflows/release-fanout.yml` receives that dispatch. Run it by hand
+with the `release-fanout` workflow's `workflow_dispatch` (dry-run by default).
+The daily backstop re-applies each product's latest release.
+
+Add a new target kind by adding a handler under `scripts/fanout/handlers/`, a
+case in `validateFanout` (`app/fanout.go`), a case in `apply.sh`, and tests in
+`scripts/fanout/test.sh`. Run the shell tests with `bash scripts/fanout/test.sh`.
 
 ## Reconciliation trigger
 

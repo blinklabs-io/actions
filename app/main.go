@@ -26,6 +26,11 @@ type Config struct {
 	Profiles     map[string]Profile `yaml:"profiles"`
 	Discovery    Discovery          `yaml:"discovery"`
 	Repositories []RepoConfig       `yaml:"repositories"`
+
+	// ReleaseFanoutDispatchRef is the commit SHA of the actions repository
+	// that generated release-fanout.yml wrappers pin the dispatch workflow to.
+	// Empty disables wrapper generation.
+	ReleaseFanoutDispatchRef string `yaml:"release_fanout_dispatch_ref"`
 }
 
 // Discovery configures optional org-wide repository auto-discovery. When
@@ -107,6 +112,9 @@ type RepoConfig struct {
 	Collaborators    []Collaborator              `yaml:"collaborators"`
 	BranchProtection []BranchProtection          `yaml:"branch_protection"`
 	Workflows        []WorkflowConfig            `yaml:"workflows"`
+	// ReleaseFanout lists downstream repositories that pin this repository's
+	// released version; see fanout.go.
+	ReleaseFanout []FanoutTarget `yaml:"release_fanout"`
 }
 
 type RepoSettings struct {
@@ -253,6 +261,10 @@ type pipelineData struct {
 // ---------------------------------------------------------------------------
 
 func main() {
+	if code, handled := runFanoutCommand(os.Args[1:], os.Stdout, os.Stderr); handled {
+		os.Exit(code)
+	}
+
 	ctx := context.Background()
 
 	// GH_TOKEN is injected by the central runner action via the GitHub App
@@ -431,10 +443,17 @@ func workflowExists(workflows []WorkflowConfig, destinationFile string) bool {
 // are applied, and ${var} placeholders are substituted from the repo's vars.
 // Repositories without a profile are left untouched.
 func expandProfiles(cfg *Config) error {
+	if err := validateFanoutRef(cfg.ReleaseFanoutDispatchRef); err != nil {
+		return err
+	}
 	for i := range cfg.Repositories {
 		if err := expandRepo(cfg, &cfg.Repositories[i]); err != nil {
 			return err
 		}
+		if err := validateFanout(cfg.Repositories[i]); err != nil {
+			return err
+		}
+		injectFanoutWorkflow(&cfg.Repositories[i], cfg.ReleaseFanoutDispatchRef)
 	}
 	return nil
 }
@@ -1776,6 +1795,7 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 	// Fold obsolete-wrapper cleanup into the same commit so it does not start a
 	// separate CI run of its own.
 	stageRemovals(ctx, client, owner, repo, batch, obsoleteIssueCloseWorkflowPaths)
+	stageObsoleteFanoutWrapper(ctx, client, owner, repo, batch, workflows)
 	if dependabot != "" {
 		stageManagedFile(ctx, client, owner, repo, batch, ".github/dependabot.yml", []byte(dependabot))
 	}

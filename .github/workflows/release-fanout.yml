@@ -1,0 +1,238 @@
+name: release-fanout
+
+# Pushes a released version to every downstream repository declared under
+# `release_fanout` in repos-config.yaml. Direct pushes with the governance app
+# token (a branch-protection bypass actor); no pull requests.
+#
+# Triggers: repository_dispatch from a product's generated release-fanout.yml
+# wrapper, a manual run (dry-run by default), and a daily backstop that
+# re-applies each product's latest release. Handlers are idempotent and never
+# downgrade, so the backstop is a no-op when targets are current.
+
+on:
+  repository_dispatch:
+    types: [release-fanout]
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: Product repository (owner/name), e.g. blinklabs-io/dingo
+        required: true
+        type: string
+      version:
+        description: Existing release tag of the product, e.g. v0.70.0
+        required: true
+        type: string
+      dry-run:
+        description: Print the diff instead of committing and pushing
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    - cron: '17 6 * * *'
+
+# One run at a time: targets are shared across products and pushes must not race.
+concurrency:
+  group: release-fanout
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has-targets: ${{ steps.plan.outputs.has-targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+      - name: Build matrix
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_REPO: ${{ github.event.client_payload.repo }}
+          DISPATCH_VERSION: ${{ github.event.client_payload.version }}
+          INPUT_REPO: ${{ inputs.repo }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          repos=()
+          versions=()
+          case "$EVENT" in
+            repository_dispatch) repos+=("$DISPATCH_REPO"); versions+=("$DISPATCH_VERSION") ;;
+            workflow_dispatch) repos+=("$INPUT_REPO"); versions+=("$INPUT_VERSION") ;;
+            schedule)
+              products=$(go run ./app fanout-products)
+              if [[ -z "$products" ]]; then
+                echo "::error::fanout-products returned no products" >&2
+                exit 1
+              fi
+              while IFS= read -r product; do
+                if ! tag=$(gh api "repos/$product/releases/latest" --jq .tag_name 2>gh.err); then
+                  # Only a 404 means "no release yet"; any other failure must fail the run.
+                  if grep -q 'HTTP 404' gh.err; then
+                    echo "::notice::$product has no published release; skipping"
+                    continue
+                  fi
+                  echo "::error::$product: $(cat gh.err)" >&2
+                  exit 1
+                fi
+                repos+=("$product")
+                versions+=("$tag")
+              done <<<"$products"
+              ;;
+          esac
+          if [[ "$EVENT" != "schedule" ]]; then
+            for i in "${!repos[@]}"; do
+              if ! gh api "repos/${repos[$i]}/releases/tags/${versions[$i]}" > release.json \
+                || ! jq -e '.draft == false and .prerelease == false' release.json > /dev/null; then
+                echo "::error::${repos[$i]} ${versions[$i]} is not a published release" >&2
+                exit 1
+              fi
+            done
+          fi
+          : > entries.jsonl
+          for i in "${!repos[@]}"; do
+            if ! go run ./app fanout-plan "${repos[$i]}" "${versions[$i]}" >> entries.jsonl; then
+              echo "::error::${repos[$i]}: fanout-plan rejected ${versions[$i]}" >&2
+              exit 1
+            fi
+          done
+          matrix=$(jq -sc '{include: (add // [])}' entries.jsonl)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "has-targets=$(jq -r '.include | length > 0' <<<"$matrix")" >> "$GITHUB_OUTPUT"
+
+  apply:
+    needs: plan
+    if: needs.plan.outputs.has-targets == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    name: ${{ matrix.product }} ${{ matrix.version }} -> ${{ matrix.name }} (${{ matrix.type }})
+    steps:
+      - name: Check out fan-out scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          path: tools
+
+      - name: Authenticate via GitHub App
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.GOVERNANCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ matrix.name }}
+          permission-contents: write
+
+      - name: Check out target
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          repository: ${{ matrix.repo }}
+          token: ${{ steps.app.outputs.token }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Apply
+        id: apply
+        env:
+          TYPE: ${{ matrix.type }}
+          PRODUCT: ${{ matrix.product }}
+          VERSION: ${{ matrix.version }}
+          SPEC: ${{ matrix.spec }}
+        run: |
+          set +e
+          tools/scripts/fanout/apply.sh "$TYPE" target "$PRODUCT" "$VERSION" "$SPEC"
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "changed=true" >> "$GITHUB_OUTPUT" ;;
+            10) echo "changed=false" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$rc" ;;
+          esac
+
+      - name: Install cardano-up
+        if: steps.apply.outputs.changed == 'true' && matrix.type == 'cardano-up-package'
+        env:
+          # To bump: set the new release tag and copy that release's
+          # linux-amd64 asset digest (sha256) from its GitHub release page.
+          CARDANO_UP_VERSION: v0.18.0
+          CARDANO_UP_SHA256: 0265bef056eb359049d25050d817e96eb263f6786a0558601e5ae7b74e503287
+        run: |
+          set -euo pipefail
+          curl -fsSL -o cardano-up \
+            "https://github.com/blinklabs-io/cardano-up/releases/download/${CARDANO_UP_VERSION}/cardano-up-${CARDANO_UP_VERSION}-linux-amd64"
+          echo "${CARDANO_UP_SHA256}  cardano-up" | sha256sum -c -
+          chmod +x cardano-up
+
+      - name: Validate
+        if: steps.apply.outputs.changed == 'true'
+        env:
+          TYPE: ${{ matrix.type }}
+          SPEC: ${{ matrix.spec }}
+        run: |
+          set -euo pipefail
+          case "$TYPE" in
+            cardano-up-package)
+              (cd target && "$GITHUB_WORKSPACE/cardano-up" validate -D) ;;
+            helm-chart)
+              helm lint "target/$(jq -er .chart <<<"$SPEC")" ;;
+            *) echo "no validation for $TYPE" ;;
+          esac
+
+      - name: Commit and push
+        if: steps.apply.outputs.changed == 'true'
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+          PRODUCT: ${{ matrix.product }}
+          VERSION: ${{ matrix.version }}
+          SELF: ${{ matrix.repo == matrix.product_repo }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          source tools/scripts/fanout/lib.sh
+          cd target
+          git add -A
+          git --no-pager diff --cached --stat
+          git --no-pager diff --cached
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "dry-run: not committing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git commit -s -m "$(fanout_commit_msg "$PRODUCT" "$VERSION" "$SELF")"
+          branch=$(git symbolic-ref --short HEAD)
+          # The checkout does not persist credentials, so only the network
+          # commands below carry the token, as the checkout action would.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::${auth}"
+          authcfg="http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}"
+          for attempt in 1 2 3; do
+            if git -c "$authcfg" push origin "HEAD:$branch"; then break; fi
+            [[ "$attempt" -lt 3 ]] || { echo "ERROR: push failed after 3 attempts" >&2; exit 1; }
+            git -c "$authcfg" pull --rebase origin "$branch"
+          done
+
+      - name: Summary
+        if: always()
+        env:
+          PRODUCT: ${{ matrix.product }}
+          VERSION: ${{ matrix.version }}
+          TARGET: ${{ matrix.repo }}
+          TYPE: ${{ matrix.type }}
+          CHANGED: ${{ steps.apply.outputs.changed }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          result="$JOB_STATUS"
+          if [[ "$JOB_STATUS" == "success" && "$CHANGED" == "false" ]]; then result="already current"; fi
+          echo "| $PRODUCT $VERSION | $TARGET ($TYPE) | $result |" >> "$GITHUB_STEP_SUMMARY"
