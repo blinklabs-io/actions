@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Move a Homebrew formula to the released tag: source url, sha256 and the
 # CommitHash stamped into the version package. Needs PRODUCT_REPO
-# (owner/name). FANOUT_TARBALL_SHA256 and FANOUT_COMMIT override the network
+# (owner/name); FANOUT_REVISION restores the tag's image revision. FANOUT_TARBALL_SHA256 and FANOUT_COMMIT override the network
 # lookups.
 set -euo pipefail
 # shellcheck source=../lib.sh disable=SC1091
@@ -19,7 +19,8 @@ if [[ -z "$current" ]]; then
 fi
 fanout_gt "$version" "$current" || exit "$EXIT_NOOP"
 
-tag="v$version"
+# The published tag keeps its image revision ("v0.83.2-3"); version does not.
+tag="v$version${FANOUT_REVISION:+-$FANOUT_REVISION}"
 url="https://github.com/$repo/archive/refs/tags/$tag.tar.gz"
 # Tag tarballs are byte-stable, so the sha256 pins the exact release.
 sha=${FANOUT_TARBALL_SHA256:-$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)}

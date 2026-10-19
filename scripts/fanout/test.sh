@@ -222,6 +222,11 @@ fresh
 assert_eq "annotated tag resolves to its commit" "$(cat "$TMP/rc")" "0"
 assert_contains "annotated tag commit stamped" "$(cat "$TMP/work/homebrew/Formula/dingo.rb")" 'version.CommitHash=1234567'
 fresh
+sed -i 's#v0.88.0) printf#v0.89.0-2) printf#' "$TMP/fakebin/gh"
+(unset FANOUT_COMMIT; FANOUT_REVISION=2 PATH="$TMP/fakebin:$PATH" run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.89.0 "$hspec"; echo "$RC" > "$TMP/rc")
+assert_eq "tag lookup keeps the image revision" "$(cat "$TMP/rc")" "0"
+assert_contains "revision tag url" "$(cat "$TMP/work/homebrew/Formula/dingo.rb")" 'refs/tags/v0.89.0-2.tar.gz'
+fresh
 sed -i 's/version\.CommitHash=/version.Hash=/' "$TMP/work/homebrew/Formula/dingo.rb"
 before=$(tree_sum "$TMP/work/homebrew")
 run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.86.0 "$hspec"
