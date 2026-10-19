@@ -28,6 +28,12 @@ fresh() { # copy fixtures into a clean work dir
 # --- semver helpers ---------------------------------------------------------
 assert_eq "normalize strips v" "$(fanout_normalize v0.70.0)" "0.70.0"
 run x fanout_normalize v0.70.0-rc1; assert_eq "normalize rejects prerelease" "$RC" "1"
+assert_eq "normalize strips image revision" "$(fanout_normalize v11.1.3-1)" "11.1.3"
+assert_eq "normalize keeps four parts" "$(fanout_normalize v11.2.3.1-1)" "11.2.3.1"
+assert_eq "normalize accepts date versions" "$(fanout_normalize v20260915-2)" "20260915"
+run x fanout_normalize v1.2.3-pre-1; assert_eq "normalize rejects pre suffix" "$RC" "1"
+run x fanout_gt 20260915 20260707;  assert_eq "gt date versions" "$RC" "0"
+run x fanout_gt 11.2.3.1 11.0.0.0;  assert_eq "gt four parts" "$RC" "0"
 run x fanout_normalize latest;      assert_eq "normalize rejects latest" "$RC" "1"
 run x fanout_gt 0.70.0 0.69.0;      assert_eq "gt newer" "$RC" "0"
 run x fanout_gt 0.69.0 0.69.0;      assert_eq "gt equal is false" "$RC" "1"
@@ -166,6 +172,22 @@ run x "$HERE/apply.sh" helm-chart "$TMP/work/helm" dingo 0.69.0 "$spec"
 assert_eq "helm refuses downgrade" "$RC" "10"
 assert_eq "helm downgrade leaves files unchanged" "$(tree_sum "$TMP/work/helm")" "$before"
 
+# --- compose-default --------------------------------------------------------
+fresh
+mkdir -p "$TMP/work/compose"
+printf 'services:\n  a:\n    image: ghcr.io/blinklabs-io/tx-submit-api:${TX_SUBMIT_API_VERSION:-0.22.1}\n  b:\n    image: x:${OTHER_VERSION:-1.0.0}\n' > "$TMP/work/compose/docker-compose.yaml"
+kspec='{"repo":"o/stacks","type":"compose-default","file":"docker-compose.yaml","var":"TX_SUBMIT_API_VERSION"}'
+run x "$HERE/apply.sh" compose-default "$TMP/work/compose" tx-submit-api 0.23.0 "$kspec"
+assert_eq "compose default exit" "$RC" "0"
+assert_contains "compose default raised" "$(cat "$TMP/work/compose/docker-compose.yaml")" 'TX_SUBMIT_API_VERSION:-0.23.0}'
+assert_contains "compose other var untouched" "$(cat "$TMP/work/compose/docker-compose.yaml")" 'OTHER_VERSION:-1.0.0}'
+run x "$HERE/apply.sh" compose-default "$TMP/work/compose" tx-submit-api 0.23.0 "$kspec"
+assert_eq "compose default re-run is no-op" "$RC" "10"
+run x "$HERE/apply.sh" compose-default "$TMP/work/compose" tx-submit-api 0.20.0 "$kspec"
+assert_eq "compose default refuses older" "$RC" "10"
+run x "$HERE/apply.sh" compose-default "$TMP/work/compose" tx-submit-api 0.24.0 '{"type":"compose-default","file":"docker-compose.yaml","var":"MISSING"}'
+assert_eq "compose default missing var fails" "$RC" "1"
+
 # --- cardano-up-package -----------------------------------------------------
 fresh
 spec='{"repo":"o/cardano-up-packages","type":"cardano-up-package","package":"dingo"}'
@@ -175,6 +197,17 @@ newfile="$TMP/work/packages/packages/dingo/dingo-0.70.0.yaml"
 if [[ -f "$newfile" ]]; then pass "package file created"; else fail "package file created"; fi
 assert_contains "package version field" "$(cat "$newfile")" 'version: 0.70.0'
 assert_contains "package image tag"     "$(cat "$newfile")" 'ghcr.io/blinklabs-io/dingo:0.70.0'
+fresh
+mkdir -p "$TMP/work/packages/packages/cardano-config"
+printf 'name: cardano-config\nversion: 20251128\nimage: ghcr.io/blinklabs-io/cardano-configs:20251128-1\n' \
+  > "$TMP/work/packages/packages/cardano-config/cardano-config-20251128.yaml"
+cspec='{"repo":"o/cardano-up-packages","type":"cardano-up-package","package":"cardano-config"}'
+FANOUT_REVISION=3 run x "$HERE/apply.sh" cardano-up-package "$TMP/work/packages" docker-cardano-configs 20260915 "$cspec"
+assert_eq "config add exit" "$RC" "0"
+assert_contains "config image revision from tag" \
+  "$(cat "$TMP/work/packages/packages/cardano-config/cardano-config-20260915.yaml")" 'cardano-configs:20260915-3'
+fresh
+run x "$HERE/apply.sh" cardano-up-package "$TMP/work/packages" dingo 0.70.0 "$spec"
 run x "$HERE/apply.sh" cardano-up-package "$TMP/work/packages" dingo 0.70.0 "$spec"
 assert_eq "package re-run is no-op" "$RC" "10"
 before=$(tree_sum "$TMP/work/packages")

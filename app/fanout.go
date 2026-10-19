@@ -27,6 +27,8 @@ type FanoutTarget struct {
 	Chart   string   `yaml:"chart,omitempty" json:"chart,omitempty"`
 	Role    string   `yaml:"role,omitempty" json:"role,omitempty"`
 	Package string   `yaml:"package,omitempty" json:"package,omitempty"`
+	File    string   `yaml:"file,omitempty" json:"file,omitempty"`
+	Var     string   `yaml:"var,omitempty" json:"var,omitempty"`
 	Refs    []string `yaml:"refs,omitempty" json:"refs,omitempty"`
 }
 
@@ -48,6 +50,8 @@ func validateFanout(repo RepoConfig) error {
 			field, missing = "role", t.Role == ""
 		case "cardano-up-package":
 			field, missing = "package", t.Package == ""
+		case "compose-default":
+			field, missing = "file and var", t.File == "" || t.Var == ""
 		case "version-refs":
 			field, missing = "refs", len(t.Refs) == 0
 		default:
@@ -82,7 +86,12 @@ func injectFanoutWorkflow(repo *RepoConfig, ref string) {
 		WorkflowName:     "release-fanout",
 		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-release-dispatch.yml@" + ref,
 		Triggers: map[string]interface{}{
-			"release": map[string]interface{}{"types": []string{"published"}},
+			// Releases are published with GITHUB_TOKEN, which never fires a
+			// `release` event, so follow the publish workflow instead.
+			"workflow_run": map[string]interface{}{
+				"workflows": []string{"publish"},
+				"types":     []string{"completed"},
+			},
 		},
 		Permissions: map[string]string{"contents": "read"},
 		Secrets:     map[string]string{"token": "ORG_PROJECT_PAT"},
@@ -144,16 +153,25 @@ func validateFanoutRef(ref string) error {
 	return nil
 }
 
-var fanoutVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+// fanoutVersionPattern accepts X.Y.Z, X.Y.Z.W (cardano-cli) and YYYYMMDD
+// (cardano-configs), each with an optional numeric image revision suffix.
+var fanoutVersionPattern = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+){2,3}|[0-9]{8})(?:-[0-9]+)?$`)
 
-// normalizeFanoutVersion strips a leading "v" and accepts only plain release
-// versions, so prereleases and build metadata never reach a target.
+// normalizeFanoutVersion strips a leading "v" and an image revision suffix
+// ("v11.1.3-1" -> "11.1.3") and accepts only plain release versions, so
+// prereleases and build metadata never reach a target.
 func normalizeFanoutVersion(v string) (string, error) {
-	n := strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if !fanoutVersionPattern.MatchString(n) {
+	m := fanoutVersionPattern.FindStringSubmatch(strings.TrimPrefix(strings.TrimSpace(v), "v"))
+	if m == nil {
 		return "", fmt.Errorf("%q is not a release version (want vX.Y.Z)", v)
 	}
-	return n, nil
+	return m[1], nil
+}
+
+// fanoutRevision returns the numeric image revision suffix of a release tag.
+func fanoutRevision(tag string) string {
+	_, rev, _ := strings.Cut(strings.TrimSpace(tag), "-")
+	return rev
 }
 
 // fanoutMatrixEntry is one apply job. Spec carries the target as compact JSON
@@ -162,10 +180,13 @@ type fanoutMatrixEntry struct {
 	ProductRepo string `json:"product_repo"`
 	Product     string `json:"product"`
 	Version     string `json:"version"`
-	Repo        string `json:"repo"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Spec        string `json:"spec"`
+	// Revision is the image revision of the release tag ("v11.1.3-2" -> "2"),
+	// empty when the tag has none.
+	Revision string `json:"revision"`
+	Repo     string `json:"repo"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Spec     string `json:"spec"`
 }
 
 func fanoutPlan(cfg *Config, productRepo, version string) ([]fanoutMatrixEntry, error) {
@@ -191,6 +212,7 @@ func fanoutPlan(cfg *Config, productRepo, version string) ([]fanoutMatrixEntry, 
 				ProductRepo: r.Name,
 				Product:     product,
 				Version:     n,
+				Revision:    fanoutRevision(version),
 				Repo:        t.Repo,
 				Name:        t.Repo[strings.Index(t.Repo, "/")+1:],
 				Type:        t.Type,

@@ -16,7 +16,7 @@ fi
 
 changed=1
 if fanout_gt "$version" "$latest"; then
-  (cd "$dir" && ./scripts/add-version.sh "$pkg" "$version" >&2)
+  (cd "$dir" && PACKAGE_IMAGE_REVISION="${FANOUT_REVISION:-}" ./scripts/add-version.sh "$pkg" "$version" >&2)
   echo "cardano-up-package: ${pkg} ${latest} -> ${version}" >&2
   changed=0
 fi

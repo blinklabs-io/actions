@@ -146,6 +146,7 @@ jobs:
           PRODUCT: ${{ matrix.product }}
           VERSION: ${{ matrix.version }}
           SPEC: ${{ matrix.spec }}
+          FANOUT_REVISION: ${{ matrix.revision }}
         run: |
           set +e
           tools/scripts/fanout/apply.sh "$TYPE" target "$PRODUCT" "$VERSION" "$SPEC"

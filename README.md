@@ -70,7 +70,7 @@ A repository can declare downstream repositories that pin its released version
 under `release_fanout` in `repos-config.yaml`. The central `release-fanout.yml`
 workflow pushes a release's version straight to each target's default branch
 with the governance app token; there are no pull requests. It runs from a
-manual `workflow_dispatch`, from the product's generated wrapper once
+manual `workflow_dispatch`, from the product's generated wrapper (run when its `publish` workflow completes, because releases created with `GITHUB_TOKEN` fire no `release` event) once
 `release_fanout_dispatch_ref` is set (see below), and from a daily backstop, so
 until that key is set a release reaches its targets within about a day. A
 manual or dispatched version must be an existing published release: the
@@ -89,7 +89,13 @@ workflow rejects a tag that does not exist or is a draft or prerelease.
 | `ansible-role` | `role` | `<role>_version` in `roles/<role>/defaults/main.yml` |
 | `helm-chart` | `chart` | `appVersion`, `image.tag`, patch bump of the chart `version` |
 | `cardano-up-package` | `package` | new `packages/<pkg>/<pkg>-<ver>.yaml` via `scripts/add-version.sh` |
+| `compose-default` | `file`, `var` | the `${<var>:-X}` default in the compose `file` |
 | `version-refs` | `refs` | version strings in the listed files |
+
+A release tag may be `vX.Y.Z`, `vX.Y.Z.W`, or `vYYYYMMDD`, each with an
+optional numeric image revision (`v11.1.3-1`). The revision is dropped, so a
+rebuilt image at the same version is a no-op. Other suffixes (`-rc1`, `-pre-1`)
+are rejected.
 
 Every type also accepts `refs`, a list of globs (relative to the target repo,
 `**` supported) whose version references are rewritten in the same commit.

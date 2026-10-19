@@ -1,8 +1,10 @@
 name: Reusable Release Dispatch
 
 # Announces a published, non-prerelease release to the central release-fanout
-# workflow. Called from the generated release-fanout.yml wrapper, which is
-# triggered by the product repository's `release: published` event.
+# workflow. Called from the generated release-fanout.yml wrapper, which runs
+# when the product repository's publish workflow completes. A release created
+# with GITHUB_TOKEN fires no `release` event, so the tag comes from the
+# workflow run (a `release` event is still honoured).
 #
 # The token only needs Contents read/write on blinklabs-io/actions: that is
 # what `repository_dispatch` requires. It never writes to target repositories.
@@ -19,16 +21,27 @@ permissions:
 
 jobs:
   dispatch:
-    if: ${{ !github.event.release.prerelease && !github.event.release.draft }}
+    if: >-
+      ${{ github.event_name == 'release' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push') }}
     runs-on: ubuntu-latest
     steps:
       - name: Send repository_dispatch
         env:
           DISPATCH_TOKEN: ${{ secrets.token }}
           PRODUCT_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.event.workflow_run.head_branch }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Branch pushes run the publish workflow too; only a tag with a
+          # published, non-prerelease release is announced.
+          if ! gh api "repos/${PRODUCT_REPO}/releases/tags/${RELEASE_TAG}" > release.json 2>/dev/null \
+            || ! jq -e '.draft == false and .prerelease == false' release.json > /dev/null; then
+            echo "No published release for ${RELEASE_TAG}; nothing to announce"
+            exit 0
+          fi
           payload=$(jq -n --arg repo "$PRODUCT_REPO" --arg version "$RELEASE_TAG" \
             '{event_type: "release-fanout", client_payload: {repo: $repo, version: $version}}')
           curl -sSf -X POST \
