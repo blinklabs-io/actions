@@ -77,6 +77,43 @@ func validateFanout(repo RepoConfig) error {
 	return nil
 }
 
+// fanoutPublishWorkflowNames returns the `name:` of every rendered workflow
+// that runs a reusable publish workflow, so the wrapper follows the file that
+// really publishes: a pipeline member publishes inside the combined workflow,
+// whose name is the pipeline's. A repository that configures none (its publish
+// workflow is hand-written) falls back to "publish".
+func fanoutPublishWorkflowNames(workflows []WorkflowConfig) []string {
+	seen := map[string]bool{}
+	var names []string
+	add := func(n string) {
+		if n != "" && !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	for _, wf := range workflows {
+		if !strings.Contains(wf.ReusableWorkflow, "/reuseable-publish") {
+			continue
+		}
+		if wf.Pipeline == "" {
+			add(wf.WorkflowName)
+			continue
+		}
+		var members []WorkflowConfig
+		for _, m := range workflows {
+			if m.Pipeline == wf.Pipeline {
+				members = append(members, m)
+			}
+		}
+		add(pipelineWorkflowName(members))
+	}
+	if len(names) == 0 {
+		return []string{"publish"}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // injectFanoutWorkflow adds the dispatch wrapper to a repository that declares
 // release_fanout, unless it already defines that file. The wrapper passes a
 // secret, so it is pinned to ref; an empty ref injects nothing.
@@ -92,7 +129,7 @@ func injectFanoutWorkflow(repo *RepoConfig, ref string) {
 			// Releases are published with GITHUB_TOKEN, which never fires a
 			// `release` event, so follow the publish workflow instead.
 			"workflow_run": map[string]interface{}{
-				"workflows": []string{"publish"},
+				"workflows": fanoutPublishWorkflowNames(repo.Workflows),
 				"types":     []string{"completed"},
 			},
 		},

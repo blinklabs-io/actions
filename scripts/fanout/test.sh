@@ -205,6 +205,28 @@ run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.80.0 "$hspe
 assert_eq "formula refuses older" "$RC" "10"
 FANOUT_COMMIT=zz run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.87.0 "$hspec"
 assert_eq "formula rejects bad commit" "$RC" "1"
+fresh
+# An annotated tag resolves through its tag object to the commit.
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$2" in
+  repos/o/dingo/git/ref/tags/v0.88.0) printf 'tag\t%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+  repos/o/dingo/git/tags/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) printf 'commit\t%s\n' 1234567abcdef0123456789abcdef0123456789a ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+GH
+chmod +x "$TMP/fakebin/gh"
+fresh
+(unset FANOUT_COMMIT; PATH="$TMP/fakebin:$PATH" run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.88.0 "$hspec"; echo "$RC" > "$TMP/rc")
+assert_eq "annotated tag resolves to its commit" "$(cat "$TMP/rc")" "0"
+assert_contains "annotated tag commit stamped" "$(cat "$TMP/work/homebrew/Formula/dingo.rb")" 'version.CommitHash=1234567'
+fresh
+sed -i 's/version\.CommitHash=/version.Hash=/' "$TMP/work/homebrew/Formula/dingo.rb"
+before=$(tree_sum "$TMP/work/homebrew")
+run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.86.0 "$hspec"
+assert_eq "formula with a missing field fails" "$RC" "1"
+assert_eq "formula left untouched on failure" "$(tree_sum "$TMP/work/homebrew")" "$before"
 unset PRODUCT_REPO FANOUT_TARBALL_SHA256 FANOUT_COMMIT
 
 # --- cardano-up-package -----------------------------------------------------

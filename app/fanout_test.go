@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -210,6 +211,34 @@ func TestValidateFanoutHomebrewFormula(t *testing.T) {
 	}
 	if err := validateFanout(fanoutRepo(FanoutTarget{Repo: "o/r", Type: "homebrew-formula"})); err == nil {
 		t.Error("missing formula must be rejected")
+	}
+}
+
+func TestFanoutPublishWorkflowNames(t *testing.T) {
+	pub := "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+	dock := "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
+	test := "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+	cases := map[string]struct {
+		in   []WorkflowConfig
+		want []string
+	}{
+		"none configured": {nil, []string{"publish"}},
+		"standalone publish": {
+			[]WorkflowConfig{{DestinationFile: "publish.yml", WorkflowName: "publish", ReusableWorkflow: dock}},
+			[]string{"publish"},
+		},
+		"pipeline member": {
+			[]WorkflowConfig{
+				{DestinationFile: "go-test.yml", Pipeline: "ci.yml", PipelineName: "ci", WorkflowName: "go-test", ReusableWorkflow: test},
+				{DestinationFile: "publish.yml", Pipeline: "ci.yml", WorkflowName: "publish", ReusableWorkflow: pub},
+			},
+			[]string{"ci"},
+		},
+	}
+	for name, tc := range cases {
+		if got := fanoutPublishWorkflowNames(tc.in); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: got %v want %v", name, got, tc.want)
+		}
 	}
 }
 

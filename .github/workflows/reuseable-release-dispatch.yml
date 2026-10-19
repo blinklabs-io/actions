@@ -37,10 +37,24 @@ jobs:
           set -euo pipefail
           # Branch pushes run the publish workflow too; only a tag with a
           # published, non-prerelease release is announced.
-          if ! gh api "repos/${PRODUCT_REPO}/releases/tags/${RELEASE_TAG}" > release.json 2>/dev/null \
-            || ! jq -e '.draft == false and .prerelease == false' release.json > /dev/null; then
-            echo "No published release for ${RELEASE_TAG}; nothing to announce"
+          # Only a missing release is a no-op; a rate limit or server error
+          # fails the job so it can be re-run.
+          if ! gh api "repos/${PRODUCT_REPO}/releases/tags/${RELEASE_TAG}" > release.json 2> gh.err; then
+            if grep -q 'HTTP 404' gh.err; then
+              echo "No release for ${RELEASE_TAG}; nothing to announce"
+              exit 0
+            fi
+            cat gh.err >&2
+            exit 1
+          fi
+          rc=0
+          jq -e '.draft == false and .prerelease == false' release.json > /dev/null || rc=$?
+          if [[ "$rc" -eq 1 ]]; then
+            echo "${RELEASE_TAG} is a draft or prerelease; nothing to announce"
             exit 0
+          elif [[ "$rc" -ne 0 ]]; then
+            echo "::error::could not read release ${RELEASE_TAG} (jq status $rc)" >&2
+            exit "$rc"
           fi
           payload=$(jq -n --arg repo "$PRODUCT_REPO" --arg version "$RELEASE_TAG" \
             '{event_type: "release-fanout", client_payload: {repo: $repo, version: $version}}')
