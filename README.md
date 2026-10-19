@@ -102,7 +102,7 @@ Every type also accepts `refs`, a list of globs (relative to the target repo,
 `**` supported) whose version references are rewritten in the same commit.
 Only the product's own image tags (`ghcr.io/blinklabs-io/<product>:X.Y.Z`), a
 helm `tag:` under its `repository:`, a `<product>_version` table cell or
-assignment, the last backticked version on an `image.tag` table row, and prose
+assignment, the last backticked version on an `image.tag` table row, backticked architecture tags (`X.Y.Z-amd64`, `-arm64`), and prose
 of the form ``<Product> `X.Y.Z` `` are changed. Versions are never lowered and prereleases are ignored. The prose
 rule matches any ``<Product> `X.Y.Z` ``, so `refs` globs must not include files
 whose prose gives a minimum version ("0.68.0 or newer"). A target whose `refs`

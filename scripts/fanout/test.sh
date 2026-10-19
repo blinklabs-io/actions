@@ -304,7 +304,7 @@ out=$(cat "$TMP/work/live/helm.md")
 assert_contains "image ref updated" "$out" 'dingo:99.0.0 \'
 assert_contains "image.tag row last value updated" "$(grep -F '| `image.tag`' <<<"$out")" '`99.0.0`'
 assert_contains "image.tag row keeps its description" "$out" 'Image tag (used when `image.digest` is empty)'
-assert_contains "arch suffixed tags untouched" "$out" '`0.83.0-amd64` or `0.83.0-arm64`'
+assert_contains "arch suffixed tags updated" "$out" '`99.0.0-amd64` or `99.0.0-arm64`'
 assert_contains "image.digest row untouched" "$out" '| `image.digest`                  | Image digest                                              | `0.83.0`'
 printf '| `image.tag` | tag | `0.90.0` |\n' > "$TMP/work/live/down2.md"
 run x perl "$HERE/refs.pl" dingo 0.83.0 "$TMP/work/live/down2.md"
@@ -359,6 +359,20 @@ valsum=$(sha256sum <"$hdir/values.yaml")
 run x "$HERE/apply.sh" helm-chart "$TMP/work/helm" dingo 0.70.0 "$hspec"
 assert_eq "helm equal tag exit" "$RC" "0"
 assert_eq "helm equal tag unchanged" "$(sha256sum <"$hdir/values.yaml")" "$valsum"
+
+# --- arch-suffixed tags -----------------------------------------------------
+fresh
+# shellcheck disable=SC2016 # backticks are literal
+printf 'Resolve the digest (for example, the `0.69.0-amd64` or `0.69.0-arm64` tag) first.\nKeep `1.2.3` alone.\n' > "$TMP/work/docs/arch.md"
+run x perl "$HERE/refs.pl" dingo 0.70.0 "$TMP/work/docs/arch.md"; assert_eq "arch tags changed" "$RC" "0"
+archmd=$(cat "$TMP/work/docs/arch.md")
+# shellcheck disable=SC2016 # backticks are literal
+assert_contains "arch amd64 rewritten" "$archmd" '`0.70.0-amd64`'
+# shellcheck disable=SC2016 # backticks are literal
+assert_contains "arch arm64 rewritten" "$archmd" '`0.70.0-arm64`'
+# shellcheck disable=SC2016 # backticks are literal
+assert_contains "plain version untouched" "$archmd" 'Keep `1.2.3` alone.'
+run x perl "$HERE/refs.pl" dingo 0.60.0 "$TMP/work/docs/arch.md"; assert_eq "arch tags never downgrade" "$RC" "1"
 
 # --- refs.pl failures are fatal, never "unchanged" ---------------------------
 # A perl shim that crashes on one file name and delegates otherwise.

@@ -1,5 +1,7 @@
 #!/usr/bin/env perl
 # Rewrite a product's version references in one documentation or example file.
+# Rules rewrite image refs, helm tags, prose pins, <product>_version, the
+# image.tag table row and arch-suffixed tags.
 # Usage: refs.pl PRODUCT VERSION FILE   (VERSION is X.Y.Z, no "v")
 # Exit 0 when the file changed, 1 when it did not, 255 on any failure. Never
 # lowers a version.
@@ -84,6 +86,10 @@ for my $l (@lines) {
     substr($l, $s, $e - $s) = '`' . $vp . (newer($new, $old) ? $new : $old) . '`';
 }
 $text = join '', @lines;
+
+# 6. A backticked architecture-specific tag: `<version>-amd64`, `-arm64` or
+#    `-arm64v8`. The architecture suffix keeps this off ordinary versions.
+$text =~ s{(`)(v?)($ver)(-(?:amd64|arm64v8|arm64)`)}{rep($1, $2, $3, $4)}ge;
 
 exit 1 if $text eq $orig;
 open my $out, '>', $file or die "write $file: $!\n";
