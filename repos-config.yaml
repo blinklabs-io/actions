@@ -1299,6 +1299,9 @@ repositories:
       - repo: blinklabs-io/cardano-up-packages
         type: cardano-up-package
         package: dingo
+      - repo: blinklabs-io/homebrew-cardano
+        type: homebrew-formula
+        formula: Formula/dingo.rb
 
   # cardano-compose-stacks provides Docker Compose stacks, including the Dingo
   # Antithesis harness and archive demo. The nested Go modules get independent

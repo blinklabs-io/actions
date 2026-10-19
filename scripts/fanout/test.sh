@@ -188,6 +188,25 @@ assert_eq "compose default refuses older" "$RC" "10"
 run x "$HERE/apply.sh" compose-default "$TMP/work/compose" tx-submit-api 0.24.0 '{"type":"compose-default","file":"docker-compose.yaml","var":"MISSING"}'
 assert_eq "compose default missing var fails" "$RC" "1"
 
+# --- homebrew-formula -------------------------------------------------------
+fresh
+hspec='{"repo":"o/homebrew-cardano","type":"homebrew-formula","formula":"Formula/dingo.rb"}'
+sha=$(printf 'a%.0s' $(seq 64))
+export PRODUCT_REPO=o/dingo FANOUT_TARBALL_SHA256=$sha FANOUT_COMMIT=0123456789abcdef0123456789abcdef01234567
+run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.86.0 "$hspec"
+assert_eq "formula exit" "$RC" "0"
+f=$(cat "$TMP/work/homebrew/Formula/dingo.rb")
+assert_contains "formula url"    "$f" 'url "https://github.com/o/dingo/archive/refs/tags/v0.86.0.tar.gz"'
+assert_contains "formula sha"    "$f" "sha256 \"$sha\""
+assert_contains "formula commit" "$f" 'version.CommitHash=0123456'
+run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.86.0 "$hspec"
+assert_eq "formula re-run is no-op" "$RC" "10"
+run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.80.0 "$hspec"
+assert_eq "formula refuses older" "$RC" "10"
+FANOUT_COMMIT=zz run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.87.0 "$hspec"
+assert_eq "formula rejects bad commit" "$RC" "1"
+unset PRODUCT_REPO FANOUT_TARBALL_SHA256 FANOUT_COMMIT
+
 # --- cardano-up-package -----------------------------------------------------
 fresh
 spec='{"repo":"o/cardano-up-packages","type":"cardano-up-package","package":"dingo"}'

@@ -204,6 +204,15 @@ func TestValidateFanoutComposeDefault(t *testing.T) {
 	}
 }
 
+func TestValidateFanoutHomebrewFormula(t *testing.T) {
+	if err := validateFanout(fanoutRepo(FanoutTarget{Repo: "o/r", Type: "homebrew-formula", Formula: "Formula/x.rb"})); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateFanout(fanoutRepo(FanoutTarget{Repo: "o/r", Type: "homebrew-formula"})); err == nil {
+		t.Error("missing formula must be rejected")
+	}
+}
+
 func TestFanoutRevision(t *testing.T) {
 	for in, want := range map[string]string{"v11.1.3-2": "2", "v20260915-1": "1", "v0.22.1": ""} {
 		if got := fanoutRevision(in); got != want {

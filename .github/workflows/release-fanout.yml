@@ -147,6 +147,8 @@ jobs:
           VERSION: ${{ matrix.version }}
           SPEC: ${{ matrix.spec }}
           FANOUT_REVISION: ${{ matrix.revision }}
+          PRODUCT_REPO: ${{ matrix.product_repo }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set +e
           tools/scripts/fanout/apply.sh "$TYPE" target "$PRODUCT" "$VERSION" "$SPEC"

@@ -9,7 +9,7 @@ if [[ $# -ne 5 ]]; then
 fi
 here=$(cd "$(dirname "$0")" && pwd)
 case "$1" in
-  ansible-role | helm-chart | cardano-up-package | compose-default | version-refs) ;;
+  ansible-role | helm-chart | cardano-up-package | compose-default | homebrew-formula | version-refs) ;;
   *) echo "ERROR: unknown fan-out type: $1" >&2; exit 2 ;;
 esac
 exec "$here/handlers/$1.sh" "$2" "$3" "$4" "$5"

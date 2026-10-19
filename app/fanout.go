@@ -28,6 +28,7 @@ type FanoutTarget struct {
 	Role    string   `yaml:"role,omitempty" json:"role,omitempty"`
 	Package string   `yaml:"package,omitempty" json:"package,omitempty"`
 	File    string   `yaml:"file,omitempty" json:"file,omitempty"`
+	Formula string   `yaml:"formula,omitempty" json:"formula,omitempty"`
 	Var     string   `yaml:"var,omitempty" json:"var,omitempty"`
 	Refs    []string `yaml:"refs,omitempty" json:"refs,omitempty"`
 }
@@ -50,6 +51,8 @@ func validateFanout(repo RepoConfig) error {
 			field, missing = "role", t.Role == ""
 		case "cardano-up-package":
 			field, missing = "package", t.Package == ""
+		case "homebrew-formula":
+			field, missing = "formula", t.Formula == ""
 		case "compose-default":
 			field, missing = "file and var", t.File == "" || t.Var == ""
 		case "version-refs":

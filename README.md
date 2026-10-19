@@ -90,6 +90,7 @@ workflow rejects a tag that does not exist or is a draft or prerelease.
 | `helm-chart` | `chart` | `appVersion`, `image.tag`, patch bump of the chart `version` |
 | `cardano-up-package` | `package` | new `packages/<pkg>/<pkg>-<ver>.yaml` via `scripts/add-version.sh` |
 | `compose-default` | `file`, `var` | the `${<var>:-X}` default in the compose `file` |
+| `homebrew-formula` | `formula` | source `url`, `sha256` and `CommitHash` of the formula for tag `v<ver>` |
 | `version-refs` | `refs` | version strings in the listed files |
 
 A release tag may be `vX.Y.Z`, `vX.Y.Z.W`, or `vYYYYMMDD`, each with an
