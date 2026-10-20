@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -149,7 +150,7 @@ func TestInjectFanoutWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"release:", "- published", "token: ${{ secrets.ORG_PROJECT_PAT }}", "contents: read"} {
+	for _, want := range []string{"workflow_run:", "- publish", "- completed", "token: ${{ secrets.ORG_PROJECT_PAT }}", "contents: read"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("rendered wrapper missing %q:\n%s", want, out)
 		}
@@ -189,14 +190,75 @@ repositories:
 	}
 }
 
+func TestValidateFanoutComposeDefault(t *testing.T) {
+	good := fanoutRepo(FanoutTarget{Repo: "o/r", Type: "compose-default", File: "docker-compose.yaml", Var: "X_VERSION"})
+	if err := validateFanout(good); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []FanoutTarget{
+		{Repo: "o/r", Type: "compose-default", File: "docker-compose.yaml"},
+		{Repo: "o/r", Type: "compose-default", Var: "X_VERSION"},
+	} {
+		if err := validateFanout(fanoutRepo(bad)); err == nil {
+			t.Errorf("%+v must be rejected", bad)
+		}
+	}
+}
+
+func TestValidateFanoutHomebrewFormula(t *testing.T) {
+	if err := validateFanout(fanoutRepo(FanoutTarget{Repo: "o/r", Type: "homebrew-formula", Formula: "Formula/x.rb"})); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateFanout(fanoutRepo(FanoutTarget{Repo: "o/r", Type: "homebrew-formula"})); err == nil {
+		t.Error("missing formula must be rejected")
+	}
+}
+
+func TestFanoutPublishWorkflowNames(t *testing.T) {
+	pub := "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@main"
+	dock := "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@main"
+	test := "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+	cases := map[string]struct {
+		in   []WorkflowConfig
+		want []string
+	}{
+		"none configured": {nil, []string{"publish"}},
+		"standalone publish": {
+			[]WorkflowConfig{{DestinationFile: "publish.yml", WorkflowName: "publish", ReusableWorkflow: dock}},
+			[]string{"publish"},
+		},
+		"pipeline member": {
+			[]WorkflowConfig{
+				{DestinationFile: "go-test.yml", Pipeline: "ci.yml", PipelineName: "ci", WorkflowName: "go-test", ReusableWorkflow: test},
+				{DestinationFile: "publish.yml", Pipeline: "ci.yml", WorkflowName: "publish", ReusableWorkflow: pub},
+			},
+			[]string{"ci"},
+		},
+	}
+	for name, tc := range cases {
+		if got := fanoutPublishWorkflowNames(tc.in); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: got %v want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestFanoutRevision(t *testing.T) {
+	for in, want := range map[string]string{"v11.1.3-2": "2", "v20260915-1": "1", "v0.22.1": ""} {
+		if got := fanoutRevision(in); got != want {
+			t.Errorf("%q: got %q want %q", in, got, want)
+		}
+	}
+}
+
 func TestNormalizeFanoutVersion(t *testing.T) {
-	for in, want := range map[string]string{"v0.70.0": "0.70.0", "0.70.0": "0.70.0", " v1.2.3 ": "1.2.3"} {
+	for in, want := range map[string]string{"v0.70.0": "0.70.0", "0.70.0": "0.70.0", " v1.2.3 ": "1.2.3",
+		"v11.2.3.1-1": "11.2.3.1", "v11.1.3-2": "11.1.3", "v20260915-1": "20260915", "v0.13.20-1": "0.13.20"} {
 		got, err := normalizeFanoutVersion(in)
 		if err != nil || got != want {
 			t.Errorf("%q: got %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"v0.70.0-rc1", "latest", "0.70", "", "v1.2.3.4", "v1.2.3+meta"} {
+	for _, in := range []string{"v0.70.0-rc1", "latest", "0.70", "", "v1.2.3.4.5", "v1.2.3+meta", "v1.2.3-rc1", "v1.2.3-1-pre-1", "v2026091"} {
 		if _, err := normalizeFanoutVersion(in); err == nil {
 			t.Errorf("%q must be rejected", in)
 		}

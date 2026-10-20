@@ -15,13 +15,15 @@ EXIT_NOMATCH=3
 # shellcheck disable=SC2034 # consumed by fanout_refs callers
 EXIT_REFS_FAILED=4
 
+# fanout_normalize TAG: strip the leading "v" and a numeric image revision
+# suffix ("v11.1.3-1" -> "11.1.3"). Accepts X.Y.Z, X.Y.Z.W and YYYYMMDD only.
 fanout_normalize() {
   local v="${1#v}"
-  if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if [[ ! "$v" =~ ^([0-9]+(\.[0-9]+){2,3}|[0-9]{8})(-[0-9]+)?$ ]]; then
     echo "ERROR: not a release version: $1" >&2
     return 1
   fi
-  printf '%s\n' "$v"
+  printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
 # fanout_gt A B: success when A is strictly newer than B.

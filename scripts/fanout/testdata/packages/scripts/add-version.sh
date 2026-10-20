@@ -62,10 +62,10 @@ sed -i "s/:\([^v]\)${OLD_VERSION}/:\1${NEW_VERSION}/g" "$NEW_FILE"
 sed -i "s/:${OLD_VERSION}\([^0-9]\)/:${NEW_VERSION}\1/g" "$NEW_FILE"
 sed -i "s/:${OLD_VERSION}$/:${NEW_VERSION}/g" "$NEW_FILE"
 
-# Handle cardano-config special case (version-1 suffix in image tag)
-# e.g., :20251128-1 -> :20260115-1
+# Handle cardano-config special case (revision suffix in image tag)
+# e.g., :20251128-1 -> :20260115-1; PACKAGE_IMAGE_REVISION overrides the 1.
 if [[ "$PACKAGE_NAME" == "cardano-config" ]]; then
-  sed -i "s/:${OLD_VERSION}-1/:${NEW_VERSION}-1/g" "$NEW_FILE"
+  sed -i -E "s/:${NEW_VERSION}-[0-9]+/:${NEW_VERSION}-${PACKAGE_IMAGE_REVISION:-1}/g" "$NEW_FILE"
 fi
 
 echo ""

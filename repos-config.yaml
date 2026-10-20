@@ -349,6 +349,14 @@ repositories:
           docker-image: "blinklabs/tx-submit-api"
           description: "A Go implementation of the Cardano Submit API service"
           update-go-proxy: "true"
+    release_fanout:
+      - repo: blinklabs-io/cardano-up-packages
+        type: cardano-up-package
+        package: tx-submit-api
+      - repo: blinklabs-io/cardano-compose-stacks
+        type: compose-default
+        file: docker-compose.yaml
+        var: TX_SUBMIT_API_VERSION
   - name: blinklabs-io/tx-submit-api-mirror
     settings:
       delete_branch_on_merge: true
@@ -698,6 +706,10 @@ repositories:
             - v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]
             - v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9]
             - v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9]
+    release_fanout:
+      - repo: blinklabs-io/cardano-up-packages
+        type: cardano-up-package
+        package: cardano-config
   - name: blinklabs-io/docker-minio
     profile: docker-standard
     vars:
@@ -745,6 +757,10 @@ repositories:
             paths:
             - Dockerfile
             - .github/workflows/ci-docker.yml
+    release_fanout:
+      - repo: blinklabs-io/cardano-up-packages
+        type: cardano-up-package
+        package: cardano-cli
   - name: blinklabs-io/docker-cardano-node
     profile: docker-standard
     vars:
@@ -774,6 +790,14 @@ repositories:
         params:
           build-target: cardano-node
           prerelease-pattern: -pre-
+    release_fanout:
+      - repo: blinklabs-io/cardano-up-packages
+        type: cardano-up-package
+        package: cardano-node
+      - repo: blinklabs-io/cardano-compose-stacks
+        type: compose-default
+        file: docker-compose.yaml
+        var: CARDANO_NODE_VERSION
   - name: blinklabs-io/docker-cardano-wallet
     profile: docker-standard
     vars:
@@ -928,6 +952,10 @@ repositories:
     vars:
       image: mithril-client
       description: Mithril client built from source on Debian
+    release_fanout:
+      - repo: blinklabs-io/cardano-up-packages
+        type: cardano-up-package
+        package: mithril-client
   - name: blinklabs-io/docker-haskell
     profile: docker-standard
     vars:
@@ -1271,6 +1299,9 @@ repositories:
       - repo: blinklabs-io/cardano-up-packages
         type: cardano-up-package
         package: dingo
+      - repo: blinklabs-io/homebrew-cardano
+        type: homebrew-formula
+        formula: Formula/dingo.rb
 
   # cardano-compose-stacks provides Docker Compose stacks, including the Dingo
   # Antithesis harness and archive demo. The nested Go modules get independent
@@ -1423,6 +1454,10 @@ repositories:
           binary-target-matrix: '[{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"darwin","arch":"amd64"},{"os":"darwin","arch":"arm64"}]'
           homebrew-tap-repository: "blinklabs-io/homebrew-cardano"
           homebrew-formula-path: "Formula/cardano-up.rb"
+    release_fanout:
+      - repo: blinklabs-io/cardano-up-packages
+        type: cardano-up-package
+        package: cardano-up
 
   # cardano-up-packages hosts the package definitions installed by the
   # cardano-up CLI. Three governed workflows:

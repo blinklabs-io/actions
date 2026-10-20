@@ -28,6 +28,12 @@ fresh() { # copy fixtures into a clean work dir
 # --- semver helpers ---------------------------------------------------------
 assert_eq "normalize strips v" "$(fanout_normalize v0.70.0)" "0.70.0"
 run x fanout_normalize v0.70.0-rc1; assert_eq "normalize rejects prerelease" "$RC" "1"
+assert_eq "normalize strips image revision" "$(fanout_normalize v11.1.3-1)" "11.1.3"
+assert_eq "normalize keeps four parts" "$(fanout_normalize v11.2.3.1-1)" "11.2.3.1"
+assert_eq "normalize accepts date versions" "$(fanout_normalize v20260915-2)" "20260915"
+run x fanout_normalize v1.2.3-pre-1; assert_eq "normalize rejects pre suffix" "$RC" "1"
+run x fanout_gt 20260915 20260707;  assert_eq "gt date versions" "$RC" "0"
+run x fanout_gt 11.2.3.1 11.0.0.0;  assert_eq "gt four parts" "$RC" "0"
 run x fanout_normalize latest;      assert_eq "normalize rejects latest" "$RC" "1"
 run x fanout_gt 0.70.0 0.69.0;      assert_eq "gt newer" "$RC" "0"
 run x fanout_gt 0.69.0 0.69.0;      assert_eq "gt equal is false" "$RC" "1"
@@ -166,6 +172,68 @@ run x "$HERE/apply.sh" helm-chart "$TMP/work/helm" dingo 0.69.0 "$spec"
 assert_eq "helm refuses downgrade" "$RC" "10"
 assert_eq "helm downgrade leaves files unchanged" "$(tree_sum "$TMP/work/helm")" "$before"
 
+# --- compose-default --------------------------------------------------------
+fresh
+mkdir -p "$TMP/work/compose"
+printf 'services:\n  a:\n    image: ghcr.io/blinklabs-io/tx-submit-api:${TX_SUBMIT_API_VERSION:-0.22.1}\n  b:\n    image: x:${OTHER_VERSION:-1.0.0}\n' > "$TMP/work/compose/docker-compose.yaml"
+kspec='{"repo":"o/stacks","type":"compose-default","file":"docker-compose.yaml","var":"TX_SUBMIT_API_VERSION"}'
+run x "$HERE/apply.sh" compose-default "$TMP/work/compose" tx-submit-api 0.23.0 "$kspec"
+assert_eq "compose default exit" "$RC" "0"
+assert_contains "compose default raised" "$(cat "$TMP/work/compose/docker-compose.yaml")" 'TX_SUBMIT_API_VERSION:-0.23.0}'
+assert_contains "compose other var untouched" "$(cat "$TMP/work/compose/docker-compose.yaml")" 'OTHER_VERSION:-1.0.0}'
+run x "$HERE/apply.sh" compose-default "$TMP/work/compose" tx-submit-api 0.23.0 "$kspec"
+assert_eq "compose default re-run is no-op" "$RC" "10"
+run x "$HERE/apply.sh" compose-default "$TMP/work/compose" tx-submit-api 0.20.0 "$kspec"
+assert_eq "compose default refuses older" "$RC" "10"
+run x "$HERE/apply.sh" compose-default "$TMP/work/compose" tx-submit-api 0.24.0 '{"type":"compose-default","file":"docker-compose.yaml","var":"MISSING"}'
+assert_eq "compose default missing var fails" "$RC" "1"
+
+# --- homebrew-formula -------------------------------------------------------
+fresh
+hspec='{"repo":"o/homebrew-cardano","type":"homebrew-formula","formula":"Formula/dingo.rb"}'
+sha=$(printf 'a%.0s' $(seq 64))
+export PRODUCT_REPO=o/dingo FANOUT_TARBALL_SHA256=$sha FANOUT_COMMIT=0123456789abcdef0123456789abcdef01234567
+run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.86.0 "$hspec"
+assert_eq "formula exit" "$RC" "0"
+f=$(cat "$TMP/work/homebrew/Formula/dingo.rb")
+assert_contains "formula url"    "$f" 'url "https://github.com/o/dingo/archive/refs/tags/v0.86.0.tar.gz"'
+assert_contains "formula sha"    "$f" "sha256 \"$sha\""
+assert_contains "formula commit" "$f" 'version.CommitHash=0123456'
+run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.86.0 "$hspec"
+assert_eq "formula re-run is no-op" "$RC" "10"
+run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.80.0 "$hspec"
+assert_eq "formula refuses older" "$RC" "10"
+FANOUT_COMMIT=zz run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.87.0 "$hspec"
+assert_eq "formula rejects bad commit" "$RC" "1"
+fresh
+# An annotated tag resolves through its tag object to the commit.
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$2" in
+  repos/o/dingo/git/ref/tags/v0.88.0) printf 'tag\t%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+  repos/o/dingo/git/tags/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) printf 'commit\t%s\n' 1234567abcdef0123456789abcdef0123456789a ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+GH
+chmod +x "$TMP/fakebin/gh"
+fresh
+(unset FANOUT_COMMIT; PATH="$TMP/fakebin:$PATH" run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.88.0 "$hspec"; echo "$RC" > "$TMP/rc")
+assert_eq "annotated tag resolves to its commit" "$(cat "$TMP/rc")" "0"
+assert_contains "annotated tag commit stamped" "$(cat "$TMP/work/homebrew/Formula/dingo.rb")" 'version.CommitHash=1234567'
+fresh
+sed -i 's#v0.88.0) printf#v0.89.0-2) printf#' "$TMP/fakebin/gh"
+(unset FANOUT_COMMIT; FANOUT_REVISION=2 PATH="$TMP/fakebin:$PATH" run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.89.0 "$hspec"; echo "$RC" > "$TMP/rc")
+assert_eq "tag lookup keeps the image revision" "$(cat "$TMP/rc")" "0"
+assert_contains "revision tag url" "$(cat "$TMP/work/homebrew/Formula/dingo.rb")" 'refs/tags/v0.89.0-2.tar.gz'
+fresh
+sed -i 's/version\.CommitHash=/version.Hash=/' "$TMP/work/homebrew/Formula/dingo.rb"
+before=$(tree_sum "$TMP/work/homebrew")
+run x "$HERE/apply.sh" homebrew-formula "$TMP/work/homebrew" dingo 0.86.0 "$hspec"
+assert_eq "formula with a missing field fails" "$RC" "1"
+assert_eq "formula left untouched on failure" "$(tree_sum "$TMP/work/homebrew")" "$before"
+unset PRODUCT_REPO FANOUT_TARBALL_SHA256 FANOUT_COMMIT
+
 # --- cardano-up-package -----------------------------------------------------
 fresh
 spec='{"repo":"o/cardano-up-packages","type":"cardano-up-package","package":"dingo"}'
@@ -175,6 +243,17 @@ newfile="$TMP/work/packages/packages/dingo/dingo-0.70.0.yaml"
 if [[ -f "$newfile" ]]; then pass "package file created"; else fail "package file created"; fi
 assert_contains "package version field" "$(cat "$newfile")" 'version: 0.70.0'
 assert_contains "package image tag"     "$(cat "$newfile")" 'ghcr.io/blinklabs-io/dingo:0.70.0'
+fresh
+mkdir -p "$TMP/work/packages/packages/cardano-config"
+printf 'name: cardano-config\nversion: 20251128\nimage: ghcr.io/blinklabs-io/cardano-configs:20251128-1\n' \
+  > "$TMP/work/packages/packages/cardano-config/cardano-config-20251128.yaml"
+cspec='{"repo":"o/cardano-up-packages","type":"cardano-up-package","package":"cardano-config"}'
+FANOUT_REVISION=3 run x "$HERE/apply.sh" cardano-up-package "$TMP/work/packages" docker-cardano-configs 20260915 "$cspec"
+assert_eq "config add exit" "$RC" "0"
+assert_contains "config image revision from tag" \
+  "$(cat "$TMP/work/packages/packages/cardano-config/cardano-config-20260915.yaml")" 'cardano-configs:20260915-3'
+fresh
+run x "$HERE/apply.sh" cardano-up-package "$TMP/work/packages" dingo 0.70.0 "$spec"
 run x "$HERE/apply.sh" cardano-up-package "$TMP/work/packages" dingo 0.70.0 "$spec"
 assert_eq "package re-run is no-op" "$RC" "10"
 before=$(tree_sum "$TMP/work/packages")
@@ -252,7 +331,7 @@ out=$(cat "$TMP/work/live/helm.md")
 assert_contains "image ref updated" "$out" 'dingo:99.0.0 \'
 assert_contains "image.tag row last value updated" "$(grep -F '| `image.tag`' <<<"$out")" '`99.0.0`'
 assert_contains "image.tag row keeps its description" "$out" 'Image tag (used when `image.digest` is empty)'
-assert_contains "arch suffixed tags untouched" "$out" '`0.83.0-amd64` or `0.83.0-arm64`'
+assert_contains "arch suffixed tags updated" "$out" '`99.0.0-amd64` or `99.0.0-arm64`'
 assert_contains "image.digest row untouched" "$out" '| `image.digest`                  | Image digest                                              | `0.83.0`'
 printf '| `image.tag` | tag | `0.90.0` |\n' > "$TMP/work/live/down2.md"
 run x perl "$HERE/refs.pl" dingo 0.83.0 "$TMP/work/live/down2.md"
@@ -307,6 +386,20 @@ valsum=$(sha256sum <"$hdir/values.yaml")
 run x "$HERE/apply.sh" helm-chart "$TMP/work/helm" dingo 0.70.0 "$hspec"
 assert_eq "helm equal tag exit" "$RC" "0"
 assert_eq "helm equal tag unchanged" "$(sha256sum <"$hdir/values.yaml")" "$valsum"
+
+# --- arch-suffixed tags -----------------------------------------------------
+fresh
+# shellcheck disable=SC2016 # backticks are literal
+printf 'Resolve the digest (for example, the `0.69.0-amd64` or `0.69.0-arm64` tag) first.\nKeep `1.2.3` alone.\n' > "$TMP/work/docs/arch.md"
+run x perl "$HERE/refs.pl" dingo 0.70.0 "$TMP/work/docs/arch.md"; assert_eq "arch tags changed" "$RC" "0"
+archmd=$(cat "$TMP/work/docs/arch.md")
+# shellcheck disable=SC2016 # backticks are literal
+assert_contains "arch amd64 rewritten" "$archmd" '`0.70.0-amd64`'
+# shellcheck disable=SC2016 # backticks are literal
+assert_contains "arch arm64 rewritten" "$archmd" '`0.70.0-arm64`'
+# shellcheck disable=SC2016 # backticks are literal
+assert_contains "plain version untouched" "$archmd" 'Keep `1.2.3` alone.'
+run x perl "$HERE/refs.pl" dingo 0.60.0 "$TMP/work/docs/arch.md"; assert_eq "arch tags never downgrade" "$RC" "1"
 
 # --- refs.pl failures are fatal, never "unchanged" ---------------------------
 # A perl shim that crashes on one file name and delegates otherwise.
