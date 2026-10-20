@@ -18,11 +18,10 @@ branch_protection_defaults: &branch_protection_defaults
   lock_branch: false
 
 # Commit SHA of actions main that generated release-fanout.yml wrappers pin
-# the dispatch workflow to. Set it, in a follow-up change after
-# reuseable-release-dispatch.yml is on main, to a full SHA that contains it.
+# the dispatch workflow to; it must contain reuseable-release-dispatch.yml.
 # While unset no wrapper is generated; the central release-fanout workflow
 # runs through workflow_dispatch and its daily backstop.
-# release_fanout_dispatch_ref: <40-hex commit sha>
+release_fanout_dispatch_ref: e0caeb743570431ebc4e26aeea54cdf8ab6a0a33
 
 # Optional org-wide auto-discovery. Disabled by default: when absent or
 # `enabled: false`, the engine manages exactly the repositories listed under
