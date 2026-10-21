@@ -1206,11 +1206,13 @@ repositories:
         supersedes: [golangci-lint.yml, nilaway.yml]
         workflow_name: go-test
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        # Pull requests only: a push to main or a tag re-ran the suite the pull
+        # request had just passed, and publish.yml does not depend on it.
         triggers:
-          push:
-            branches: [main]
-            tags: ['v*']
           pull_request:
+        concurrency:
+          group: '${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}'
+          cancel_in_progress: "true"
         params:
           go-versions: '["1.26.x"]'
           verify-modules: "true"
@@ -1229,7 +1231,6 @@ repositories:
           services: |-
             {"postgres":{"image":"postgres:16","env":{"POSTGRES_DB":"bursa_test","POSTGRES_PASSWORD":"postgres","POSTGRES_USER":"postgres"},"ports":["5432:5432"],"options":"--health-cmd \"pg_isready -U postgres -d bursa_test\" --health-interval 10s --health-timeout 5s --health-retries 5"}}
           cross-build-go-version: "1.26.x"
-          cross-build-max-parallel: "2"
           build-packages: "./cmd/bursa"
           cross-build-targets: '[{"os":"darwin","arch":"arm64"},{"os":"freebsd","arch":"amd64"},{"os":"freebsd","arch":"arm64"},{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"windows","arch":"amd64"},{"os":"windows","arch":"arm64"}]'
 
@@ -1589,11 +1590,16 @@ repositories:
         supersedes: [golangci-lint.yml, nilaway.yml]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
+        # No push to main: it re-ran the suite the pull request had just
+        # passed. A tag still runs it, because publish needs it and the tagged
+        # commit is otherwise never tested as itself.
         triggers:
           pull_request:
           push:
-            branches: [main]
             tags: ['v*']
+        concurrency:
+          group: '${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}'
+          cancel_in_progress: "true"
         permissions:
           contents: read
         params:

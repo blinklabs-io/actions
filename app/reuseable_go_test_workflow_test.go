@@ -89,8 +89,11 @@ func TestReusableGoTestWorkflowUsesMatrixArchitectureAndEffectiveGuards(t *testi
 	if len(crossBuild.Needs) != 1 || crossBuild.Needs[0] != "go-test" {
 		t.Errorf("cross-build needs = %v, want [go-test]", crossBuild.Needs)
 	}
-	if got, want := crossBuild.Strategy.MaxParallel, "${{ fromJSON(inputs.cross-build-max-parallel) }}"; got != want {
-		t.Errorf("cross-build max-parallel = %q, want %q", got, want)
+	if got := crossBuild.Strategy.MaxParallel; got != "" {
+		t.Errorf("cross-build max-parallel = %q, want no matrix: every target builds in one job", got)
+	}
+	if got, want := job.Strategy.MaxParallel, "${{ fromJSON(inputs.max-parallel) }}"; got != want {
+		t.Errorf("go-test max-parallel = %q, want %q", got, want)
 	}
 	if len(crossBuild.Steps) == 0 {
 		t.Fatal("cross-build job has no steps")
@@ -100,6 +103,7 @@ func TestReusableGoTestWorkflowUsesMatrixArchitectureAndEffectiveGuards(t *testi
 	}
 	buildRun := crossBuild.Steps[len(crossBuild.Steps)-1].Run
 	if !strings.Contains(buildRun, "GOOS=\"$TARGET_OS\" GOARCH=\"$TARGET_ARCH\" go build \"${_flags[@]}\" $_packages") ||
+		!strings.Contains(buildRun, "done <<< \"$_targets\"") ||
 		strings.Contains(buildRun, "-o /dev/null") {
 		t.Errorf("cross-build does not build all packages for the selected target:\n%s", buildRun)
 	}
@@ -203,5 +207,62 @@ func TestReusableGolangciLintFormattingCheckPreservesToolFailures(t *testing.T) 
 	if !strings.Contains(formatRun, "_diff=\"$(golangci-lint fmt --diff 2>&1)\"") ||
 		!strings.Contains(formatRun, "_format_status") || strings.Contains(formatRun, "| grep") {
 		t.Errorf("format check does not preserve tool failures and diff output:\n%s", formatRun)
+	}
+}
+
+func TestReusableGoTestCrossBuildBuildsEveryTargetInOneJob(t *testing.T) {
+	workflow := readReusableWorkflow(t, "../.github/workflows/reuseable-go-test.yml")
+	steps := workflow.Jobs["cross-build"].Steps
+	if len(steps) == 0 {
+		t.Fatal("cross-build job has no steps")
+	}
+	buildRun := steps[len(steps)-1].Run
+
+	tmp := t.TempDir()
+	fakeBin := filepath.Join(tmp, "bin")
+	if err := os.Mkdir(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callsFile := filepath.Join(tmp, "go-calls")
+	// The fake go fails for windows/arm64 so the run must keep going and then
+	// report that target.
+	fakeGo := "#!/bin/sh\n" +
+		"echo \"$GOOS/$GOARCH $*\" >> \"$GO_CALLS_FILE\"\n" +
+		"[ \"$GOOS/$GOARCH\" != windows/arm64 ]\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "go"), []byte(fakeGo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	jq, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq not installed")
+	}
+	if err := os.Symlink(jq, filepath.Join(fakeBin, "jq")); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-e", "-c", buildRun)
+	cmd.Dir = tmp
+	cmd.Env = []string{
+		"PATH=" + fakeBin + ":/usr/bin:/bin",
+		"GO_CALLS_FILE=" + callsFile,
+		`CROSS_BUILD_TARGETS=[{"os":"linux","arch":"amd64"},{"os":"windows","arch":"arm64"},{"os":"darwin","arch":"arm64"}]`,
+		"BUILD_PACKAGES=./cmd/a ./cmd/b",
+		"TEST_TAGS=pkcs11",
+	}
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("cross-build succeeded although windows/arm64 failed:\n%s", output)
+	}
+	if !strings.Contains(string(output), "cross-build failed for: windows/arm64") {
+		t.Errorf("cross-build did not name the failed target:\n%s", output)
+	}
+	calls, err := os.ReadFile(callsFile)
+	if err != nil {
+		t.Fatalf("read go calls: %v", err)
+	}
+	want := "linux/amd64 build -tags pkcs11 ./cmd/a ./cmd/b\n" +
+		"windows/arm64 build -tags pkcs11 ./cmd/a ./cmd/b\n" +
+		"darwin/arm64 build -tags pkcs11 ./cmd/a ./cmd/b\n"
+	if got := string(calls); got != want {
+		t.Errorf("go calls = %q, want %q", got, want)
 	}
 }

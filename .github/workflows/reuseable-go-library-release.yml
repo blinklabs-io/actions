@@ -53,6 +53,11 @@ on:
         required: false
         type: string
         default: '["amd64","arm64"]'
+      max-parallel:
+        description: Maximum number of publish-examples matrix jobs (example-os-matrix x example-arch-matrix) running at once. The org shares 20 concurrent jobs across every repository.
+        required: false
+        type: string
+        default: "4"
       go-version:
         description: Go version used to build the example binaries.
         required: false
@@ -116,6 +121,7 @@ jobs:
       id-token: write
       attestations: write
     strategy:
+      max-parallel: ${{ fromJSON(inputs.max-parallel) }}
       matrix:
         os: ${{ fromJson(inputs.example-os-matrix) }}
         arch: ${{ fromJson(inputs.example-arch-matrix) }}

@@ -77,6 +77,11 @@ on:
         required: false
         type: boolean
         default: true
+      max-parallel:
+        description: Maximum number of build-binaries matrix jobs running at once. build-images runs its two jobs beside them, and two of the eight rows are macOS (the org has 5 macOS slots), so the default keeps a release at four jobs.
+        required: false
+        type: string
+        default: "2"
     secrets:
       docker-password:
         description: Docker Hub access token. Required when docker-image is set.
@@ -158,6 +163,7 @@ jobs:
   build-binaries:
     strategy:
       fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max-parallel) }}
       matrix:
         include:
           # Set tray: false on any row to quickly disable that platform's
@@ -165,13 +171,11 @@ jobs:
           # macOS .pkg builds inline on a native runner per arch (arm64 on
           # macos-15, amd64 on macos-15-intel): the tray needs CGO (Fyne) and
           # can't be cross-compiled, so it must build on its target arch.
+          # Jobs start in row order, so the two macOS rows sit at opposite
+          # ends: under max-parallel they do not hold two macOS slots at once.
           - runner: macos-15
             os: darwin
             arch: arm64
-            tray: true
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
             tray: true
           - runner: ubuntu-latest
             os: freebsd
@@ -196,6 +200,10 @@ jobs:
           - runner: windows-11-arm
             os: windows
             arch: arm64
+            tray: true
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
             tray: true
     runs-on: ${{ matrix.runner }}
     needs: [create-draft-release]

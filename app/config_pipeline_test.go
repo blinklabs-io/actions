@@ -72,23 +72,43 @@ func TestConfiguredPipelinesRender(t *testing.T) {
 	}
 }
 
-func TestBursaCrossBuildConcurrencyIsBounded(t *testing.T) {
+// TestGoTestSkipsPushToMain keeps the Go suite from re-running on a push to
+// main for repositories whose pull requests already ran it. The org shares 20
+// concurrent jobs, so every merge re-running the suite costs every other
+// repository queue time.
+func TestGoTestSkipsPushToMain(t *testing.T) {
 	cfg := loadRealConfig(t)
+	want := map[string]bool{"blinklabs-io/bursa": true, "blinklabs-io/gouroboros": true}
 	for _, repo := range cfg.Repositories {
-		if repo.Name != "blinklabs-io/bursa" {
+		if !want[repo.Name] {
 			continue
 		}
+		delete(want, repo.Name)
+		found := false
 		for _, workflow := range repo.Workflows {
-			if workflow.DestinationFile == "go-test.yml" {
-				if got, want := workflow.Params["cross-build-max-parallel"], "2"; got != want {
-					t.Fatalf("Bursa cross-build-max-parallel = %q, want %q", got, want)
+			if workflow.DestinationFile != "go-test.yml" {
+				continue
+			}
+			found = true
+			if push, ok := workflow.Triggers["push"].(map[string]interface{}); ok {
+				if _, ok := push["branches"]; ok {
+					t.Errorf("%s go-test runs on push to branches %v", repo.Name, push["branches"])
 				}
-				return
+			}
+			if workflow.Concurrency == nil || workflow.Concurrency.CancelInProgress != "true" {
+				t.Errorf("%s go-test does not cancel superseded pull request runs", repo.Name)
+			}
+			if _, ok := workflow.Params["cross-build-max-parallel"]; ok {
+				t.Errorf("%s go-test sets cross-build-max-parallel, which the single cross-build job ignores", repo.Name)
 			}
 		}
-		t.Fatal("Bursa go-test workflow is missing")
+		if !found {
+			t.Errorf("%s go-test workflow is missing", repo.Name)
+		}
 	}
-	t.Fatal("Bursa is missing from repos-config.yaml")
+	for name := range want {
+		t.Errorf("%s is missing from repos-config.yaml", name)
+	}
 }
 
 // TestConfiguredPipelinesGate checks that every configured pipeline actually

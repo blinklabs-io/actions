@@ -42,6 +42,11 @@ on:
         required: false
         type: string
         default: '[{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"darwin","arch":"amd64"},{"os":"darwin","arch":"arm64"},{"os":"freebsd","arch":"amd64"},{"os":"freebsd","arch":"arm64"},{"os":"windows","arch":"amd64"},{"os":"windows","arch":"arm64"}]'
+      max-parallel:
+        description: Maximum number of build-binaries matrix jobs running at once. The org shares 20 concurrent jobs across every repository, so a release must not take all of them.
+        required: false
+        type: string
+        default: "4"
       binary-compress:
         description: When true, the release binary is packed into a .tar.gz archive before uploading.
         required: false
@@ -179,6 +184,7 @@ jobs:
 
   build-binaries:
     strategy:
+      max-parallel: ${{ fromJSON(inputs.max-parallel) }}
       matrix:
         include: ${{ fromJson(inputs.binary-target-matrix) }}
     runs-on: ubuntu-latest
