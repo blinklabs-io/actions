@@ -174,10 +174,10 @@ on:
         type: string
         default: ""
       nilaway-go-version:
-        description: Go matrix version on which to run NilAway. Empty runs it on every matrix version.
+        description: Go matrix version on which to run NilAway. Defaults to Go 1.26 because NilAway's current SSA dependency panics on Go 1.27 AST nodes.
         required: false
         type: string
-        default: ""
+        default: "1.26.x"
       nilaway-include-pkgs:
         description: Package prefix passed to NilAway -include-pkgs.
         required: false
