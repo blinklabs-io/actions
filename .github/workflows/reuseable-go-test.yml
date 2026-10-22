@@ -7,7 +7,7 @@ on:
         description: JSON array of Go versions to test against.
         required: false
         type: string
-        default: '["1.26.x"]'
+        default: '["1.26.x","1.27.x"]'
       go-arches:
         description: JSON array of Go architectures to test against (e.g. '["amd64","386"]').
         required: false
