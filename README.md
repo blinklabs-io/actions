@@ -80,8 +80,9 @@ until that key is set a release reaches its targets within about a day. A
 manual or dispatched version must be an existing published release: the
 workflow rejects a tag that does not exist or is a draft or prerelease.
 Upstream repositories that Actions does not manage can be declared under
-`external_release_fanout`. Their releases are picked up by the daily backstop;
-they can also be run manually. No workflow is written to the upstream repo.
+`external_release_fanout`. Their releases must be selected through a manual
+fan-out run. No workflow is written to the upstream repo, and the daily
+backstop does not promote releases from outside Blink Labs.
 
 ```yaml
 - name: blinklabs-io/dingo

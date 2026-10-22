@@ -298,11 +298,6 @@ func fanoutProducts(cfg *Config) []string {
 			out = append(out, r.Name)
 		}
 	}
-	for _, source := range cfg.ExternalReleaseFanout {
-		if len(source.ReleaseFanout) > 0 {
-			out = append(out, source.Repo)
-		}
-	}
 	sort.Strings(out)
 	return out
 }
