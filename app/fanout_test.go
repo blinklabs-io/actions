@@ -266,13 +266,20 @@ func TestNormalizeFanoutVersion(t *testing.T) {
 }
 
 func planConfig() *Config {
-	return &Config{Repositories: []RepoConfig{
-		{Name: "blinklabs-io/dingo", ReleaseFanout: []FanoutTarget{
-			{Repo: "blinklabs-io/ansible-cardano", Type: "ansible-role", Role: "dingo"},
-			{Repo: "blinklabs-io/dingo", Type: "version-refs", Refs: []string{"README.md", "examples/**/*.md"}},
-		}},
-		{Name: "blinklabs-io/other"},
-	}}
+	return &Config{
+		Repositories: []RepoConfig{
+			{Name: "blinklabs-io/dingo", ReleaseFanout: []FanoutTarget{
+				{Repo: "blinklabs-io/ansible-cardano", Type: "ansible-role", Role: "dingo"},
+				{Repo: "blinklabs-io/dingo", Type: "version-refs", Refs: []string{"README.md", "examples/**/*.md"}},
+			}},
+			{Name: "blinklabs-io/other"},
+		},
+		ExternalReleaseFanout: []ReleaseFanoutSource{
+			{Repo: "txpipe/dolos", ReleaseFanout: []FanoutTarget{
+				{Repo: "blinklabs-io/ansible-cardano", Type: "ansible-role", Role: "dolos"},
+			}},
+		},
+	}
 }
 
 func TestFanoutPlan(t *testing.T) {
@@ -306,6 +313,13 @@ func TestFanoutPlan(t *testing.T) {
 	}
 	if _, err := fanoutPlan(planConfig(), "BlinkLabs-IO/Dingo", "v1.0.0"); err != nil {
 		t.Errorf("repo match must be case-insensitive: %v", err)
+	}
+	external, err := fanoutPlan(planConfig(), "txpipe/dolos", "v1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(external) != 1 || external[0].ProductRepo != "txpipe/dolos" || external[0].Version != "1.2.3" {
+		t.Fatalf("unexpected external entry: %+v", external)
 	}
 }
 

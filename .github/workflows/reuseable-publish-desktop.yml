@@ -2,7 +2,8 @@ name: Reusable Publish Desktop
 
 # Multi-platform publish pipeline for desktop-style Go applications that ship a
 # GUI tray binary alongside the core CLI. It produces, per release tag:
-#   - macOS signed + notarized + stapled .pkg installers (arm64 + amd64),
+#   - macOS signed + notarized + stapled .pkg installers (arm64, and amd64
+#     unless binary-target-matrix drops it),
 #   - Windows signed .msi installers (amd64 + arm64) via jsign + WiX,
 #   - Linux / FreeBSD tarballs (with Fyne tray where supported),
 #   - native multi-arch Docker images (Docker Hub + GHCR) with a merged manifest,
@@ -78,10 +79,21 @@ on:
         type: boolean
         default: true
       max-parallel:
-        description: Maximum number of build-binaries matrix jobs running at once. build-images runs its two jobs beside them, and two of the eight rows are macOS (the org has 5 macOS slots), so the default keeps a release at four jobs.
+        description: Maximum number of build-binaries matrix jobs running at once. build-images runs its two jobs beside them, and two of the eight default rows are macOS (the org has 5 macOS slots), so the default keeps a release at four jobs.
         required: false
         type: string
         default: "2"
+      binary-target-matrix:
+        description: >-
+          JSON array of build-binaries rows, each with runner, os, arch, and tray
+          (false builds only the core binary). The default builds every target;
+          a caller drops a target by passing the list without that row. darwin
+          rows need a native macOS runner per arch because the Fyne tray needs
+          CGO, and the two darwin rows sit at opposite ends so a max-parallel of
+          2 does not hold two macOS slots at once.
+        required: false
+        type: string
+        default: '[{"runner":"macos-15","os":"darwin","arch":"arm64","tray":true},{"runner":"ubuntu-latest","os":"freebsd","arch":"amd64","tray":false},{"runner":"ubuntu-latest","os":"freebsd","arch":"arm64","tray":false},{"runner":"ubuntu-latest","os":"linux","arch":"amd64","tray":true},{"runner":"ubuntu-24.04-arm","os":"linux","arch":"arm64","tray":true},{"runner":"windows-latest","os":"windows","arch":"amd64","tray":true},{"runner":"windows-11-arm","os":"windows","arch":"arm64","tray":true},{"runner":"macos-15-intel","os":"darwin","arch":"amd64","tray":true}]'
     secrets:
       docker-password:
         description: Docker Hub access token. Required when docker-image is set.
@@ -165,44 +177,7 @@ jobs:
       fail-fast: false
       max-parallel: ${{ fromJSON(inputs.max-parallel) }}
       matrix:
-        include:
-          # Set tray: false on any row to quickly disable that platform's
-          # GUI tray build while still producing the core binary.
-          # macOS .pkg builds inline on a native runner per arch (arm64 on
-          # macos-15, amd64 on macos-15-intel): the tray needs CGO (Fyne) and
-          # can't be cross-compiled, so it must build on its target arch.
-          - runner: macos-15
-            os: darwin
-            arch: arm64
-            tray: true
-          - runner: ubuntu-latest
-            os: freebsd
-            arch: amd64
-            tray: false
-          - runner: ubuntu-latest
-            os: freebsd
-            arch: arm64
-            tray: false
-          - runner: ubuntu-latest
-            os: linux
-            arch: amd64
-            tray: true
-          - runner: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
-            tray: true
-          - runner: windows-latest
-            os: windows
-            arch: amd64
-            tray: true
-          - runner: windows-11-arm
-            os: windows
-            arch: arm64
-            tray: true
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
-            tray: true
+        include: ${{ fromJSON(inputs.binary-target-matrix) }}
     runs-on: ${{ matrix.runner }}
     needs: [create-draft-release]
     # Only the capabilities this job actually uses: attest (id-token +
@@ -320,7 +295,7 @@ jobs:
 
       # Sign Windows build
       - name: Set up Java
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1 https://github.com/actions/setup-java/releases/tag/v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0 https://github.com/actions/setup-java/releases/tag/v6.1.0
         if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
         with:
           java-version: 21
@@ -894,7 +869,7 @@ jobs:
         # Distinct category per arch: upload-sarif keys results by category, so a
         # shared category would let the arm64 upload overwrite the amd64 one.
         if: always() && inputs.enable-trivy-scan && steps.meta.outputs.version != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.39.0
         with:
           sarif_file: 'trivy-results-${{ matrix.arch }}.sarif'
           category: 'trivy-${{ matrix.arch }}'

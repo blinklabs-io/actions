@@ -23,6 +23,27 @@ branch_protection_defaults: &branch_protection_defaults
 # runs through workflow_dispatch and its daily backstop.
 release_fanout_dispatch_ref: e0caeb743570431ebc4e26aeea54cdf8ab6a0a33
 
+# Upstream releases that update Blink Labs roles without managing upstream repos.
+external_release_fanout:
+  - repo: txpipe/dolos
+    targets:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: dolos
+        refs: [roles/dolos/README.md]
+  - repo: CardanoSolutions/kupo
+    targets:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: kupo
+        refs: [roles/kupo/README.md]
+  - repo: CardanoSolutions/ogmios
+    targets:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: ogmios
+        refs: [roles/ogmios/README.md]
+
 # Optional org-wide auto-discovery. Disabled by default: when absent or
 # `enabled: false`, the engine manages exactly the repositories listed under
 # `repositories:` below. When enabled, the engine additionally lists the
@@ -349,6 +370,10 @@ repositories:
           description: "A Go implementation of the Cardano Submit API service"
           update-go-proxy: "true"
     release_fanout:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: tx_submit_api
+        refs: [roles/tx_submit_api/README.md]
       - repo: blinklabs-io/cardano-up-packages
         type: cardano-up-package
         package: tx-submit-api
@@ -427,6 +452,11 @@ repositories:
           binary-name: "tx-submit-api-mirror"
           docker-image: "blinklabs/tx-submit-api-mirror"
           description: "A Cardano Submit API mirror service"
+    release_fanout:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: tx_submit_api_mirror
+        refs: [roles/tx_submit_api_mirror/README.md]
   - name: blinklabs-io/txtop
     settings:
       delete_branch_on_merge: true
@@ -790,6 +820,10 @@ repositories:
           build-target: cardano-node
           prerelease-pattern: -pre-
     release_fanout:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: cardano_node
+        refs: [roles/cardano_node/README.md]
       - repo: blinklabs-io/cardano-up-packages
         type: cardano-up-package
         package: cardano-node
@@ -838,6 +872,11 @@ repositories:
             - v*.*.*.*
         params:
           prerelease-pattern: -pre-
+    release_fanout:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: cardano_db_sync
+        refs: [roles/cardano_db_sync/README.md]
   - name: blinklabs-io/docker-parity-subkey
     profile: docker-standard
     vars:
@@ -1133,6 +1172,11 @@ repositories:
           # Preserve the capitalized Authenticode display name the in-repo
           # workflow used (application-name is lowercase "adder").
           windows-signing-name: "Adder"
+    release_fanout:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: adder
+        refs: [roles/adder/README.md]
   # adder-mobile is a Flutter mobile app (not a Go service). It uses the shared
   # conventional-commits check plus the shared reusable Flutter CI workflow for
   # PR analyze/test (pr.yml) and the main-branch release APK build (publish.yml).
@@ -2005,6 +2049,11 @@ repositories:
           docker-image: "blinklabs/cdnsd"
           description: "DNS resolver for Handshake SLDs on Cardano"
           go-version: "1.26.x"
+    release_fanout:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: cdnsd
+        refs: [roles/cdnsd/README.md]
   # go-scls has root and cmd/scls Go modules, each running tests, golangci-lint,
   # and NilAway in one reusable job. Its publish and Docker workflows include
   # extra darwin/freebsd builds and a Docker smoke test, so they remain local.

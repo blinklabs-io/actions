@@ -34,7 +34,7 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-ci-docker-multiarch.yml` — native multi-arch Docker CI build (no QEMU); `architectures` limits it to the architectures an image ships for, `build-args` passes Dockerfile ARGs, and `check-dockerfile` runs `docker build --check` first.
 - `reuseable-publish-docker-multiarch.yml` — native multi-arch Docker publish to Docker Hub + GHCR, with build provenance attestations always enabled and Trivy vulnerability scanning enabled by default (override with `enable-trivy-scan: false`).
 - `reuseable-publish.yml` — Go release binaries + native multi-arch Docker image publish; supports explicit target pairs, custom build commands, extra binaries, checksums, prereleases, and optional tag-only build preparation shared by binary and image builds. A re-run of a failed tag build replaces its own stale draft release and refuses to touch a published one. `extra-image-target` publishes a second Dockerfile target as `<tag>-<extra-image-suffix>` on both architectures, and `homebrew-tap-repository` opens a formula-bump pull request on the tap after the release is published (skipped when `homebrew-tap-token` is unset).
-- `reuseable-publish-desktop.yml` — full release pipeline for desktop-style Go apps that ship a Fyne GUI tray alongside a CLI: macOS signed + notarized `.pkg` installers, Windows signed `.msi` installers (jsign + WiX), Linux/FreeBSD tarballs, native multi-arch Docker images, and build-provenance attestations for every binary, installer, and image. The packaging scripts and `make` targets it drives live in the calling repository.
+- `reuseable-publish-desktop.yml` — full release pipeline for desktop-style Go apps that ship a Fyne GUI tray alongside a CLI: macOS signed + notarized `.pkg` installers, Windows signed `.msi` installers (jsign + WiX), Linux/FreeBSD tarballs, native multi-arch Docker images, and build-provenance attestations for every binary, installer, and image. The packaging scripts and `make` targets it drives live in the calling repository. `binary-target-matrix` (a JSON array of `runner`/`os`/`arch`/`tray` rows, defaulting to all eight targets) lets a caller drop a target.
 - `reuseable-go-test.yml` — Go module verification, tidy checks, build, vet, tests, in-job golangci-lint and NilAway, Buf checks, generated-code drift checks, forbidden-import guards, nested modules, service containers, additional test passes, and explicit cross-build targets; supports an optional Linux race-detection pass. `test-tags` applies to the build, vet, cross-build and every test pass (including nested modules), `test-ldflags` to every test pass, and `build-flags` to the build and cross-build (`test-ldflags` exists because `test-flags` is split on whitespace and cannot carry a quoted `-ldflags` value), and `timeout-minutes` sets the job backstop.
 - `reuseable-golangci-lint.yml` — golangci-lint with a configurable tool version, additional invocation, optional formatting-diff check, nested modules (`additional-working-directories`), and a `pre-lint-command` for repository checks that belong in the lint stage.
 - `reuseable-nilaway.yml` — NilAway static analysis.
@@ -49,7 +49,7 @@ The org's free plan shares 20 concurrent jobs (5 of them macOS) across every rep
 
 - `reuseable-go-test.yml` starts cross-builds only after tests pass and builds every `cross-build-targets` entry in a single job; `cross-build-max-parallel` is accepted but ignored. `max-parallel` (default 4) bounds the go-version x go-arch x platform test matrix.
 - `reuseable-publish.yml` (`max-parallel`, default 4) bounds the binary build matrix, and `reuseable-go-library-release.yml` (`max-parallel`, default 4) the example build matrix.
-- `reuseable-publish-desktop.yml` (`max-parallel`, default 2) bounds the native build matrix, whose two macOS rows sit at opposite ends so they do not hold two macOS slots at once.
+- `reuseable-publish-desktop.yml` (`max-parallel`, default 2) bounds the native build matrix, whose two default macOS rows sit at opposite ends so they do not hold two macOS slots at once.
 
 ## How the engine works
 
@@ -79,6 +79,10 @@ manual `workflow_dispatch`, from the product's generated wrapper (run when its `
 until that key is set a release reaches its targets within about a day. A
 manual or dispatched version must be an existing published release: the
 workflow rejects a tag that does not exist or is a draft or prerelease.
+Upstream repositories that Actions does not manage can be declared under
+`external_release_fanout`. Their releases must be selected through a manual
+fan-out run. No workflow is written to the upstream repo, and the daily
+backstop does not promote releases from outside Blink Labs.
 
 ```yaml
 - name: blinklabs-io/dingo
@@ -86,6 +90,15 @@ workflow rejects a tag that does not exist or is a draft or prerelease.
     - repo: blinklabs-io/helm-charts
       type: helm-chart
       chart: charts/dingo
+```
+
+```yaml
+external_release_fanout:
+  - repo: txpipe/dolos
+    targets:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: dolos
 ```
 
 | `type` | Required field | Changes |
