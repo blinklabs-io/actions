@@ -305,8 +305,7 @@ jobs:
         shell: bash
         run: |
           go mod tidy
-          if [ -n "$(git status --porcelain --untracked-files=all -- go.mod go.sum)" ]; then
-            git status --short -- go.mod go.sum
+          if ! git diff --exit-code -- go.mod go.sum; then
             echo "go.mod or go.sum is not tidy. Run 'go mod tidy' to fix."
             exit 1
           fi
@@ -628,8 +627,9 @@ jobs:
         run: |
           buf generate
           go mod tidy
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            git status --short
+          if ! git diff --exit-code || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git diff --stat
+            git ls-files --others --exclude-standard
             echo "Generated code is out of date. Run 'buf generate && go mod tidy' to fix."
             exit 1
           fi
