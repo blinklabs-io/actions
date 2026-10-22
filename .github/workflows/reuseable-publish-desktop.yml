@@ -171,8 +171,6 @@ jobs:
           # macOS .pkg builds inline on a native runner per arch (arm64 on
           # macos-15, amd64 on macos-15-intel): the tray needs CGO (Fyne) and
           # can't be cross-compiled, so it must build on its target arch.
-          # Jobs start in row order, so the two macOS rows sit at opposite
-          # ends: under max-parallel they do not hold two macOS slots at once.
           - runner: macos-15
             os: darwin
             arch: arm64
