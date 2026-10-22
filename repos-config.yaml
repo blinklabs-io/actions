@@ -1657,7 +1657,7 @@ repositories:
         permissions:
           contents: read
         params:
-          go-version: "1.26.10"
+          go-version: "1.26.x"
 
       - destination_file: nilaway.yml
         pipeline: ci.yml
@@ -1694,7 +1694,7 @@ repositories:
           id-token: write
           attestations: write
         params:
-          go-version: "1.26.10"
+          go-version: "1.26.x"
   # bark's Go, Buf, and generated-code checks are combined in one shared CI
   # job. publish.yml remains repository-specific because it regenerates and
   # commits Go code on main before creating releases on tags.
@@ -1958,7 +1958,7 @@ repositories:
           schedule:
             - cron: '0 0 * * 1'
         params:
-          go-version: "1.26.10"
+          go-version: "1.26.x"
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
@@ -2003,7 +2003,7 @@ repositories:
           binary-name: "cdnsd"
           docker-image: "blinklabs/cdnsd"
           description: "DNS resolver for Handshake SLDs on Cardano"
-          go-version: "1.26.10"
+          go-version: "1.26.x"
   # go-scls has root and cmd/scls Go modules, each running tests, golangci-lint,
   # and NilAway in one reusable job. Its publish and Docker workflows include
   # extra darwin/freebsd builds and a Docker smoke test, so they remain local.
