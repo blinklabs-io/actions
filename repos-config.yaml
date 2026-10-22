@@ -1043,6 +1043,7 @@ repositories:
             branches: [main]
             tags: ['v*']
         params:
+          go-versions: '["1.26.x","1.27.x"]'
           platforms: '["ubuntu-latest","windows-latest"]'
           system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
           pre-test-command: "make build"
