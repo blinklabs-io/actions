@@ -261,6 +261,33 @@ func fanoutPlan(cfg *Config, productRepo, version string) ([]fanoutMatrixEntry, 
 		}
 		return entries, nil
 	}
+	for _, source := range cfg.ExternalReleaseFanout {
+		if !strings.EqualFold(source.Repo, productRepo) {
+			continue
+		}
+		if len(source.ReleaseFanout) == 0 {
+			return nil, fmt.Errorf("external repository %q has no release_fanout targets", productRepo)
+		}
+		product := source.Repo[strings.Index(source.Repo, "/")+1:]
+		entries := make([]fanoutMatrixEntry, 0, len(source.ReleaseFanout))
+		for _, target := range source.ReleaseFanout {
+			spec, err := json.Marshal(target)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, fanoutMatrixEntry{
+				ProductRepo: source.Repo,
+				Product:     product,
+				Version:     n,
+				Revision:    fanoutRevision(version),
+				Repo:        target.Repo,
+				Name:        target.Repo[strings.Index(target.Repo, "/")+1:],
+				Type:        target.Type,
+				Spec:        string(spec),
+			})
+		}
+		return entries, nil
+	}
 	return nil, fmt.Errorf("repository %q is not in repos-config.yaml", productRepo)
 }
 
@@ -286,6 +313,26 @@ func loadFanoutConfig(path string) (*Config, error) {
 	}
 	if err := expandProfiles(&cfg); err != nil {
 		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, repo := range cfg.Repositories {
+		seen[strings.ToLower(repo.Name)] = true
+	}
+	for i, source := range cfg.ExternalReleaseFanout {
+		if strings.Count(source.Repo, "/") != 1 || strings.HasPrefix(source.Repo, "/") || strings.HasSuffix(source.Repo, "/") {
+			return nil, fmt.Errorf("external_release_fanout[%d]: repo %q must be owner/name", i, source.Repo)
+		}
+		key := strings.ToLower(source.Repo)
+		if seen[key] {
+			return nil, fmt.Errorf("external_release_fanout[%d]: duplicate release source %q", i, source.Repo)
+		}
+		seen[key] = true
+		if len(source.ReleaseFanout) == 0 {
+			return nil, fmt.Errorf("external_release_fanout[%d]: repo %q has no targets", i, source.Repo)
+		}
+		if err := validateFanout(RepoConfig{Name: source.Repo, ReleaseFanout: source.ReleaseFanout}); err != nil {
+			return nil, err
+		}
 	}
 	return &cfg, nil
 }

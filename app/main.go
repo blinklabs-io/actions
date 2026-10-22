@@ -23,14 +23,22 @@ import (
 // ---------------------------------------------------------------------------
 
 type Config struct {
-	Profiles     map[string]Profile `yaml:"profiles"`
-	Discovery    Discovery          `yaml:"discovery"`
-	Repositories []RepoConfig       `yaml:"repositories"`
+	Profiles              map[string]Profile    `yaml:"profiles"`
+	Discovery             Discovery             `yaml:"discovery"`
+	Repositories          []RepoConfig          `yaml:"repositories"`
+	ExternalReleaseFanout []ReleaseFanoutSource `yaml:"external_release_fanout"`
 
 	// ReleaseFanoutDispatchRef is the commit SHA of the actions repository
 	// that generated release-fanout.yml wrappers pin the dispatch workflow to.
 	// Empty disables wrapper generation.
 	ReleaseFanoutDispatchRef string `yaml:"release_fanout_dispatch_ref"`
+}
+
+// ReleaseFanoutSource declares an upstream release source that should not be
+// managed by the governance engine but can update downstream repositories.
+type ReleaseFanoutSource struct {
+	Repo          string         `yaml:"repo"`
+	ReleaseFanout []FanoutTarget `yaml:"targets"`
 }
 
 // Discovery configures optional org-wide repository auto-discovery. When
