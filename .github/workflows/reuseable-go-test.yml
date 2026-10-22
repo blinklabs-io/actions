@@ -7,7 +7,7 @@ on:
         description: JSON array of Go versions to test against.
         required: false
         type: string
-        default: '["1.26.x"]'
+        default: '["1.26.x","1.27.x"]'
       go-arches:
         description: JSON array of Go architectures to test against (e.g. '["amd64","386"]').
         required: false
@@ -99,10 +99,15 @@ on:
         type: string
         default: "1.26.x"
       cross-build-max-parallel:
-        description: Maximum number of cross-build matrix jobs running at once.
+        description: Deprecated and ignored. Every cross-build target now builds in a single job, so there is no matrix to bound. Kept so existing callers that pass it stay valid.
         required: false
         type: string
         default: "2"
+      max-parallel:
+        description: Maximum number of go-test matrix jobs (go-versions x go-arches x platforms) running at once. The org shares 20 concurrent jobs across every repository, so keep this small; a macOS platform in the matrix also counts against the org's 5 macOS slots.
+        required: false
+        type: string
+        default: "4"
       run-buf-checks:
         description: Run Buf formatting and lint checks in the Go test job.
         required: false
@@ -266,6 +271,7 @@ jobs:
   go-test:
     name: go-test
     strategy:
+      max-parallel: ${{ fromJSON(inputs.max-parallel) }}
       matrix:
         go-version: ${{ fromJson(inputs.go-versions) }}
         go-arch: ${{ fromJson(inputs.go-arches) }}
@@ -633,16 +639,17 @@ jobs:
         with:
           files: ${{ inputs.working-directory }}/${{ inputs.coverage-file }}
 
+  # Every target builds in one job: the builds are pure cross-compiles from one
+  # runner, so a job per target would only multiply checkout, toolchain setup
+  # and module download while taking that many of the org's shared job slots.
+  # Targets share the job's build cache, and a failing target does not stop the
+  # others, so one run still reports every broken target.
   cross-build:
     if: inputs.cross-build-targets != '[]'
     name: cross-build
     needs: [go-test]
-    strategy:
-      fail-fast: false
-      max-parallel: ${{ fromJSON(inputs.cross-build-max-parallel) }}
-      matrix:
-        target: ${{ fromJson(inputs.cross-build-targets) }}
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
@@ -660,9 +667,9 @@ jobs:
             ${{ inputs.working-directory }}/go.mod
             ${{ inputs.working-directory }}/go.sum
       - name: Cross-build
+        shell: bash
         env:
-          TARGET_OS: ${{ matrix.target.os }}
-          TARGET_ARCH: ${{ matrix.target.arch }}
+          CROSS_BUILD_TARGETS: ${{ inputs.cross-build-targets }}
           BUILD_PACKAGES: ${{ inputs.build-packages }}
           TEST_PACKAGES: ${{ inputs.test-packages }}
           BUILD_FLAGS: ${{ inputs.build-flags }}
@@ -679,5 +686,21 @@ jobs:
           if [ -n "$TEST_TAGS" ]; then
             _flags+=(-tags "$TEST_TAGS")
           fi
-          # shellcheck disable=SC2086
-          GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build "${_flags[@]}" $_packages
+          _targets="$(jq -r '.[] | "\(.os) \(.arch)"' <<< "$CROSS_BUILD_TARGETS")"
+          if [ -z "$_targets" ]; then
+            echo "cross-build-targets lists no targets" >&2
+            exit 1
+          fi
+          _failed=()
+          while read -r TARGET_OS TARGET_ARCH; do
+            echo "::group::GOOS=$TARGET_OS GOARCH=$TARGET_ARCH"
+            # shellcheck disable=SC2086
+            if ! GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" go build "${_flags[@]}" $_packages; then
+              _failed+=("$TARGET_OS/$TARGET_ARCH")
+            fi
+            echo "::endgroup::"
+          done <<< "$_targets"
+          if [ "${#_failed[@]}" -gt 0 ]; then
+            echo "::error::cross-build failed for: ${_failed[*]}"
+            exit 1
+          fi

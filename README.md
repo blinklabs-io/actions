@@ -45,7 +45,11 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-release-dispatch.yml` — announce a published release to the central `release-fanout.yml` workflow (used by the generated `release-fanout.yml` wrapper).
 - `reuseable-package-validate.yml` — validate cardano-up package definitions with the cardano-up CLI (plus optional filename/content version-consistency check).
 
-The reusable Go test workflow starts cross-builds only after tests pass and limits them to two concurrent targets by default. Callers can set `cross-build-max-parallel` to choose another limit.
+The org's free plan shares 20 concurrent jobs (5 of them macOS) across every repository, so each reusable workflow keeps one run narrow by default:
+
+- `reuseable-go-test.yml` starts cross-builds only after tests pass and builds every `cross-build-targets` entry in a single job; `cross-build-max-parallel` is accepted but ignored. `max-parallel` (default 4) bounds the go-version x go-arch x platform test matrix.
+- `reuseable-publish.yml` (`max-parallel`, default 4) bounds the binary build matrix, and `reuseable-go-library-release.yml` (`max-parallel`, default 4) the example build matrix.
+- `reuseable-publish-desktop.yml` (`max-parallel`, default 2) bounds the native build matrix, whose two macOS rows sit at opposite ends so they do not hold two macOS slots at once.
 
 ## How the engine works
 

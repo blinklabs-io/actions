@@ -1,6 +1,6 @@
 module governance
 
-go 1.26
+go 1.26.10
 
 require (
 	github.com/google/go-github/v60 v60.0.0

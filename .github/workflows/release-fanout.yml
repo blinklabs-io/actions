@@ -112,6 +112,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # One release can fan out to many repositories; each job only opens a
+      # pull request, so a narrow window costs little and leaves the org's
+      # shared job slots to CI.
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     name: ${{ matrix.product }} ${{ matrix.version }} -> ${{ matrix.name }} (${{ matrix.type }})
     steps:

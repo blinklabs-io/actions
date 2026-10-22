@@ -639,7 +639,7 @@ func TestWorkflowTemplate_GoTestWithFlags(t *testing.T) {
 		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@feat/docker-wireguard-governance",
 		TriggersYAML:     triggersYAML,
 		Params: map[string]string{
-			"go-versions": `["1.26.x"]`,
+			"go-versions": `["1.26.x","1.27.x"]`,
 			"test-flags":  "-race",
 		},
 	}
@@ -654,7 +654,7 @@ func TestWorkflowTemplate_GoTestWithFlags(t *testing.T) {
 		{"governance header", "# Generated automatically by org-governance-bot"},
 		{"workflow name", `name: "go-test"`},
 		{"reusable ref", "reuseable-go-test.yml@feat/docker-wireguard-governance"},
-		{"go-versions single-quoted array", `go-versions: '["1.26.x"]'`},
+		{"go-versions single-quoted array", `go-versions: '["1.26.x","1.27.x"]'`},
 		{"test-flags unquoted", "test-flags: -race"},
 	}
 	for _, c := range checks {
