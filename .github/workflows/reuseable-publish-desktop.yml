@@ -2,7 +2,8 @@ name: Reusable Publish Desktop
 
 # Multi-platform publish pipeline for desktop-style Go applications that ship a
 # GUI tray binary alongside the core CLI. It produces, per release tag:
-#   - macOS signed + notarized + stapled .pkg installers (arm64 + amd64),
+#   - macOS signed + notarized + stapled .pkg installers (arm64, and amd64
+#     unless binary-target-matrix drops it),
 #   - Windows signed .msi installers (amd64 + arm64) via jsign + WiX,
 #   - Linux / FreeBSD tarballs (with Fyne tray where supported),
 #   - native multi-arch Docker images (Docker Hub + GHCR) with a merged manifest,
@@ -78,10 +79,21 @@ on:
         type: boolean
         default: true
       max-parallel:
-        description: Maximum number of build-binaries matrix jobs running at once. build-images runs its two jobs beside them, and two of the eight rows are macOS (the org has 5 macOS slots), so the default keeps a release at four jobs.
+        description: Maximum number of build-binaries matrix jobs running at once. build-images runs its two jobs beside them, and two of the eight default rows are macOS (the org has 5 macOS slots), so the default keeps a release at four jobs.
         required: false
         type: string
         default: "2"
+      binary-target-matrix:
+        description: >-
+          JSON array of build-binaries rows, each with runner, os, arch, and tray
+          (false builds only the core binary). The default builds every target;
+          a caller drops a target by passing the list without that row. darwin
+          rows need a native macOS runner per arch because the Fyne tray needs
+          CGO, and the two darwin rows sit at opposite ends so a max-parallel of
+          2 does not hold two macOS slots at once.
+        required: false
+        type: string
+        default: '[{"runner":"macos-15","os":"darwin","arch":"arm64","tray":true},{"runner":"ubuntu-latest","os":"freebsd","arch":"amd64","tray":false},{"runner":"ubuntu-latest","os":"freebsd","arch":"arm64","tray":false},{"runner":"ubuntu-latest","os":"linux","arch":"amd64","tray":true},{"runner":"ubuntu-24.04-arm","os":"linux","arch":"arm64","tray":true},{"runner":"windows-latest","os":"windows","arch":"amd64","tray":true},{"runner":"windows-11-arm","os":"windows","arch":"arm64","tray":true},{"runner":"macos-15-intel","os":"darwin","arch":"amd64","tray":true}]'
     secrets:
       docker-password:
         description: Docker Hub access token. Required when docker-image is set.
@@ -165,44 +177,7 @@ jobs:
       fail-fast: false
       max-parallel: ${{ fromJSON(inputs.max-parallel) }}
       matrix:
-        include:
-          # Set tray: false on any row to quickly disable that platform's
-          # GUI tray build while still producing the core binary.
-          # macOS .pkg builds inline on a native runner per arch (arm64 on
-          # macos-15, amd64 on macos-15-intel): the tray needs CGO (Fyne) and
-          # can't be cross-compiled, so it must build on its target arch.
-          - runner: macos-15
-            os: darwin
-            arch: arm64
-            tray: true
-          - runner: ubuntu-latest
-            os: freebsd
-            arch: amd64
-            tray: false
-          - runner: ubuntu-latest
-            os: freebsd
-            arch: arm64
-            tray: false
-          - runner: ubuntu-latest
-            os: linux
-            arch: amd64
-            tray: true
-          - runner: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
-            tray: true
-          - runner: windows-latest
-            os: windows
-            arch: amd64
-            tray: true
-          - runner: windows-11-arm
-            os: windows
-            arch: arm64
-            tray: true
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
-            tray: true
+        include: ${{ fromJSON(inputs.binary-target-matrix) }}
     runs-on: ${{ matrix.runner }}
     needs: [create-draft-release]
     # Only the capabilities this job actually uses: attest (id-token +
