@@ -79,6 +79,9 @@ manual `workflow_dispatch`, from the product's generated wrapper (run when its `
 until that key is set a release reaches its targets within about a day. A
 manual or dispatched version must be an existing published release: the
 workflow rejects a tag that does not exist or is a draft or prerelease.
+Upstream repositories that Actions does not manage can be declared under
+`external_release_fanout`. Their releases are picked up by the daily backstop;
+they can also be run manually. No workflow is written to the upstream repo.
 
 ```yaml
 - name: blinklabs-io/dingo
@@ -86,6 +89,15 @@ workflow rejects a tag that does not exist or is a draft or prerelease.
     - repo: blinklabs-io/helm-charts
       type: helm-chart
       chart: charts/dingo
+```
+
+```yaml
+external_release_fanout:
+  - repo: txpipe/dolos
+    targets:
+      - repo: blinklabs-io/ansible-cardano
+        type: ansible-role
+        role: dolos
 ```
 
 | `type` | Required field | Changes |
