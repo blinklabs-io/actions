@@ -1718,7 +1718,6 @@ repositories:
           run-golangci-lint: "true"
           run-nilaway: "true"
           run-buf-checks: "true"
-          verify-buf-generated: "true"
 
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
