@@ -78,10 +78,10 @@ func TestReusableGoTestWorkflowUsesMatrixArchitectureAndEffectiveGuards(t *testi
 	if run := steps["Buf format check"].Run; !strings.Contains(run, "buf format -d --exit-code") {
 		t.Errorf("Buf format check does not fail on formatting differences:\n%s", run)
 	}
-	if run := steps["Verify generated code is up to date"].Run; !strings.Contains(run, "git status --porcelain --untracked-files=all") {
+	if run := steps["Verify generated code is up to date"].Run; !strings.Contains(run, "git diff --exit-code") || !strings.Contains(run, "git ls-files --others --exclude-standard") {
 		t.Errorf("generated-code check ignores untracked files:\n%s", run)
 	}
-	if run := steps["Check go.mod is tidy"].Run; !strings.Contains(run, "git status --porcelain --untracked-files=all -- go.mod go.sum") {
+	if run := steps["Check go.mod is tidy"].Run; !strings.Contains(run, "git diff --exit-code -- go.mod go.sum") || !strings.Contains(run, "git ls-files --others --exclude-standard -- go.mod go.sum") {
 		t.Errorf("module tidy check ignores untracked go.sum files:\n%s", run)
 	}
 
