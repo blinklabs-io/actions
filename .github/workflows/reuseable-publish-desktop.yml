@@ -320,7 +320,7 @@ jobs:
 
       # Sign Windows build
       - name: Set up Java
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1 https://github.com/actions/setup-java/releases/tag/v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0 https://github.com/actions/setup-java/releases/tag/v6.1.0
         if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
         with:
           java-version: 21
@@ -894,7 +894,7 @@ jobs:
         # Distinct category per arch: upload-sarif keys results by category, so a
         # shared category would let the arm64 upload overwrite the amd64 one.
         if: always() && inputs.enable-trivy-scan && steps.meta.outputs.version != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.39.0
         with:
           sarif_file: 'trivy-results-${{ matrix.arch }}.sarif'
           category: 'trivy-${{ matrix.arch }}'
