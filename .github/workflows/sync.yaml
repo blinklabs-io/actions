@@ -38,6 +38,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.x'
+          check-latest: true
 
       # Scope the token only to the repos listed in repos-config.yaml rather
       # than the whole org, reducing the blast radius if the token is leaked.
