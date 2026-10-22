@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -186,6 +188,88 @@ func TestAdderPublishSecretsAndParamsAreDeclared(t *testing.T) {
 	for key := range wf.Params {
 		if _, ok := inputs[key]; !ok {
 			t.Errorf("adder publish.yml passes param %q which the reusable does not declare as an input", key)
+		}
+	}
+}
+
+// desktopTargetRow is one build-binaries row of binary-target-matrix.
+type desktopTargetRow struct {
+	Runner string `json:"runner"`
+	OS     string `json:"os"`
+	Arch   string `json:"arch"`
+	Tray   bool   `json:"tray"`
+}
+
+// TestDesktopBinaryTargetMatrixDefault pins the default build-binaries rows to
+// the eight targets the matrix built before it became an input, in the same
+// order, so a caller that does not pass binary-target-matrix builds exactly
+// what it built before. The order matters: the two darwin rows sit at opposite
+// ends so the default max-parallel of 2 never holds two macOS slots at once.
+func TestDesktopBinaryTargetMatrixDefault(t *testing.T) {
+	wf := loadDesktopWorkflow(t)
+	job, ok := wf.Jobs["build-binaries"]
+	if !ok {
+		t.Fatal("build-binaries job missing")
+	}
+	if got, want := job.Strategy.Matrix.Include.Value, "${{ fromJSON(inputs.binary-target-matrix) }}"; got != want {
+		t.Fatalf("build-binaries matrix include = %q, want %q", got, want)
+	}
+
+	input, ok := wf.On.WorkflowCall.Inputs["binary-target-matrix"]
+	if !ok {
+		t.Fatal("missing binary-target-matrix input")
+	}
+	var spec struct {
+		Required bool   `yaml:"required"`
+		Type     string `yaml:"type"`
+		Default  string `yaml:"default"`
+	}
+	if err := input.Decode(&spec); err != nil {
+		t.Fatalf("decode binary-target-matrix input: %v", err)
+	}
+	if spec.Required || spec.Type != "string" {
+		t.Errorf("binary-target-matrix must be an optional string input, got required=%v type=%q", spec.Required, spec.Type)
+	}
+	var rows []desktopTargetRow
+	dec := json.NewDecoder(strings.NewReader(spec.Default))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rows); err != nil {
+		t.Fatalf("binary-target-matrix default is not a JSON row array: %v", err)
+	}
+	want := []desktopTargetRow{
+		{"macos-15", "darwin", "arm64", true},
+		{"ubuntu-latest", "freebsd", "amd64", false},
+		{"ubuntu-latest", "freebsd", "arm64", false},
+		{"ubuntu-latest", "linux", "amd64", true},
+		{"ubuntu-24.04-arm", "linux", "arm64", true},
+		{"windows-latest", "windows", "amd64", true},
+		{"windows-11-arm", "windows", "arm64", true},
+		{"macos-15-intel", "darwin", "amd64", true},
+	}
+	if !reflect.DeepEqual(rows, want) {
+		t.Errorf("binary-target-matrix default rows =\n%+v\nwant\n%+v", rows, want)
+	}
+}
+
+// TestDesktopBuildBinariesMatrixKeys asserts build-binaries reads no matrix key
+// beyond the four every binary-target-matrix row carries. A step that grew a
+// dependency on a new key would otherwise see an empty value on every row a
+// caller supplies without it.
+func TestDesktopBuildBinariesMatrixKeys(t *testing.T) {
+	data, err := os.ReadFile(reusablePublishDesktopPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "\n  build-binaries:\n")
+	end := strings.Index(text, "\n  build-images:\n")
+	if start < 0 || end < start {
+		t.Fatal("cannot locate the build-binaries job")
+	}
+	allowed := map[string]bool{"runner": true, "os": true, "arch": true, "tray": true}
+	for _, m := range regexp.MustCompile(`matrix\.([A-Za-z0-9_-]+)`).FindAllStringSubmatch(text[start:end], -1) {
+		if !allowed[m[1]] {
+			t.Errorf("build-binaries reads matrix.%s, which binary-target-matrix rows do not define", m[1])
 		}
 	}
 }

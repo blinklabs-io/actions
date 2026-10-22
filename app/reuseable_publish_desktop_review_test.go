@@ -24,7 +24,9 @@ type desktopWorkflow struct {
 		Permissions map[string]string `yaml:"permissions"`
 		Strategy    struct {
 			Matrix struct {
-				Include []map[string]string `yaml:"include"`
+				// Include is a sequence of rows, or a scalar expression for a
+				// matrix built from an input.
+				Include yaml.Node `yaml:"include"`
 			} `yaml:"matrix"`
 		} `yaml:"strategy"`
 		Steps []struct {
@@ -170,8 +172,12 @@ func TestImageScanEnabled(t *testing.T) {
 		t.Errorf("scan-images needs security-events: write, got %q", job.Permissions["security-events"])
 	}
 	// Both architectures must be in the scan matrix.
+	var rows []map[string]string
+	if err := job.Strategy.Matrix.Include.Decode(&rows); err != nil {
+		t.Fatalf("decode scan-images matrix: %v", err)
+	}
 	arches := map[string]bool{}
-	for _, row := range job.Strategy.Matrix.Include {
+	for _, row := range rows {
 		arches[row["arch"]] = true
 	}
 	for _, want := range []string{"amd64", "arm64"} {
