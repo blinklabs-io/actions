@@ -1673,6 +1673,7 @@ repositories:
           contents: read
         params:
           include-pkgs: "github.com/blinklabs-io/ouroboros-mock"
+          go-version: "1.26.10"
 
       - destination_file: publish.yml
         pipeline: ci.yml
@@ -2079,6 +2080,7 @@ repositories:
         params:
           run-golangci-lint: "true"
           run-nilaway: "true"
+          nilaway-go-version: "1.26.10"
           nilaway-include-pkgs: "github.com/blinklabs-io/bluefin"
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
