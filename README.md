@@ -44,6 +44,35 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-check-versions-packages.yml` — check upstream release/image versions against `packages/<pkg>/<pkg>-*.yaml` version files, validate with the cardano-up CLI, and open update PRs (for cardano-up package repositories).
 - `reuseable-release-dispatch.yml` — announce a published release to the central `release-fanout.yml` workflow (used by the generated `release-fanout.yml` wrapper).
 - `reuseable-package-validate.yml` — validate cardano-up package definitions with the cardano-up CLI (plus optional filename/content version-consistency check).
+- `reuseable-helm-deploy.yml` — deploy a local or OCI Helm chart to Kubernetes from a caller workflow.
+
+To deploy a chart, configure a protected environment in the caller repository
+and invoke the workflow from its default branch. Store the target cluster's
+kubeconfig as a repository secret. The caller supplies that environment, a
+release name, chart path or OCI reference, and namespace; `values-files`
+accepts one repository-relative file path per line.
+An OCI chart must also set `chart-version`. The workflow checks out the caller,
+installs Helm v3.22.1, and runs `helm upgrade --install --atomic --wait`.
+
+```yaml
+name: Deploy
+on:
+  workflow_dispatch:
+jobs:
+  deploy:
+    uses: blinklabs-io/actions/.github/workflows/reuseable-helm-deploy.yml@<full-commit-sha>
+    with:
+      release: example
+      chart: charts/example
+      namespace: example
+      environment: production
+      values-files: deploy/production-values.yaml
+    secrets:
+      kubeconfig: ${{ secrets.KUBECONFIG }}
+```
+
+Replace `<full-commit-sha>` with a reviewed `actions` commit that contains
+`reuseable-helm-deploy.yml`.
 
 The org's free plan shares 20 concurrent jobs (5 of them macOS) across every repository, so each reusable workflow keeps one run narrow by default:
 

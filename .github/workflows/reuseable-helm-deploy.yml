@@ -1,0 +1,108 @@
+name: Reusable Helm Deploy
+
+on:
+  workflow_call:
+    inputs:
+      release:
+        description: Helm release name.
+        required: true
+        type: string
+      chart:
+        description: Local chart path or OCI chart reference.
+        required: true
+        type: string
+      namespace:
+        description: Kubernetes namespace for the release.
+        required: true
+        type: string
+      environment:
+        description: Caller repository environment that protects this deployment.
+        required: true
+        type: string
+      chart-version:
+        description: Version of an OCI chart. Leave empty for a local chart.
+        required: false
+        type: string
+        default: ""
+      values-files:
+        description: Newline-separated paths to values files in the caller repository.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      kubeconfig:
+        description: Kubernetes configuration for the deployment target.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: helm-${{ github.repository }}-${{ inputs.namespace }}-${{ inputs.release }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.22.1
+
+      - name: Deploy chart
+        shell: bash
+        env:
+          RELEASE: ${{ inputs.release }}
+          CHART: ${{ inputs.chart }}
+          NAMESPACE: ${{ inputs.namespace }}
+          CHART_VERSION: ${{ inputs.chart-version }}
+          VALUES_FILES: ${{ inputs.values-files }}
+          KUBECONFIG_CONTENT: ${{ secrets.kubeconfig }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$RELEASE" || -z "$CHART" || -z "$NAMESPACE" || -z "$KUBECONFIG_CONTENT" ]]; then
+            echo 'release, chart, namespace, and kubeconfig are required' >&2
+            exit 1
+          fi
+          if [[ "$CHART" != oci://* && ! -f "$CHART/Chart.yaml" ]]; then
+            echo 'chart must be an OCI reference or a local chart directory' >&2
+            exit 1
+          fi
+          if [[ -n "$CHART_VERSION" && "$CHART" != oci://* ]]; then
+            echo 'chart-version is only supported for OCI charts' >&2
+            exit 1
+          fi
+          if [[ "$CHART" == oci://* && -z "$CHART_VERSION" ]]; then
+            echo 'chart-version is required for OCI charts' >&2
+            exit 1
+          fi
+
+          kubeconfig_file=$(mktemp)
+          chmod 600 "$kubeconfig_file"
+          trap 'rm -f "$kubeconfig_file"' EXIT
+          printf '%s' "$KUBECONFIG_CONTENT" > "$kubeconfig_file"
+          export KUBECONFIG="$kubeconfig_file"
+          unset KUBECONFIG_CONTENT
+
+          args=(--install --atomic --wait --namespace "$NAMESPACE")
+          if [[ -n "$CHART_VERSION" ]]; then
+            args+=(--version "$CHART_VERSION")
+          fi
+          while IFS= read -r values_file; do
+            [[ -z "$values_file" ]] && continue
+            if [[ ! -f "$values_file" ]]; then
+              echo "values file not found: $values_file" >&2
+              exit 1
+            fi
+            args+=(--values "$values_file")
+          done <<< "$VALUES_FILES"
+
+          helm upgrade "${args[@]}" -- "$RELEASE" "$CHART"
