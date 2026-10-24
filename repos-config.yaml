@@ -1776,7 +1776,7 @@ repositories:
 
       - destination_file: govulncheck.yml
         workflow_name: govulncheck
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-govulncheck.yml@main"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-govulncheck.yml@3295660d735a2696ff119c34adf96407dc1968eb"
         triggers:
           pull_request:
           push:
