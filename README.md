@@ -48,11 +48,18 @@ downstream repositories via `workflow_call`. The current set:
 
 To deploy a chart, configure a protected environment in the caller repository
 and invoke the workflow from its default branch. Store the target cluster's
-kubeconfig as a repository secret. The caller supplies that environment, a
-release name, chart path or OCI reference, and namespace; `values-files`
+kubeconfig as a secret named `kubeconfig` in that environment. Do not pass
+`kubeconfig` from the caller or inherit a repository or organization secret
+with that name; the workflow rejects caller-supplied credentials and fails if
+the selected environment has no `kubeconfig` secret.
+Use `secrets: inherit` to make the environment secret available to the reusable
+workflow. The caller supplies that environment, a release name, chart path or
+OCI reference, and namespace; `values-files`
 accepts one repository-relative file path per line.
 An OCI chart must also set `chart-version`. The workflow checks out the caller,
-installs Helm v3.22.1, and runs `helm upgrade --install --atomic --wait`.
+installs Helm v3.22.1, builds local chart dependencies from `Chart.lock` (or
+`Chart.yaml` if no lock file exists), and runs
+`helm upgrade --install --atomic --wait`.
 
 ```yaml
 name: Deploy
@@ -67,8 +74,7 @@ jobs:
       namespace: example
       environment: production
       values-files: deploy/production-values.yaml
-    secrets:
-      kubeconfig: ${{ secrets.KUBECONFIG }}
+    secrets: inherit
 ```
 
 Replace `<full-commit-sha>` with a reviewed `actions` commit that contains
