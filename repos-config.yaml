@@ -1131,7 +1131,7 @@ repositories:
         # SHA ("cannot find workflow"), which fails the caller before any job is
         # created. Always pin to a commit that lands on main (the squash/merge
         # commit), never to a feature-branch commit.
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@4bd982e304108466798c95d29e0aab260d0502c2"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@3295660d735a2696ff119c34adf96407dc1968eb"
         triggers:
           push:
             branches: [main]
@@ -1172,6 +1172,10 @@ repositories:
           # Preserve the capitalized Authenticode display name the in-repo
           # workflow used (application-name is lowercase "adder").
           windows-signing-name: "Adder"
+          # The default rows minus darwin/amd64: stapler validation of the
+          # Intel .pkg fails reproducibly on macos-15-intel runners, so adder
+          # ships macOS for Apple silicon only.
+          binary-target-matrix: '[{"runner":"macos-15","os":"darwin","arch":"arm64","tray":true},{"runner":"ubuntu-latest","os":"freebsd","arch":"amd64","tray":false},{"runner":"ubuntu-latest","os":"freebsd","arch":"arm64","tray":false},{"runner":"ubuntu-latest","os":"linux","arch":"amd64","tray":true},{"runner":"ubuntu-24.04-arm","os":"linux","arch":"arm64","tray":true},{"runner":"windows-latest","os":"windows","arch":"amd64","tray":true},{"runner":"windows-11-arm","os":"windows","arch":"arm64","tray":true}]'
     release_fanout:
       - repo: blinklabs-io/ansible-cardano
         type: ansible-role
