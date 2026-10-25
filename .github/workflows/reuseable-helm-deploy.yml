@@ -29,6 +29,10 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      kubeconfig:
+        description: Credential supplied by the selected caller environment.
+        required: false
 
 permissions:
   contents: read

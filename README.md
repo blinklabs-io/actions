@@ -48,12 +48,12 @@ downstream repositories via `workflow_call`. The current set:
 
 To deploy a chart, configure a protected environment in the caller repository
 and invoke the workflow from its default branch. Store the target cluster's
-kubeconfig as a secret named `kubeconfig` in that environment. Do not pass
-`kubeconfig` from the caller or inherit a repository or organization secret
-with that name; the workflow rejects caller-supplied credentials and fails if
-the selected environment has no `kubeconfig` secret.
-Use `secrets: inherit` to make the environment secret available to the reusable
-workflow. The caller supplies that environment, a release name, chart path or
+kubeconfig as a secret named `kubeconfig` in that environment. Do not store
+`kubeconfig` as a repository or organization secret; the workflow rejects those
+credentials and fails if the selected environment has no `kubeconfig` secret.
+Declare only `kubeconfig` in the caller's secret mapping. GitHub resolves the
+selected environment's secret for the deployment job. The caller supplies that
+environment, a release name, chart path or
 OCI reference, and namespace; `values-files`
 accepts one repository-relative file path per line.
 An OCI chart must also set `chart-version`. The workflow checks out the caller,
@@ -74,7 +74,8 @@ jobs:
       namespace: example
       environment: production
       values-files: deploy/production-values.yaml
-    secrets: inherit
+    secrets:
+      kubeconfig: ${{ secrets.kubeconfig }}
 ```
 
 Replace `<full-commit-sha>` with a reviewed `actions` commit that contains
