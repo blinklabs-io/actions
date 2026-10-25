@@ -56,10 +56,35 @@ selected environment's secret for the deployment job. The caller supplies that
 environment, a release name, chart path or
 OCI reference, and namespace; `values-files`
 accepts one repository-relative file path per line.
-An OCI chart must also set `chart-version`. The workflow checks out the caller,
-installs Helm v3.22.1, builds local chart dependencies from `Chart.lock` (or
-`Chart.yaml` if no lock file exists), and runs
-`helm upgrade --install --atomic --wait`.
+Every chart must set `chart-sha256` to the reviewed SHA-256 of the complete
+`.tgz` chart archive. For an OCI chart, also set `chart-version`; the archive
+hash differs from the OCI manifest digest printed by `helm pull`.
+For a local chart with dependencies, commit `Chart.lock` alongside `Chart.yaml`.
+The preparation job runs `helm dependency build` only when the lock exists, then
+packages the complete chart. If the lock is missing or an upstream chart is
+replaced, the workflow fails before accessing the cluster. Helm's lock records
+dependency versions; `chart-sha256` checks the actual package bytes, including
+the resolved dependencies. Calculate that hash from the complete archive made
+with Helm 4.3.1, review it, and store it in the caller workflow. A job without
+cluster credentials pulls or packages the chart, checks its hash, and uses Helm
+4.3.1 to lint and render it with the caller's values. The deployment job
+verifies the prepared archive again before receiving the `kubeconfig` secret
+and running `helm upgrade --install --atomic --wait`.
+
+Keep application credentials out of chart files, dependencies, and
+`values-files`. The preparation job uploads the complete chart archive as a
+workflow artifact for one day. [Anyone with repository read access can download
+it](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts).
+Separate values files are not uploaded unless they are also inside the chart
+directory. Committed values remain readable in the repository, and Helm stores
+[supplied values with the release in Kubernetes](https://helm.sh/docs/topics/advanced/#storage-backends).
+
+Provision application secrets separately and put only references to those
+Kubernetes Secrets in the chart and values files. Keep `kubeconfig` only in the
+selected GitHub environment. The workflow cannot reliably identify and remove
+arbitrary secret values; removing fields would change what Helm deploys. Helm
+errors may include values in workflow logs, and [GitHub warns that secret
+redaction is not guaranteed](https://docs.github.com/en/actions/concepts/security/secrets).
 
 ```yaml
 name: Deploy
@@ -71,6 +96,7 @@ jobs:
     with:
       release: example
       chart: charts/example
+      chart-sha256: <reviewed-sha256-of-packaged-chart>
       namespace: example
       environment: production
       values-files: deploy/production-values.yaml
