@@ -1701,7 +1701,7 @@ repositories:
         permissions:
           contents: read
         params:
-          go-version: "1.26.x"
+          go-version: "1.26.10"
 
       - destination_file: nilaway.yml
         pipeline: ci.yml
@@ -1739,7 +1739,7 @@ repositories:
           id-token: write
           attestations: write
         params:
-          go-version: "1.26.x"
+          go-version: "1.26.10"
   # bark's Go, Buf, and generated-code checks are combined in one shared CI
   # job. publish.yml remains repository-specific because it regenerates and
   # commits Go code on main before creating releases on tags.
@@ -1767,6 +1767,7 @@ repositories:
           run-golangci-lint: "true"
           run-nilaway: "true"
           run-buf-checks: "true"
+          verify-buf-generated: "true"
 
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
@@ -2003,7 +2004,7 @@ repositories:
           schedule:
             - cron: '0 0 * * 1'
         params:
-          go-version: "1.26.x"
+          go-version: "1.26.10"
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
@@ -2048,7 +2049,7 @@ repositories:
           binary-name: "cdnsd"
           docker-image: "blinklabs/cdnsd"
           description: "DNS resolver for Handshake SLDs on Cardano"
-          go-version: "1.26.x"
+          go-version: "1.26.10"
     release_fanout:
       - repo: blinklabs-io/ansible-cardano
         type: ansible-role
