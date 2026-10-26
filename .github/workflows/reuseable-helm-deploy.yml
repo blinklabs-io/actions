@@ -1,0 +1,264 @@
+name: Reusable Helm Deploy
+
+on:
+  workflow_call:
+    inputs:
+      release:
+        description: Helm release name.
+        required: true
+        type: string
+      chart:
+        description: Local chart path or OCI chart reference without embedded secrets.
+        required: true
+        type: string
+      namespace:
+        description: Kubernetes namespace for the release.
+        required: true
+        type: string
+      environment:
+        description: Caller repository environment that protects this deployment.
+        required: true
+        type: string
+      chart-version:
+        description: Version of an OCI chart. Leave empty for a local chart.
+        required: false
+        type: string
+        default: ""
+      chart-sha256:
+        description: SHA-256 of the complete chart archive to deploy.
+        required: true
+        type: string
+      values-files:
+        description: Newline-separated paths to non-secret values files in the caller repository.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      kubeconfig:
+        description: Credential supplied by the selected caller environment.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  check-credentials:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      # Without an environment, this can only see caller-supplied secrets.
+      - name: Reject caller-supplied kubeconfig
+        shell: bash
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.kubeconfig }}
+        run: |
+          if [[ -n "$KUBECONFIG_CONTENT" ]]; then
+            echo 'kubeconfig must be configured only as a secret in the selected environment' >&2
+            exit 1
+          fi
+
+  prepare-chart:
+    needs: check-credentials
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      package-name: ${{ steps.prepare.outputs.package-name }}
+      artifact-name: ${{ steps.prepare.outputs.artifact-name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+
+      - name: Prepare and verify chart
+        id: prepare
+        shell: bash
+        env:
+          CHART: ${{ inputs.chart }}
+          CHART_VERSION: ${{ inputs.chart-version }}
+          CHART_SHA256: ${{ inputs.chart-sha256 }}
+          RELEASE: ${{ inputs.release }}
+          NAMESPACE: ${{ inputs.namespace }}
+          VALUES_FILES: ${{ inputs.values-files }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$CHART" || -z "$RELEASE" || -z "$NAMESPACE" ]]; then
+            echo 'chart, release, and namespace are required' >&2
+            exit 1
+          fi
+          if [[ ! "$CHART_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+            echo 'chart-sha256 must be a 64-character SHA-256 of the complete chart archive' >&2
+            exit 1
+          fi
+
+          chart_dir="$RUNNER_TEMP/prepared-chart"
+          mkdir -p "$chart_dir"
+          if [[ "$CHART" == oci://* ]]; then
+            if [[ -z "$CHART_VERSION" ]]; then
+              echo 'OCI charts require chart-version' >&2
+              exit 1
+            fi
+            helm pull "$CHART" --version "$CHART_VERSION" --destination "$chart_dir"
+          else
+            if [[ ! -f "$CHART/Chart.yaml" || -n "$CHART_VERSION" ]]; then
+              echo 'local charts require a chart directory without chart-version' >&2
+              exit 1
+            fi
+            workspace_path=$(realpath "$GITHUB_WORKSPACE")
+            chart_path=$(realpath "$CHART")
+            if [[ "$chart_path" != "$workspace_path" && "$chart_path" != "$workspace_path/"* ]]; then
+              echo 'local chart must be inside the caller repository' >&2
+              exit 1
+            fi
+            chart_metadata=$(helm show chart "$chart_path")
+            if grep -q '^dependencies:' <<< "$chart_metadata"; then
+              if [[ ! -f "$chart_path/Chart.lock" || -L "$chart_path/Chart.lock" ]]; then
+                echo 'charts with dependencies require a committed Chart.lock' >&2
+                exit 1
+              fi
+              lock_path=${chart_path#"$workspace_path"}
+              lock_path=${lock_path#/}
+              lock_path=${lock_path:+$lock_path/}Chart.lock
+              if ! git -C "$workspace_path" ls-files --error-unmatch -- "$lock_path" > /dev/null; then
+                echo 'Chart.lock must be tracked in the caller repository' >&2
+                exit 1
+              fi
+              helm dependency build "$chart_path"
+            fi
+            helm package "$chart_path" --destination "$chart_dir"
+          fi
+
+          shopt -s nullglob
+          packages=("$chart_dir"/*.tgz)
+          if [[ ${#packages[@]} -ne 1 ]]; then
+            echo 'expected exactly one prepared chart archive' >&2
+            exit 1
+          fi
+          package=${packages[0]}
+          actual_sha256=$(sha256sum "$package" | cut -d' ' -f1)
+          expected_sha256=$(printf '%s' "$CHART_SHA256" | tr '[:upper:]' '[:lower:]')
+          if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+            echo 'prepared chart archive does not match chart-sha256' >&2
+            exit 1
+          fi
+          helm lint "$package"
+          template_args=("$RELEASE" "$package" --namespace "$NAMESPACE")
+          workspace_path=$(realpath "$GITHUB_WORKSPACE")
+          while IFS= read -r values_file; do
+            [[ -z "$values_file" ]] && continue
+            if [[ ! -f "$values_file" ]]; then
+              echo "values file not found: $values_file" >&2
+              exit 1
+            fi
+            values_path=$(realpath "$values_file")
+            if [[ "$values_path" != "$workspace_path/"* ]]; then
+              echo "values file must be inside the caller repository: $values_file" >&2
+              exit 1
+            fi
+            template_args+=(--values "$values_path")
+          done <<< "$VALUES_FILES"
+          helm template "${template_args[@]}" > /dev/null
+          artifact_suffix=$(openssl rand -hex 16)
+          printf 'package-name=%s\n' "${package##*/}" >> "$GITHUB_OUTPUT"
+          printf 'artifact-name=prepared-chart-%s\n' "$artifact_suffix" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.prepare.outputs.artifact-name }}
+          path: ${{ runner.temp }}/prepared-chart/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: prepare-chart
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: helm-${{ github.repository }}-${{ inputs.namespace }}-${{ inputs.release }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.prepare-chart.outputs.artifact-name }}
+          path: ${{ runner.temp }}/prepared-chart
+
+      - name: Verify prepared chart and values
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ needs.prepare-chart.outputs.package-name }}
+          CHART_SHA256: ${{ inputs.chart-sha256 }}
+          RELEASE: ${{ inputs.release }}
+          NAMESPACE: ${{ inputs.namespace }}
+          VALUES_FILES: ${{ inputs.values-files }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$RELEASE" || -z "$NAMESPACE" ]]; then
+            echo 'release and namespace are required' >&2
+            exit 1
+          fi
+          if [[ ! "$PACKAGE_NAME" =~ ^[A-Za-z0-9._-]+\.tgz$ || ! "$CHART_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+            echo 'invalid prepared chart metadata' >&2
+            exit 1
+          fi
+          expected_sha256=$(printf '%s' "$CHART_SHA256" | tr '[:upper:]' '[:lower:]')
+          printf '%s  %s\n' "$expected_sha256" "$RUNNER_TEMP/prepared-chart/$PACKAGE_NAME" | sha256sum -c -
+          workspace_path=$(realpath "$GITHUB_WORKSPACE")
+          while IFS= read -r values_file; do
+            [[ -z "$values_file" ]] && continue
+            if [[ ! -f "$values_file" ]]; then
+              echo "values file not found: $values_file" >&2
+              exit 1
+            fi
+            values_path=$(realpath "$values_file")
+            if [[ "$values_path" != "$workspace_path/"* ]]; then
+              echo "values file must be inside the caller repository: $values_file" >&2
+              exit 1
+            fi
+          done <<< "$VALUES_FILES"
+
+      - name: Deploy verified chart
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ needs.prepare-chart.outputs.package-name }}
+          RELEASE: ${{ inputs.release }}
+          NAMESPACE: ${{ inputs.namespace }}
+          VALUES_FILES: ${{ inputs.values-files }}
+          KUBECONFIG_CONTENT: ${{ secrets.kubeconfig }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$KUBECONFIG_CONTENT" ]]; then
+            echo 'selected environment has no kubeconfig secret' >&2
+            exit 1
+          fi
+          kubeconfig_file=$(mktemp)
+          chmod 600 "$kubeconfig_file"
+          trap 'rm -f "$kubeconfig_file"' EXIT
+          printf '%s' "$KUBECONFIG_CONTENT" > "$kubeconfig_file"
+          export KUBECONFIG="$kubeconfig_file"
+          unset KUBECONFIG_CONTENT
+
+          args=(--install --atomic --wait --namespace "$NAMESPACE")
+          while IFS= read -r values_file; do
+            [[ -z "$values_file" ]] && continue
+            args+=(--values "$(realpath "$values_file")")
+          done <<< "$VALUES_FILES"
+          helm upgrade "${args[@]}" -- "$RELEASE" "$RUNNER_TEMP/prepared-chart/$PACKAGE_NAME"
