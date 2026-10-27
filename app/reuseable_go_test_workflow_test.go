@@ -266,3 +266,30 @@ func TestReusableGoTestCrossBuildBuildsEveryTargetInOneJob(t *testing.T) {
 		t.Errorf("go calls = %q, want %q", got, want)
 	}
 }
+
+// A floating go-version such as 1.26.x resolves to the runner's cached
+// toolchain unless check-latest is set, which can be older than the go.mod of
+// the repository under test and fails with GOTOOLCHAIN=local.
+func TestReusableGoWorkflowsCheckLatestToolchain(t *testing.T) {
+	for _, name := range []string{
+		"reuseable-golangci-lint.yml",
+		"reuseable-govulncheck.yml",
+		"reuseable-nilaway.yml",
+		"reuseable-go-library-release.yml",
+		"reuseable-go-test.yml",
+		"reuseable-publish.yml",
+		"reuseable-publish-desktop.yml",
+	} {
+		workflow := readReusableWorkflow(t, filepath.Join("..", ".github", "workflows", name))
+		for jobName, job := range workflow.Jobs {
+			for _, step := range job.Steps {
+				if !strings.HasPrefix(step.Uses, "actions/setup-go@") {
+					continue
+				}
+				if step.With["check-latest"] != "true" {
+					t.Errorf("%s job %s: setup-go step %q must set check-latest: true", name, jobName, step.Name)
+				}
+			}
+		}
+	}
+}
