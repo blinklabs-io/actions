@@ -1,0 +1,115 @@
+name: Reusable OCI Helm Publish
+
+on:
+  workflow_call:
+    inputs:
+      helm-version:
+        description: Helm version used to package and push charts.
+        required: false
+        type: string
+        default: v4.3.1
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && !github.event.deleted
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect changed charts
+        id: charts
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          before, after = os.environ['BEFORE'], os.environ['AFTER']
+          if not all(re.fullmatch(r'[0-9a-f]{40}', ref) for ref in (before, after)):
+              raise SystemExit('Expected push commit SHAs')
+          if before == '0' * 40:
+              command = ['git', 'ls-tree', '-r', '--name-only', '-z', after, '--', 'charts/']
+          else:
+              # A force push can leave its previous tip outside the fetched history.
+              if subprocess.run(['git', 'cat-file', '-e', before + '^{commit}'],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+                  subprocess.run(['git', 'fetch', '--no-tags', 'origin', before], check=True)
+              command = ['git', 'diff', '--name-only', '--no-renames', '-z', before, after, '--', 'charts/']
+          paths = subprocess.check_output(command).decode().split('\0')
+          charts = set()
+          for path in paths:
+              parts = path.split('/')
+              if len(parts) < 3:
+                  continue
+              chart = Path(*parts[:2])
+              if (chart / 'Chart.yaml').is_file():
+                  if chart.is_symlink() or (chart / 'Chart.yaml').is_symlink():
+                      raise SystemExit(f'Chart must be inside the repository: {chart}')
+                  charts.add(str(chart))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('charts=' + json.dumps(sorted(charts)) + '\n')
+          PY
+
+      - name: Install Helm
+        if: steps.charts.outputs.charts != '[]'
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ inputs.helm-version }}
+
+      - name: Package and push charts
+        if: steps.charts.outputs.charts != '[]'
+        shell: bash
+        env:
+          CHARTS: ${{ steps.charts.outputs.charts }}
+          REPOSITORY: ${{ github.repository }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+
+          charts = json.loads(os.environ['CHARTS'])
+          if not charts:
+              raise SystemExit(0)
+          destination = 'oci://ghcr.io/' + os.environ['REPOSITORY'].lower() + '/charts'
+          with tempfile.TemporaryDirectory() as temporary:
+              root = Path(temporary)
+              packages = []
+              for index, chart in enumerate(charts):
+                  directory = root / str(index)
+                  directory.mkdir()
+                  subprocess.run(['helm', 'package', chart, '--destination', str(directory)], check=True)
+                  archives = list(directory.glob('*.tgz'))
+                  if len(archives) != 1:
+                      raise SystemExit(f'Expected one chart archive for {chart}')
+                  packages.extend(archives)
+              env = dict(os.environ, HELM_REGISTRY_CONFIG=str(root / 'registry.json'))
+              subprocess.run(['helm', 'registry', 'login', 'ghcr.io',
+                              '--username', os.environ['REGISTRY_USER'], '--password-stdin'],
+                             input=os.environ['REGISTRY_TOKEN'] + '\n', text=True, env=env, check=True)
+              for archive in packages:
+                  subprocess.run(['helm', 'push', str(archive), destination], env=env, check=True)
+          PY
