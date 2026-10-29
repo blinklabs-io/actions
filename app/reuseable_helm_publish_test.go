@@ -162,3 +162,83 @@ if action == os.environ['FAIL']:
 		})
 	}
 }
+
+func TestHelmPublishFetchAuthenticates(t *testing.T) {
+	script := helmPublishStep(t, "Detect changed charts")
+	remote, client := t.TempDir(), t.TempDir()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(realGit, args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(remote, "init", "--initial-branch=main")
+	chart := filepath.Join(remote, "charts", "alpha")
+	if err := os.MkdirAll(chart, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chart, "Chart.yaml"), []byte("apiVersion: v2\nname: alpha\nversion: 1.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit := func() string {
+		git(remote, "add", ".")
+		git(remote, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-s", "-m", "test: update chart fixture")
+		return git(remote, "rev-parse", "HEAD")
+	}
+	before := commit()
+	if err := os.WriteFile(filepath.Join(chart, "values.yaml"), []byte("changed: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := commit()
+	git(client, "init", "--initial-branch=main")
+	git(client, "remote", "add", "origin", "file://"+remote)
+	git(client, "fetch", "--depth=1", "origin", after)
+	git(client, "checkout", "--detach", "FETCH_HEAD")
+
+	bin := t.TempDir()
+	fakeGit := `#!/usr/bin/env python3
+import base64
+import os
+from pathlib import Path
+import sys
+if sys.argv[1] == 'fetch':
+    expected = 'AUTHORIZATION: basic ' + base64.b64encode(b'x-access-token:fixture-token').decode()
+    if (os.environ.get('GIT_CONFIG_COUNT') != '1' or
+        os.environ.get('GIT_CONFIG_KEY_0') != 'http.https://github.com/.extraheader' or
+        os.environ.get('GIT_CONFIG_VALUE_0') != expected):
+        raise SystemExit('fetch omitted authentication header')
+    Path(os.environ['FETCH_LOG']).write_text('authenticated fetch')
+os.execv(os.environ['REAL_GIT'], [os.environ['REAL_GIT']] + sys.argv[1:])
+`
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fakeGit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	output, fetchLog := filepath.Join(bin, "output"), filepath.Join(bin, "fetch.log")
+	cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", script)
+	cmd.Dir = client
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"REAL_GIT="+realGit, "BEFORE="+before, "AFTER="+after, "GITHUB_OUTPUT="+output,
+		"FETCH_TOKEN=fixture-token", "GITHUB_SERVER_URL=https://github.com", "FETCH_LOG="+fetchLog)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("detect charts with authenticated fetch: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(fetchLog); err != nil {
+		t.Fatal("missing-before case did not fetch from origin")
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "charts=[\"charts/alpha\"]\n" {
+		t.Fatalf("detected charts after fetch = %s", data)
+	}
+}

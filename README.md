@@ -57,11 +57,14 @@ chart version when changing a chart. Dependencies must already be vendored.
 The caller must grant `contents: read` and `packages: write` and pin the call
 to a full commit SHA. `helm-version` defaults to `v4.3.1`.
 
-The generated Helm charts publisher runs on every `main` push and does its
+Call the Helm charts publisher on every `main` push. It does its
 own Git diff instead of using workflow path filters, whose changed-file list
 is limited. A push without chart changes performs no packaging or registry
 login. It uses no canceling concurrency group: every push must publish its own
-changed charts, including when several pushes arrive close together.
+changed charts, including when several pushes arrive close together. Configure
+the caller in `repos-config.yaml` only after this workflow lands on `main`,
+using that merged commit SHA. A feature-branch SHA is not a durable pin after
+a squash merge.
 
 To deploy a chart, configure a protected environment in the caller repository
 and invoke the workflow from its default branch. Store the target cluster's
