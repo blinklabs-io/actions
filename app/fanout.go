@@ -169,14 +169,22 @@ func stageObsoleteFanoutWrapper(
 	if err != nil {
 		if !isNotFound(err) {
 			fmt.Printf("  Error checking %s for cleanup: %v\n", path, err)
+			batch.failed = true
 		}
 		return
 	}
 	if fileContent == nil || fileContent.SHA == nil {
+		fmt.Printf("  Error checking %s for cleanup: path is not a file\n", path)
+		batch.failed = true
 		return
 	}
 	existing, err := fileContent.GetContent()
-	if err != nil || !fanoutWrapperObsolete(desired, []byte(existing)) {
+	if err != nil {
+		fmt.Printf("  Error decoding %s: %v\n", path, err)
+		batch.failed = true
+		return
+	}
+	if !fanoutWrapperObsolete(desired, []byte(existing)) {
 		return
 	}
 	fmt.Printf("  Staging removal of %s...\n", path)

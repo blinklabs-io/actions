@@ -1825,10 +1825,16 @@ func stageManagedFile(
 	if err == nil {
 		if fileContent == nil {
 			fmt.Printf("  Error reading managed file %s: path is not a file\n", path)
+			batch.failed = true
 			return
 		}
 		existingContent, decErr := fileContent.GetContent()
-		if decErr == nil && existingContent == string(desiredContent) {
+		if decErr != nil {
+			fmt.Printf("  Error decoding %s: %v\n", path, decErr)
+			batch.failed = true
+			return
+		}
+		if existingContent == string(desiredContent) {
 			fmt.Printf("✅ Managed file %s matches perfectly. Skipping push.\n", path)
 			return
 		}
@@ -1838,6 +1844,7 @@ func stageManagedFile(
 	}
 	if !isNotFound(err) {
 		fmt.Printf("  Error reading managed file %s: %v\n", path, err)
+		batch.failed = true
 		return
 	}
 
@@ -1859,10 +1866,25 @@ func stageWorkflowFile(
 	path := fmt.Sprintf(".github/workflows/%s", destinationFile)
 	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
 
+	if err != nil && !isNotFound(err) {
+		fmt.Printf("  Error reading workflow file %s: %v\n", path, err)
+		batch.failed = true
+		return
+	}
 	if err == nil {
+		if fileContent == nil {
+			fmt.Printf("  Error reading workflow file %s: path is not a file\n", path)
+			batch.failed = true
+			return
+		}
 		// File exists — GetContent() already returns the decoded string.
 		existingContent, decErr := fileContent.GetContent()
-		if decErr == nil && existingContent == string(desiredContent) {
+		if decErr != nil {
+			fmt.Printf("  Error decoding %s: %v\n", path, decErr)
+			batch.failed = true
+			return
+		}
+		if existingContent == string(desiredContent) {
 			fmt.Printf("✅ Workflow file %s matches perfectly. Skipping push.\n", destinationFile)
 			return
 		}
@@ -1894,10 +1916,13 @@ func stageRemovals(
 				continue
 			}
 			fmt.Printf("  Error checking %s for cleanup: %v\n", workflowPath, getErr)
-			continue
+			batch.failed = true
+			return
 		}
 		if fileContent == nil || fileContent.SHA == nil {
-			continue
+			fmt.Printf("  Error checking %s for cleanup: path is not a file\n", workflowPath)
+			batch.failed = true
+			return
 		}
 
 		fmt.Printf("  Staging removal of %s...\n", workflowPath)
@@ -1928,6 +1953,7 @@ type fileOp struct {
 // files into N commits and N CI runs; batching to one commit per repo replaces
 // that fan-out with a single run.
 type commitBatch struct {
+	failed  bool
 	ops     []fileOp
 	summary []string
 }
@@ -1964,14 +1990,15 @@ func (b *commitBatch) message() string {
 // flushBatch writes every staged change as one commit on the default branch
 // using the Git Data API (one tree, one commit, one ref update), so a
 // reconciliation that touches many files starts a single CI run. An empty batch
-// is a no-op, so an unchanged repository produces no commit.
+// is a no-op. A failed lookup invalidates the entire batch so a replacement
+// cannot be committed without all of its required deletions.
 func flushBatch(
 	ctx context.Context,
 	client *github.Client,
 	owner, repo, defaultBranch string,
 	batch *commitBatch,
 ) {
-	if len(batch.ops) == 0 {
+	if batch.failed || len(batch.ops) == 0 {
 		return
 	}
 
