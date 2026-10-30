@@ -122,7 +122,7 @@ profiles:
   # repository-standard: baseline governance for repositories whose CI and
   # release workflows are still maintained locally. Release workflows are
   # added only after each repository's needs have been reviewed.
-  repository-standard:
+  repository-standard: &repository-standard
     settings:
       delete_branch_on_merge: true
     collaborators: []
@@ -135,6 +135,62 @@ profiles:
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
         triggers:
           pull_request:
+
+  helm-charts-standard:
+    <<: *repository-standard
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+      - destination_file: publish-helm-charts.yml
+        workflow_name: "Publish Helm Charts"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-helm-publish.yml@359f0eee78d7b431bf5577aea9107e9c56ab0736"
+        supersedes:
+          - publish-adder-helm-chart.yml
+          - publish-balius-helm-chart.yml
+          - publish-balius-operator-helm-chart.yml
+          - publish-bind9-helm-chart.yml
+          - publish-bluefin-helm-chart.yml
+          - publish-bursa-helm-chart.yml
+          - publish-butane-oracle-helm-chart.yml
+          - publish-cardano-db-sync-helm-chart.yml
+          - publish-cardano-node-helm-chart.yml
+          - publish-cardano-node-leios-helm-chart.yml
+          - publish-cdnsd-helm-chart.yml
+          - publish-demeter-fabric-helm-chart.yml
+          - publish-dingo-helm-chart.yml
+          - publish-dingo-operator-helm-chart.yml
+          - publish-dolos-helm-chart.yml
+          - publish-ergo-node-helm-chart.yml
+          - publish-ext-blockfrost-operator-helm-chart.yml
+          - publish-ext-cardano-node-operator-helm-chart.yml
+          - publish-ext-kupo-operator-helm-chart.yml
+          - publish-ext-ogmios-operator-helm-chart.yml
+          - publish-ext-proxy-helm-chart.yml
+          - publish-ext-tx-submit-api-operator-helm-chart.yml
+          - publish-ext-utxorpc-operator-helm-chart.yml
+          - publish-handshake-node-helm-chart.yml
+          - publish-hsd-helm-chart.yml
+          - publish-hydrozoa-helm-chart.yml
+          - publish-kupo-helm-chart.yml
+          - publish-ogmios-helm-chart.yml
+          - publish-openvpn-helm-chart.yml
+          - publish-postgres-cluster-helm-chart.yml
+          - publish-rbac-helm-chart.yml
+          - publish-storageclasses-helm-chart.yml
+          - publish-svc-dns-stack-helm-chart.yml
+          - publish-tx-submit-api-helm-chart.yml
+          - publish-tx-submit-api-mirror-helm-chart.yml
+          - publish-vpn-indexer-helm-chart.yml
+          - publish-wireguard-helm-chart.yml
+        triggers:
+          push:
+            branches: [main]
+        permissions:
+          contents: read
+          packages: write
 
   go-ci-standard:
     settings:
@@ -2400,7 +2456,7 @@ repositories:
   - name: blinklabs-io/.github
     profile: repository-standard
   - name: blinklabs-io/helm-charts
-    profile: repository-standard
+    profile: helm-charts-standard
   - name: blinklabs-io/buidler-fest-2024-workshop
     profile: go-ci-standard
   - name: blinklabs-io/dns-contracts
