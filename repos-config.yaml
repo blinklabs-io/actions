@@ -146,7 +146,7 @@ profiles:
           pull_request:
       - destination_file: publish-helm-charts.yml
         workflow_name: "Publish Helm Charts"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-helm-publish.yml@4db9a6ee8a5532266feff7acf54d53a0b0667304"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-helm-publish.yml@359f0eee78d7b431bf5577aea9107e9c56ab0736"
         supersedes:
           - publish-adder-helm-chart.yml
           - publish-balius-helm-chart.yml
