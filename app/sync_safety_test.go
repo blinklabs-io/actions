@@ -33,8 +33,9 @@ type recordingGitHub struct {
 	// ends in one of the keys is returned with that exact content, and any other
 	// file 404s. It lets a test present a repository that already matches the
 	// desired state so nothing is staged.
-	contents       map[string]string
-	contentsErrors map[string]int
+	contents          map[string]string
+	contentsErrors    map[string]int
+	malformedContents map[string]string
 }
 
 func (g *recordingGitHub) record(method, path string) {
@@ -83,6 +84,16 @@ func (g *recordingGitHub) handler() http.Handler {
 			for suffix, status := range g.contentsErrors {
 				if strings.HasSuffix(r.URL.Path, "/"+suffix) {
 					http.Error(w, `{"message":"lookup failure"}`, status)
+					return
+				}
+			}
+			for suffix, encoded := range g.malformedContents {
+				if strings.HasSuffix(r.URL.Path, "/"+suffix) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(w,
+						`{"type":"file","name":"x","sha":"deadbeef","content":%q,"encoding":"base64"}`,
+						encoded,
+					)
 					return
 				}
 			}
@@ -343,6 +354,23 @@ func TestSyncWorkflowsAbortsMigrationOnLookupFailure(t *testing.T) {
 			syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows, "version: 2\n")
 			if g.saw(http.MethodPost, "/git/trees") || g.saw(http.MethodPatch, "/git/refs/") {
 				t.Fatalf("committed an incomplete migration after lookup failure for %s", path)
+			}
+		})
+	}
+	for _, path := range []string{
+		"publish-helm-charts.yml", "dependabot.yml", "release-fanout.yml",
+	} {
+		t.Run("malformed "+path, func(t *testing.T) {
+			g := &recordingGitHub{
+				contents:          map[string]string{"publish-alpha-helm-chart.yml": "old publisher"},
+				malformedContents: map[string]string{path: "%%%"},
+			}
+			syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows, "version: 2\n")
+			if !g.saw(http.MethodGet, "/"+path) {
+				t.Fatalf("did not read malformed file %s", path)
+			}
+			if g.saw(http.MethodPost, "/git/trees") || g.saw(http.MethodPatch, "/git/refs/") {
+				t.Fatalf("committed an incomplete migration after decoding %s failed", path)
 			}
 		})
 	}
