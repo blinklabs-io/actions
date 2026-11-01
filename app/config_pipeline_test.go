@@ -156,6 +156,13 @@ func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 
 func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 	cfg := loadRealConfig(t)
+	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
+	t.Setenv("GITHUB_REF", "refs/heads/main")
+	if err := resolvePinnedWorkflowRefs(&cfg, func(string) (string, error) {
+		return strings.Repeat("a", 40), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	found := 0
 	for _, repo := range cfg.Repositories {
 		for _, wf := range repo.Workflows {

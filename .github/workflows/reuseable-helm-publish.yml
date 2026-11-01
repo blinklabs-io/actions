@@ -81,11 +81,70 @@ jobs:
         with:
           version: ${{ inputs.helm-version }}
 
+      - name: Verify chart version bumps
+        if: steps.charts.outputs.charts != '[]'
+        shell: bash
+        env:
+          CHARTS: ${{ steps.charts.outputs.charts }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+
+          def version(chart):
+              metadata = subprocess.check_output(['helm', 'show', 'chart', str(chart)], text=True)
+              matches = re.findall(r'^version:\s*(\S+)\s*$', metadata, re.MULTILINE)
+              if len(matches) != 1:
+                  raise SystemExit(f'Expected one chart version in {chart}')
+              return matches[0].strip('"\'')
+
+          def precedence(value):
+              value = value.split('+', 1)[0].removeprefix('v')
+              core, separator, prerelease = value.partition('-')
+              numbers = core.split('.')
+              if len(numbers) != 3 or not all(part.isdigit() for part in numbers):
+                  raise SystemExit(f'Invalid chart version: {value}')
+              identifiers = tuple(
+                  (0, int(part)) if part.isdigit() else (1, part)
+                  for part in prerelease.split('.') if part
+              )
+              return tuple(map(int, numbers)), not separator, identifiers
+
+          before = os.environ['BEFORE']
+          if before != '0' * 40:
+              for chart in json.loads(os.environ['CHARTS']):
+                  metadata_path = f'{chart}/Chart.yaml'
+                  existing = subprocess.check_output(
+                      ['git', 'ls-tree', '--name-only', before, '--', metadata_path], text=True
+                  ).strip()
+                  if not existing:
+                      continue
+                  old_metadata = subprocess.check_output(
+                      ['git', 'show', f'{before}:{metadata_path}'], text=True
+                  )
+                  with tempfile.TemporaryDirectory() as temporary:
+                      Path(temporary, 'Chart.yaml').write_text(old_metadata)
+                      old_version = version(temporary)
+                  new_version = version(chart)
+                  if precedence(new_version) <= precedence(old_version):
+                      raise SystemExit(
+                          f'{chart}: version must increase before publishing '
+                          f'({old_version} -> {new_version})'
+                      )
+          PY
+
       - name: Package and push charts
         if: steps.charts.outputs.charts != '[]'
         shell: bash
         env:
           CHARTS: ${{ steps.charts.outputs.charts }}
+          BEFORE: ${{ github.event.before }}
           REPOSITORY: ${{ github.repository }}
           REGISTRY_USER: ${{ github.actor }}
           REGISTRY_TOKEN: ${{ github.token }}
@@ -95,8 +154,32 @@ jobs:
           import json
           import os
           from pathlib import Path
+          import re
           import subprocess
+          import tarfile
           import tempfile
+
+          def chart_metadata(archive):
+              output = subprocess.check_output(['helm', 'show', 'chart', str(archive)], text=True)
+              fields = {}
+              for key in ('name', 'version'):
+                  matches = re.findall(rf'^{key}:\s*(\S+)\s*$', output, re.MULTILINE)
+                  if len(matches) != 1:
+                      raise SystemExit(f'Expected one {key} in {archive}')
+                  fields[key] = matches[0].strip('"\'')
+              return fields['name'], fields['version']
+
+          def archive_contents(archive):
+              with tarfile.open(archive, 'r:gz') as contents:
+                  return {
+                      member.name: (
+                          member.type,
+                          member.mode,
+                          member.linkname,
+                          contents.extractfile(member).read() if member.isfile() else b'',
+                      )
+                      for member in contents.getmembers()
+                  }
 
           charts = json.loads(os.environ['CHARTS'])
           if not charts:
@@ -112,11 +195,38 @@ jobs:
                   archives = list(directory.glob('*.tgz'))
                   if len(archives) != 1:
                       raise SystemExit(f'Expected one chart archive for {chart}')
-                  packages.extend(archives)
+                  packages.append((chart, archives[0]))
               env = dict(os.environ, HELM_REGISTRY_CONFIG=str(root / 'registry.json'))
               subprocess.run(['helm', 'registry', 'login', 'ghcr.io',
                               '--username', os.environ['REGISTRY_USER'], '--password-stdin'],
                              input=os.environ['REGISTRY_TOKEN'] + '\n', text=True, env=env, check=True)
-              for archive in packages:
+              to_push = []
+              before = os.environ['BEFORE']
+              for index, (chart, archive) in enumerate(packages):
+                  name, version = chart_metadata(archive)
+                  metadata_path = f'{chart}/Chart.yaml'
+                  prior_chart = before != '0' * 40 and subprocess.check_output(
+                      ['git', 'ls-tree', '--name-only', before, '--', metadata_path], text=True
+                  ).strip()
+                  if prior_chart:
+                      remote = root / f'remote-{index}'
+                      remote.mkdir()
+                      result = subprocess.run(
+                          ['helm', 'pull', f'{destination}/{name}', '--version', version,
+                           '--destination', str(remote)],
+                          env=env, text=True, capture_output=True
+                      )
+                      if result.returncode == 0:
+                          existing = list(remote.glob('*.tgz'))
+                          if len(existing) != 1:
+                              raise SystemExit(f'Expected one published chart for {chart}')
+                          if archive_contents(existing[0]) != archive_contents(archive):
+                              raise SystemExit(f'{chart}: published version {version} has different contents')
+                          print(f'{chart}: version {version} already matches; skipping push')
+                          continue
+                      if not result.stderr.strip().endswith(': not found'):
+                          raise SystemExit(f'{chart}: unable to check published version: {result.stderr.strip()}')
+                  to_push.append(archive)
+              for archive in to_push:
                   subprocess.run(['helm', 'push', str(archive), destination], env=env, check=True)
           PY

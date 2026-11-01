@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"reflect"
 	"regexp"
 	"sort"
@@ -160,14 +161,17 @@ type BranchProtection struct {
 type WorkflowConfig struct {
 	DestinationFile string `yaml:"destination_file"`
 	// Supersedes names workflow wrappers removed atomically with this entry.
-	Supersedes       []string               `yaml:"supersedes"`
-	WorkflowName     string                 `yaml:"workflow_name"`
-	ReusableWorkflow string                 `yaml:"reusable_workflow"`
-	Triggers         map[string]interface{} `yaml:"triggers"`
-	Matrix           map[string]interface{} `yaml:"matrix"`
-	Permissions      map[string]string      `yaml:"permissions"`
-	Params           map[string]string      `yaml:"params"`
-	Secrets          map[string]string      `yaml:"secrets"`
+	Supersedes       []string `yaml:"supersedes"`
+	WorkflowName     string   `yaml:"workflow_name"`
+	ReusableWorkflow string   `yaml:"reusable_workflow"`
+	// PinToLatestChange renders the last commit that changed this Actions
+	// workflow. The generated caller retains a full SHA without pin churn.
+	PinToLatestChange bool                   `yaml:"pin_to_latest_change"`
+	Triggers          map[string]interface{} `yaml:"triggers"`
+	Matrix            map[string]interface{} `yaml:"matrix"`
+	Permissions       map[string]string      `yaml:"permissions"`
+	Params            map[string]string      `yaml:"params"`
+	Secrets           map[string]string      `yaml:"secrets"`
 
 	// Concurrency is the workflow's `concurrency:` block. A pull-request
 	// workflow sets it so a new push cancels the run for the commit it
@@ -312,6 +316,10 @@ func main() {
 
 	if err := expandProfiles(&cfg); err != nil {
 		fmt.Printf("Failed to expand profiles: %v\n", err)
+		os.Exit(1)
+	}
+	if err := resolvePinnedWorkflowRefs(&cfg, latestWorkflowChange); err != nil {
+		fmt.Printf("Invalid pinned workflow: %v\n", err)
 		os.Exit(1)
 	}
 	if err := validateDependabotConfigs(cfg.Repositories); err != nil {
@@ -1622,6 +1630,10 @@ func renderPipeline(tmpl *template.Template, members []WorkflowConfig) ([]byte, 
 		ConcurrencyYAML: concurrencyYAML,
 	}
 	for _, wf := range members {
+		reusableWorkflow, err := wf.renderedReusableWorkflow()
+		if err != nil {
+			return nil, fmt.Errorf("reusable workflow for %q: %w", wf.DestinationFile, err)
+		}
 		matrixYAML, merr := renderMatrix(wf.Matrix)
 		if merr != nil {
 			return nil, fmt.Errorf("renderMatrix for %q: %w", wf.DestinationFile, merr)
@@ -1630,7 +1642,7 @@ func renderPipeline(tmpl *template.Template, members []WorkflowConfig) ([]byte, 
 			JobID:            wf.jobID(),
 			NeedsYAML:        renderNeeds(wf.Needs),
 			If:               wf.If,
-			ReusableWorkflow: wf.ReusableWorkflow,
+			ReusableWorkflow: reusableWorkflow,
 			Params:           wf.Params,
 			Secrets:          wf.Secrets,
 			Permissions:      wf.Permissions,
@@ -1722,10 +1734,14 @@ func renderWorkflow(tmpl *template.Template, wf WorkflowConfig) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
+	reusableWorkflow, err := wf.renderedReusableWorkflow()
+	if err != nil {
+		return nil, err
+	}
 	data := templateData{
 		ConcurrencyYAML:  concurrencyYAML,
 		WorkflowName:     wf.WorkflowName,
-		ReusableWorkflow: wf.ReusableWorkflow,
+		ReusableWorkflow: reusableWorkflow,
 		Params:           wf.Params,
 		Secrets:          wf.Secrets,
 		Permissions:      wf.Permissions,
@@ -1737,6 +1753,54 @@ func renderWorkflow(tmpl *template.Template, wf WorkflowConfig) ([]byte, error) 
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+var commitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+func (wf WorkflowConfig) renderedReusableWorkflow() (string, error) {
+	if wf.PinToLatestChange {
+		return "", errors.New("pin_to_latest_change must resolve before rendering")
+	}
+	return wf.ReusableWorkflow, nil
+}
+
+func latestWorkflowChange(path string) (string, error) {
+	output, err := exec.Command("git", "log", "-1", "--format=%H", "--", path).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func resolvePinnedWorkflowRefs(cfg *Config, latestChange func(string) (string, error)) error {
+	for i := range cfg.Repositories {
+		for j := range cfg.Repositories[i].Workflows {
+			wf := &cfg.Repositories[i].Workflows[j]
+			if !wf.PinToLatestChange {
+				continue
+			}
+			const prefix = "blinklabs-io/actions/"
+			workflowPath := strings.TrimSuffix(wf.ReusableWorkflow, "@main")
+			if !strings.HasPrefix(workflowPath, prefix+".github/workflows/") ||
+				workflowPath == wf.ReusableWorkflow {
+				return fmt.Errorf("%s %s: pin_to_latest_change requires an actions workflow at main",
+					cfg.Repositories[i].Name, wf.DestinationFile)
+			}
+			if os.Getenv("GITHUB_REPOSITORY") != "blinklabs-io/actions" || os.Getenv("GITHUB_REF") != "refs/heads/main" {
+				return errors.New("pin_to_latest_change requires governance on actions/main")
+			}
+			sha, err := latestChange(strings.TrimPrefix(workflowPath, prefix))
+			if err != nil {
+				return fmt.Errorf("%s %s: find workflow revision: %w", cfg.Repositories[i].Name, wf.DestinationFile, err)
+			}
+			if !commitSHAPattern.MatchString(sha) {
+				return fmt.Errorf("%s %s: workflow revision is not a full SHA", cfg.Repositories[i].Name, wf.DestinationFile)
+			}
+			wf.ReusableWorkflow = workflowPath + "@" + sha
+			wf.PinToLatestChange = false
+		}
+	}
+	return nil
 }
 
 func syncWorkflows(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig, dependabotConfig ...string) {
