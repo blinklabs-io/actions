@@ -144,13 +144,13 @@ jobs:
         shell: bash
         env:
           CHARTS: ${{ steps.charts.outputs.charts }}
-          BEFORE: ${{ github.event.before }}
           REPOSITORY: ${{ github.repository }}
           REGISTRY_USER: ${{ github.actor }}
           REGISTRY_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python3 <<'PY'
+          import base64
           import json
           import os
           from pathlib import Path
@@ -158,6 +158,9 @@ jobs:
           import subprocess
           import tarfile
           import tempfile
+          from urllib.error import HTTPError
+          from urllib.parse import quote, urlencode
+          from urllib.request import Request, urlopen
 
           def chart_metadata(archive):
               output = subprocess.check_output(['helm', 'show', 'chart', str(archive)], text=True)
@@ -181,6 +184,33 @@ jobs:
                       for member in contents.getmembers()
                   }
 
+          def published_version_status(repository, version):
+              auth = base64.b64encode(
+                  f"{os.environ['REGISTRY_USER']}:{os.environ['REGISTRY_TOKEN']}".encode()
+              ).decode()
+              scope = f'repository:{repository}:pull,push'
+              token_url = 'https://ghcr.io/token?' + urlencode(
+                  {'scope': scope, 'service': 'ghcr.io'}
+              )
+              token_request = Request(token_url, headers={'Authorization': 'Basic ' + auth})
+              try:
+                  with urlopen(token_request) as response:
+                      bearer = json.load(response)['token']
+              except HTTPError as error:
+                  raise SystemExit(f'Unable to authenticate to the chart registry ({error.code})')
+              manifest_url = f'https://ghcr.io/v2/{repository}/manifests/{quote(version, safe="")}'
+              manifest_request = Request(manifest_url, method='HEAD', headers={
+                  'Authorization': 'Bearer ' + bearer,
+                  'Accept': 'application/vnd.oci.image.manifest.v1+json',
+              })
+              try:
+                  with urlopen(manifest_request) as response:
+                      return response.status
+              except HTTPError as error:
+                  if error.code == 404:
+                      return 404
+                  raise SystemExit(f'Unable to check published chart version ({error.code})')
+
           charts = json.loads(os.environ['CHARTS'])
           if not charts:
               raise SystemExit(0)
@@ -201,14 +231,11 @@ jobs:
                               '--username', os.environ['REGISTRY_USER'], '--password-stdin'],
                              input=os.environ['REGISTRY_TOKEN'] + '\n', text=True, env=env, check=True)
               to_push = []
-              before = os.environ['BEFORE']
               for index, (chart, archive) in enumerate(packages):
                   name, version = chart_metadata(archive)
-                  metadata_path = f'{chart}/Chart.yaml'
-                  prior_chart = before != '0' * 40 and subprocess.check_output(
-                      ['git', 'ls-tree', '--name-only', before, '--', metadata_path], text=True
-                  ).strip()
-                  if prior_chart:
+                  repository = destination.removeprefix('oci://ghcr.io/') + '/' + name
+                  status = published_version_status(repository, version)
+                  if status == 200:
                       remote = root / f'remote-{index}'
                       remote.mkdir()
                       result = subprocess.run(
@@ -216,16 +243,17 @@ jobs:
                            '--destination', str(remote)],
                           env=env, text=True, capture_output=True
                       )
-                      if result.returncode == 0:
-                          existing = list(remote.glob('*.tgz'))
-                          if len(existing) != 1:
-                              raise SystemExit(f'Expected one published chart for {chart}')
-                          if archive_contents(existing[0]) != archive_contents(archive):
-                              raise SystemExit(f'{chart}: published version {version} has different contents')
-                          print(f'{chart}: version {version} already matches; skipping push')
-                          continue
-                      if not result.stderr.strip().endswith(': not found'):
-                          raise SystemExit(f'{chart}: unable to check published version: {result.stderr.strip()}')
+                      if result.returncode:
+                          raise SystemExit(f'{chart}: unable to pull published version: {result.stderr.strip()}')
+                      existing = list(remote.glob('*.tgz'))
+                      if len(existing) != 1:
+                          raise SystemExit(f'Expected one published chart for {chart}')
+                      if archive_contents(existing[0]) != archive_contents(archive):
+                          raise SystemExit(f'{chart}: published version {version} has different contents')
+                      print(f'{chart}: version {version} already matches; skipping push')
+                      continue
+                  if status != 404:
+                      raise SystemExit(f'{chart}: unexpected registry status {status}')
                   to_push.append(archive)
               for archive in to_push:
                   subprocess.run(['helm', 'push', str(archive), destination], env=env, check=True)

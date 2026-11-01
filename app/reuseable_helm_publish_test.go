@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,37 @@ func helmPublishStep(t *testing.T, name string) string {
 	}
 	t.Fatalf("missing Helm publisher step %q", name)
 	return ""
+}
+
+func helmRegistryFixture(t *testing.T, manifestStatus int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			user, password, ok := r.BasicAuth()
+			if !ok || user != "publisher" || password != "fixture-token" ||
+				r.URL.Query().Get("service") != "ghcr.io" ||
+				!strings.HasSuffix(r.URL.Query().Get("scope"), ":pull,push") {
+				t.Errorf("invalid registry token request: %s", r.URL)
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"token":"fixture-bearer"}`))
+		case "/v2/blinklabs-io/helm-charts/charts/alpha/manifests/1.0.0",
+			"/v2/blinklabs-io/helm-charts/charts/beta/manifests/1.0.0",
+			"/v2/blinklabs-io/helm-charts/charts/alpha/manifests/1.0.1":
+			if r.Method != http.MethodHead || r.Header.Get("Authorization") != "Bearer fixture-bearer" {
+				t.Errorf("invalid manifest request: %s %s", r.Method, r.URL)
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.WriteHeader(manifestStatus)
+		default:
+			t.Errorf("unexpected registry request: %s", r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
 }
 
 func TestHelmPublishDetectChangedCharts(t *testing.T) {
@@ -185,6 +218,9 @@ func TestHelmPublishPackagesBeforeUploading(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
+			registry := helmRegistryFixture(t, http.StatusNotFound)
+			defer registry.Close()
+			registryScript := strings.ReplaceAll(script, "https://ghcr.io", registry.URL)
 			fakeHelm := `#!/usr/bin/env python3
 import os
 from pathlib import Path
@@ -218,12 +254,11 @@ if action == os.environ['FAIL']:
 				t.Fatal(err)
 			}
 			log := filepath.Join(dir, "helm.log")
-			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", script)
+			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", registryScript)
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"CHARTS="+tc.charts, "REPOSITORY=BlinkLabs-IO/Helm-Charts", "REGISTRY_USER=publisher",
-				"REGISTRY_TOKEN=fixture-token", "HELM_LOG="+log, "FAIL="+tc.fail,
-				"BEFORE="+strings.Repeat("0", 40))
+				"REGISTRY_TOKEN=fixture-token", "HELM_LOG="+log, "FAIL="+tc.fail)
 			out, err := cmd.CombinedOutput()
 			if (err != nil) != (tc.fail != "") {
 				t.Fatalf("publish error = %v\n%s", err, out)
@@ -252,33 +287,19 @@ func TestHelmPublishExistingVersion(t *testing.T) {
 		{"unpublished version", "missing", "", true},
 		{"identical retry", "same", "", false},
 		{"conflicting version", "different", "different contents", false},
-		{"registry lookup failure", "unauthorized", "unable to check published version", false},
+		{"registry lookup failure", "unauthorized", "Unable to check published chart version", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			git := func(args ...string) string {
-				t.Helper()
-				cmd := exec.Command("git", args...)
-				cmd.Dir = dir
-				cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-				out, err := cmd.CombinedOutput()
-				if err != nil {
-					t.Fatalf("git %v: %v\n%s", args, err, out)
-				}
-				return strings.TrimSpace(string(out))
+			status := http.StatusOK
+			if tc.remote == "missing" {
+				status = http.StatusNotFound
+			} else if tc.remote == "unauthorized" {
+				status = http.StatusForbidden
 			}
-			git("init", "--initial-branch=main")
-			chart := filepath.Join(dir, "charts", "alpha")
-			if err := os.MkdirAll(chart, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(chart, "Chart.yaml"),
-				[]byte("apiVersion: v2\nname: alpha\nversion: 1.0.0\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			git("add", ".")
-			git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-s", "-m", "test: establish chart baseline")
-			before := git("rev-parse", "HEAD")
+			registry := helmRegistryFixture(t, status)
+			defer registry.Close()
+			registryScript := strings.ReplaceAll(script, "https://ghcr.io", registry.URL)
 
 			bin := t.TempDir()
 			fakeHelm := `#!/usr/bin/env python3
@@ -334,10 +355,11 @@ else:
 				t.Fatal(err)
 			}
 			log := filepath.Join(dir, "helm.log")
-			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", script)
+			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", registryScript)
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-				"CHARTS=[\"charts/alpha\"]", "BEFORE="+before,
+				"CHARTS=[\"charts/alpha\"]",
+				"BEFORE="+strings.Repeat("0", 40),
 				"REPOSITORY=BlinkLabs-IO/Helm-Charts", "REGISTRY_USER=publisher",
 				"REGISTRY_TOKEN=fixture-token", "HELM_LOG="+log, "REMOTE_MODE="+tc.remote)
 			out, err := cmd.CombinedOutput()
