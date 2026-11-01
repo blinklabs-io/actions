@@ -215,6 +215,7 @@ func TestHelmPublishPackagesBeforeUploading(t *testing.T) {
 		{"package failure", `["charts/alpha","charts/beta"]`, "package", []string{"package charts/alpha"}},
 		{"login failure", `["charts/alpha"]`, "login", []string{"package charts/alpha", "login"}},
 		{"push failure", `["charts/alpha","charts/beta"]`, "push", []string{"package charts/alpha", "package charts/beta", "login", "push alpha-1.0.0.tgz oci://ghcr.io/blinklabs-io/helm-charts/charts"}},
+		{"duplicate chart coordinate", `["charts/alpha","charts/beta"]`, "duplicate", []string{"package charts/alpha", "package charts/beta", "login"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -228,6 +229,8 @@ import sys
 args = sys.argv[1:]
 if args[:2] == ['show', 'chart']:
     name = Path(args[2]).name.split('-')[0]
+    if os.environ['FAIL'] == 'duplicate':
+        name = 'alpha'
     print('name: ' + name)
     print('version: 1.0.0')
     sys.exit(0)
@@ -262,6 +265,9 @@ if action == os.environ['FAIL']:
 			out, err := cmd.CombinedOutput()
 			if (err != nil) != (tc.fail != "") {
 				t.Fatalf("publish error = %v\n%s", err, out)
+			}
+			if tc.fail == "duplicate" && !strings.Contains(string(out), "duplicates") {
+				t.Fatalf("duplicate chart was rejected for another reason: %s", out)
 			}
 			data, err := os.ReadFile(log)
 			if err != nil && (len(tc.want) != 0 || !os.IsNotExist(err)) {
@@ -334,6 +340,7 @@ elif args[:2] == ['show', 'chart']:
     print('name: alpha\nversion: 1.0.1')
 elif args[0] == 'pull':
     record('pull')
+    assert args[1:4] == ['oci://ghcr.io/blinklabs-io/helm-charts/charts/alpha', '--version', '1.0.1']
     remote = os.environ['REMOTE_MODE']
     if remote == 'missing':
         print('Error: chart:1.0.1: not found', file=sys.stderr)

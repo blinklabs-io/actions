@@ -231,8 +231,13 @@ jobs:
                               '--username', os.environ['REGISTRY_USER'], '--password-stdin'],
                              input=os.environ['REGISTRY_TOKEN'] + '\n', text=True, env=env, check=True)
               to_push = []
+              seen = {}
               for index, (chart, archive) in enumerate(packages):
                   name, version = chart_metadata(archive)
+                  coordinate = (name, version)
+                  if coordinate in seen:
+                      raise SystemExit(f'{chart}: duplicates {seen[coordinate]} at {name}:{version}')
+                  seen[coordinate] = chart
                   repository = destination.removeprefix('oci://ghcr.io/') + '/' + name
                   status = published_version_status(repository, version)
                   if status == 200:

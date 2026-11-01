@@ -225,16 +225,21 @@ func TestPinnedWorkflowRejectsUnsafeSource(t *testing.T) {
 		PinToLatestChange: true,
 	}
 	for _, tc := range []struct {
-		name, repository, ref, sha string
+		name, repository, ref, sha, workflow string
 	}{
-		{"other repository", "other/actions", "refs/heads/main", strings.Repeat("a", 40)},
-		{"other branch", "blinklabs-io/actions", "refs/heads/feature", strings.Repeat("a", 40)},
-		{"short SHA", "blinklabs-io/actions", "refs/heads/main", "abc123"},
+		{"other repository", "other/actions", "refs/heads/main", strings.Repeat("a", 40), ""},
+		{"other branch", "blinklabs-io/actions", "refs/heads/feature", strings.Repeat("a", 40), ""},
+		{"short SHA", "blinklabs-io/actions", "refs/heads/main", "abc123", ""},
+		{"foreign workflow", "blinklabs-io/actions", "refs/heads/main", strings.Repeat("a", 40), "other/actions/.github/workflows/publish.yml@main"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("GITHUB_REPOSITORY", tc.repository)
 			t.Setenv("GITHUB_REF", tc.ref)
-			cfg := Config{Repositories: []RepoConfig{{Name: "blinklabs-io/helm-charts", Workflows: []WorkflowConfig{wf}}}}
+			testWF := wf
+			if tc.workflow != "" {
+				testWF.ReusableWorkflow = tc.workflow
+			}
+			cfg := Config{Repositories: []RepoConfig{{Name: "blinklabs-io/helm-charts", Workflows: []WorkflowConfig{testWF}}}}
 			if err := resolvePinnedWorkflowRefs(&cfg, func(string) (string, error) {
 				return tc.sha, nil
 			}); err == nil {
