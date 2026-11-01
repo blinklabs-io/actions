@@ -13,7 +13,7 @@ func TestConfiguredPermissionsGrantContents(t *testing.T) {
 			if len(wf.Permissions) == 0 {
 				continue
 			}
-			if _, ok := wf.Permissions["contents"]; !ok {
+			if got := wf.Permissions["contents"]; got != "read" && got != "write" {
 				t.Errorf("%s %s: permissions %v omit contents", repo.Name, wf.DestinationFile, wf.Permissions)
 			}
 		}
