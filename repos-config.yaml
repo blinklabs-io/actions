@@ -1760,6 +1760,8 @@ repositories:
             tags: ['v*']
         permissions:
           contents: read
+        params:
+          go-version: "1.26.x"
 
       - destination_file: nilaway.yml
         pipeline: ci.yml
@@ -1775,6 +1777,7 @@ repositories:
           contents: read
         params:
           include-pkgs: "github.com/blinklabs-io/ouroboros-mock"
+          go-version: "1.26.x"
 
       - destination_file: publish.yml
         pipeline: ci.yml
@@ -1795,6 +1798,8 @@ repositories:
           contents: write
           id-token: write
           attestations: write
+        params:
+          go-version: "1.26.x"
   # bark's Go, Buf, and generated-code checks are combined in one shared CI
   # job. publish.yml remains repository-specific because it regenerates and
   # commits Go code on main before creating releases on tags.
@@ -2058,6 +2063,8 @@ repositories:
             tags: ['v*']
           schedule:
             - cron: '0 0 * * 1'
+        params:
+          go-version: "1.26.x"
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
@@ -2102,6 +2109,7 @@ repositories:
           binary-name: "cdnsd"
           docker-image: "blinklabs/cdnsd"
           description: "DNS resolver for Handshake SLDs on Cardano"
+          go-version: "1.26.x"
     release_fanout:
       - repo: blinklabs-io/ansible-cardano
         type: ansible-role
@@ -2182,6 +2190,7 @@ repositories:
         params:
           run-golangci-lint: "true"
           run-nilaway: "true"
+          nilaway-go-version: "1.26.x"
           nilaway-include-pkgs: "github.com/blinklabs-io/bluefin"
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
