@@ -133,15 +133,18 @@ func TestHelmPublishDetectChangedCharts(t *testing.T) {
 func TestHelmPublishRejectsUnbumpedVersions(t *testing.T) {
 	script := helmPublishStep(t, "Verify chart version bumps")
 	for _, tc := range []struct {
-		name, oldVersion, newVersion string
-		wantFailure                  bool
+		name, oldVersion, newVersion, oldChart string
+		wantFailure                            bool
 	}{
-		{"increase", "1.0.0", "1.0.1", false},
-		{"same version", "1.0.0", "1.0.0", true},
-		{"decrease", "1.2.0", "1.1.0", true},
-		{"prerelease increase", "1.0.0-rc.1", "1.0.0-rc.2", false},
-		{"build metadata only", "1.0.0+one", "1.0.0+two", true},
-		{"new chart", "", "1.0.0", false},
+		{"increase", "1.0.0", "1.0.1", "", false},
+		{"same version", "1.0.0", "1.0.0", "", true},
+		{"decrease", "1.2.0", "1.1.0", "", true},
+		{"prerelease increase", "1.0.0-rc.1", "1.0.0-rc.2", "", false},
+		{"build metadata only", "1.0.0+one", "1.0.0+two", "", true},
+		{"moved same version", "1.0.0", "1.0.0", "charts/previous", true},
+		{"moved increase", "1.0.0", "1.0.1", "charts/previous", false},
+		{"moved decrease", "1.2.0", "1.1.0", "charts/previous", true},
+		{"new chart", "", "1.0.0", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -162,7 +165,14 @@ func TestHelmPublishRejectsUnbumpedVersions(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.oldVersion != "" {
-				if err := os.WriteFile(filepath.Join(chart, "Chart.yaml"),
+				oldChart := chart
+				if tc.oldChart != "" {
+					oldChart = filepath.Join(dir, tc.oldChart)
+					if err := os.MkdirAll(oldChart, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(filepath.Join(oldChart, "Chart.yaml"),
 					[]byte("apiVersion: v2\nname: alpha\nversion: "+tc.oldVersion+"\n"), 0o644); err != nil {
 					t.Fatal(err)
 				}
@@ -172,6 +182,11 @@ func TestHelmPublishRejectsUnbumpedVersions(t *testing.T) {
 			git("add", ".")
 			git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-s", "-m", "test: establish chart baseline")
 			before := git("rev-parse", "HEAD")
+			if tc.oldChart != "" {
+				if err := os.RemoveAll(filepath.Join(dir, tc.oldChart)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := os.WriteFile(filepath.Join(chart, "Chart.yaml"),
 				[]byte("apiVersion: v2\nname: alpha\nversion: "+tc.newVersion+"\n"), 0o644); err != nil {
 				t.Fatal(err)

@@ -97,12 +97,15 @@ jobs:
           import subprocess
           import tempfile
 
-          def version(chart):
+          def metadata(chart):
               metadata = subprocess.check_output(['helm', 'show', 'chart', str(chart)], text=True)
-              matches = re.findall(r'^version:\s*(\S+)\s*$', metadata, re.MULTILINE)
-              if len(matches) != 1:
-                  raise SystemExit(f'Expected one chart version in {chart}')
-              return matches[0].strip('"\'')
+              fields = {}
+              for key in ('name', 'version'):
+                  matches = re.findall(rf'^{key}:\s*(\S+)\s*$', metadata, re.MULTILINE)
+                  if len(matches) != 1:
+                      raise SystemExit(f'Expected one chart {key} in {chart}')
+                  fields[key] = matches[0].strip('"\'')
+              return fields['name'], fields['version']
 
           def precedence(value):
               value = value.split('+', 1)[0].removeprefix('v')
@@ -118,20 +121,27 @@ jobs:
 
           before = os.environ['BEFORE']
           if before != '0' * 40:
-              for chart in json.loads(os.environ['CHARTS']):
-                  metadata_path = f'{chart}/Chart.yaml'
-                  existing = subprocess.check_output(
-                      ['git', 'ls-tree', '--name-only', before, '--', metadata_path], text=True
-                  ).strip()
-                  if not existing:
+              previous = {}
+              paths = subprocess.check_output(
+                  ['git', 'ls-tree', '-r', '--name-only', '-z', before, '--', 'charts/']
+              ).decode().split('\0')
+              for path in paths:
+                  if not re.fullmatch(r'charts/[^/]+/Chart\.yaml', path):
                       continue
                   old_metadata = subprocess.check_output(
-                      ['git', 'show', f'{before}:{metadata_path}'], text=True
+                      ['git', 'show', f'{before}:{path}'], text=True
                   )
                   with tempfile.TemporaryDirectory() as temporary:
                       Path(temporary, 'Chart.yaml').write_text(old_metadata)
-                      old_version = version(temporary)
-                  new_version = version(chart)
+                      name, old_version = metadata(temporary)
+                  if name in previous:
+                      raise SystemExit(f'Duplicate chart name {name} at {previous[name][0]} and {path}')
+                  previous[name] = (path, old_version)
+              for chart in json.loads(os.environ['CHARTS']):
+                  name, new_version = metadata(chart)
+                  if name not in previous:
+                      continue
+                  _, old_version = previous[name]
                   if precedence(new_version) <= precedence(old_version):
                       raise SystemExit(
                           f'{chart}: version must increase before publishing '

@@ -2017,8 +2017,8 @@ func TestExpandProfiles_RealConfig(t *testing.T) {
 	}
 	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
 	t.Setenv("GITHUB_REF", "refs/heads/main")
-	if err := resolvePinnedWorkflowRefs(&cfg, func(string) (string, error) {
-		return strings.Repeat("a", 40), nil
+	if err := resolvePinnedWorkflowRefs(&cfg, func(string) (string, []byte, error) {
+		return strings.Repeat("a", 40), []byte(callableWorkflowYAML), nil
 	}); err != nil {
 		t.Fatalf("resolvePinnedWorkflowRefs: %v", err)
 	}

@@ -11,6 +11,8 @@ import (
 	"testing"
 )
 
+const callableWorkflowYAML = "on:\n  workflow_call:\n"
+
 func TestHelmPublisherMigrationIsAtomic(t *testing.T) {
 	const actionsSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
@@ -55,11 +57,11 @@ publish-vpn-indexer-helm-chart.yml
 publish-wireguard-helm-chart.yml
 `)
 	cfg := loadRealConfig(t)
-	if err := resolvePinnedWorkflowRefs(&cfg, func(path string) (string, error) {
+	if err := resolvePinnedWorkflowRefs(&cfg, func(path string) (string, []byte, error) {
 		if path != ".github/workflows/reuseable-helm-publish.yml" {
 			t.Fatalf("unexpected workflow path %q", path)
 		}
-		return actionsSHA, nil
+		return actionsSHA, []byte(callableWorkflowYAML), nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -152,11 +154,11 @@ func TestHelmPublisherPinsLatestChange(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
 	t.Setenv("GITHUB_REF", "refs/heads/main")
 	cfg := loadRealConfig(t)
-	if err := resolvePinnedWorkflowRefs(&cfg, func(path string) (string, error) {
+	if err := resolvePinnedWorkflowRefs(&cfg, func(path string) (string, []byte, error) {
 		if path != ".github/workflows/reuseable-helm-publish.yml" {
 			t.Fatalf("unexpected workflow path %q", path)
 		}
-		return actionsSHA, nil
+		return actionsSHA, []byte(callableWorkflowYAML), nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -210,12 +212,20 @@ func TestLatestWorkflowChangeIgnoresUnrelatedCommits(t *testing.T) {
 	}
 	commit()
 	t.Chdir(dir)
-	got, err := latestWorkflowChange(".github/workflows/reuseable-helm-publish.yml")
+	got, contents, err := latestWorkflowChange(".github/workflows/reuseable-helm-publish.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
 		t.Fatalf("publisher revision = %s, want last publisher change %s", got, want)
+	}
+	if string(contents) != "name: publisher\n" {
+		t.Fatalf("publisher contents = %q", contents)
+	}
+	git("rm", ".github/workflows/reuseable-helm-publish.yml")
+	commit()
+	if _, _, err := latestWorkflowChange(".github/workflows/reuseable-helm-publish.yml"); err == nil {
+		t.Fatal("deleted publisher was resolved")
 	}
 }
 
@@ -240,10 +250,43 @@ func TestPinnedWorkflowRejectsUnsafeSource(t *testing.T) {
 				testWF.ReusableWorkflow = tc.workflow
 			}
 			cfg := Config{Repositories: []RepoConfig{{Name: "blinklabs-io/helm-charts", Workflows: []WorkflowConfig{testWF}}}}
-			if err := resolvePinnedWorkflowRefs(&cfg, func(string) (string, error) {
-				return tc.sha, nil
+			if err := resolvePinnedWorkflowRefs(&cfg, func(string) (string, []byte, error) {
+				return tc.sha, []byte(callableWorkflowYAML), nil
 			}); err == nil {
 				t.Fatal("unsafe workflow source was accepted")
+			}
+		})
+	}
+}
+
+func TestPinnedWorkflowRequiresCallableSource(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
+	t.Setenv("GITHUB_REF", "refs/heads/main")
+	for _, tc := range []struct {
+		name, contents string
+		callable       bool
+	}{
+		{"mapping", "on:\n  workflow_call:\n", true},
+		{"scalar", "on: workflow_call\n", true},
+		{"sequence", "on: [push, workflow_call]\n", true},
+		{"push only", "on:\n  push:\n", false},
+		{"missing trigger", "name: publisher\n", false},
+		{"invalid yaml", "on: [\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{Repositories: []RepoConfig{{Name: "blinklabs-io/helm-charts", Workflows: []WorkflowConfig{{
+				DestinationFile:   "publish-helm-charts.yml",
+				ReusableWorkflow:  "blinklabs-io/actions/.github/workflows/reuseable-helm-publish.yml@main",
+				PinToLatestChange: true,
+			}}}}}
+			err := resolvePinnedWorkflowRefs(&cfg, func(string) (string, []byte, error) {
+				return strings.Repeat("a", 40), []byte(tc.contents), nil
+			})
+			if tc.callable && err != nil {
+				t.Fatalf("callable workflow rejected: %v", err)
+			}
+			if !tc.callable && err == nil {
+				t.Fatal("non-callable workflow was pinned")
 			}
 		})
 	}
