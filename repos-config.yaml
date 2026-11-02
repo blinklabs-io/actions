@@ -65,10 +65,21 @@ profiles:
   # docker-standard: the shared shape for every simple Docker wrapper repo.
   # A repo using this profile only supplies `vars` (image + description) and,
   # for genuinely special cases, `overrides`.
-  docker-standard:
+  docker-standard: &docker-standard
     settings:
       delete_branch_on_merge: true
     collaborators: []
+    dependabot: |
+      version: 2
+      updates:
+        - package-ecosystem: docker
+          directory: /
+          schedule:
+            interval: weekly
+        - package-ecosystem: github-actions
+          directory: /
+          schedule:
+            interval: weekly
     branch_protection:
       - branch: main
         <<: *branch_protection_defaults
@@ -118,6 +129,34 @@ profiles:
           docker-image: "blinklabs/${image}"
           ghcr-image: "blinklabs-io/${image}"
           description: "${description}"
+
+  docker-actions-only:
+    <<: *docker-standard
+    dependabot: |
+      version: 2
+      updates:
+        - package-ecosystem: github-actions
+          directory: /
+          schedule:
+            interval: weekly
+
+  docker-deps-prefix:
+    <<: *docker-standard
+    dependabot: |
+      version: 2
+      updates:
+        - package-ecosystem: docker
+          directory: /
+          schedule:
+            interval: weekly
+          commit-message:
+            prefix: "chore(deps):"
+        - package-ecosystem: github-actions
+          directory: /
+          schedule:
+            interval: weekly
+          commit-message:
+            prefix: "chore(deps):"
 
   # repository-standard: baseline governance for repositories whose CI and
   # release workflows are still maintained locally. Release workflows are
@@ -768,7 +807,7 @@ repositories:
           go-version: "1.26.x"
           binary-target-matrix: '[{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"}]'
   - name: blinklabs-io/docker-cardano-configs
-    profile: docker-standard
+    profile: docker-actions-only
     vars:
       image: cardano-configs
       description: Configuration files for named Cardano blockchain networks
@@ -1057,7 +1096,7 @@ repositories:
       image: haskell
       description: GHC and Cabal built on Debian for Cardano
   - name: blinklabs-io/docker-kupo
-    profile: docker-standard
+    profile: docker-deps-prefix
     vars:
       image: kupo
       description: Kupo built from source on Debian
