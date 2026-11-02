@@ -2408,6 +2408,7 @@ repositories:
           schedule:
             - cron: '0 0 * * 1'
         permissions:
+          contents: read
           security-events: write
         params:
           run-gosec: "true"
