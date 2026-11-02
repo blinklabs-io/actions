@@ -229,6 +229,7 @@ case in `validateFanout` (`app/fanout.go`), a case in `apply.sh`, and tests in
 Reconciliation is driven by `.github/workflows/sync.yaml`, which runs on:
 
 - a `push` to `main` that changes `repos-config.yaml`,
+- a `push` to `main` that changes the reusable Helm publisher,
 - a manual `workflow_dispatch`, or
 - a daily `schedule`. The scheduled run corrects drift and, when
   [auto-discovery](#auto-discovery-opt-in) is enabled, picks up newly-created
@@ -243,6 +244,13 @@ The sync workflow:
    token is scoped org-wide (all repositories the installation can access),
    since the target set is not known ahead of time.
 3. Runs the engine with `go run ./app`, passing the token as `GH_TOKEN`.
+
+The Helm Charts profile uses `pin_to_latest_change` for its publisher call.
+Governance renders the last `actions/main` commit that changed the reusable
+publisher as a full SHA in the generated caller. Merging a publisher change
+updates Helm Charts without a separate pin change, and unrelated Actions commits
+leave the caller unchanged. The publisher rejects changed charts whose versions
+did not increase and skips a retry when published chart contents already match.
 
 ## Configuration
 

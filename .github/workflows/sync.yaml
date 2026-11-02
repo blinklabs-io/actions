@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'repos-config.yaml'
+      - '.github/workflows/reuseable-helm-publish.yml'
   workflow_dispatch:      # Trigger manually to run the sync
   schedule:
     # Periodic reconciliation. When auto-discovery is enabled this picks up
@@ -32,6 +33,7 @@ jobs:
       - name: Checkout Controller Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Go runtime
