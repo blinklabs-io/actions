@@ -1684,9 +1684,7 @@ repositories:
             tags: ['v*']
         params:
           submodules: "true"
-          pre-test-command: "make test"
-          test-flags: "-race -coverprofile=coverage.out -covermode=atomic"
-          upload-coverage: "true"
+          test-flags: "-race"
           run-golangci-lint: "true"
           run-nilaway: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/plutigo"
