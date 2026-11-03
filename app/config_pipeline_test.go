@@ -28,6 +28,13 @@ func loadRealConfig(t *testing.T) Config {
 	return cfg
 }
 
+func TestConfiguredDependabotManifestsValidate(t *testing.T) {
+	cfg := loadRealConfig(t)
+	if err := validateDependabotConfigs(cfg.Repositories); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestConfiguredPipelinesRender renders every pipeline the real config declares
 // and checks the result is a workflow GitHub would accept.
 //

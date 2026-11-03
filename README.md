@@ -332,6 +332,12 @@ An omitted or empty `dependabot` value leaves an existing
 manage outside the central configuration; removing a central value does not
 delete a repository file.
 
+The Docker profiles manage weekly update schedules for their repositories.
+`docker-standard` covers Docker and GitHub Actions; `docker-actions-only` and
+`docker-deps-prefix` preserve the different configurations of their existing
+users. Reconciliation replaces managed manifests, so review each repository's
+existing settings before assigning it to one of these profiles.
+
 For a genuinely one-off repository, omit `profile` and specify the full schema
 explicitly instead:
 
