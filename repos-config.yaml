@@ -1653,8 +1653,8 @@ repositories:
         secrets:
           token: ORG_PROJECT_PAT
   # plutigo is a Go library (a Plutus interpreter). It uses git submodules for
-  # test fixtures and uploads coverage to Codecov, so go-test enables both;
-  # nilaway skips a stack-machine docstring. benchmark.yml is repository-specific
+  # test fixtures, so go-test enables submodules and runs one race pass without
+  # coverage; nilaway skips a stack-machine docstring. benchmark.yml is repository-specific
   # and remains hand-maintained.
   - name: blinklabs-io/plutigo
     settings:
