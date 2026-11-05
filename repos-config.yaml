@@ -1833,8 +1833,11 @@ repositories:
           contents: write
           id-token: write
           attestations: write
-  # bark's Go, Buf, and generated-code checks are combined in one shared CI
-  # job. publish.yml remains repository-specific because it regenerates and
+  # bark's Go and Buf checks run in one shared CI job. Generated-code
+  # verification stays in bark's ci.yml, which post-processes the Connect
+  # output with scripts/guard-connect-descriptors.py; the shared
+  # verify-buf-generated step runs a bare buf generate and would always see a
+  # diff. publish.yml remains repository-specific because it regenerates and
   # commits Go code on main before creating releases on tags.
   - name: blinklabs-io/bark
     settings:
@@ -1860,7 +1863,6 @@ repositories:
           run-golangci-lint: "true"
           run-nilaway: "true"
           run-buf-checks: "true"
-          verify-buf-generated: "true"
 
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
