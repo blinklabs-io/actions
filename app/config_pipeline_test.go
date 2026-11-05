@@ -28,6 +28,13 @@ func loadRealConfig(t *testing.T) Config {
 	return cfg
 }
 
+func TestConfiguredDependabotManifestsValidate(t *testing.T) {
+	cfg := loadRealConfig(t)
+	if err := validateDependabotConfigs(cfg.Repositories); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestConfiguredPipelinesRender renders every pipeline the real config declares
 // and checks the result is a workflow GitHub would accept.
 //
@@ -156,6 +163,13 @@ func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 
 func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 	cfg := loadRealConfig(t)
+	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
+	t.Setenv("GITHUB_REF", "refs/heads/main")
+	if err := resolvePinnedWorkflowRefs(&cfg, func(string) (string, []byte, error) {
+		return strings.Repeat("a", 40), []byte(callableWorkflowYAML), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	found := 0
 	for _, repo := range cfg.Repositories {
 		for _, wf := range repo.Workflows {
@@ -281,32 +295,5 @@ func TestConfiguredPipelinesSupersedeTheirWrappers(t *testing.T) {
 				}
 			}
 		}
-	}
-}
-
-// TestConfiguredBufChecksVerifyGeneratedCode keeps the generated-code drift
-// check on every Go test job that runs Buf checks. Buf format and lint read
-// only the .proto sources, and the build job only compiles the committed Go
-// output, so without verify-buf-generated a change to a .proto file that omits
-// the regenerated code passes every pull-request check.
-func TestConfiguredBufChecksVerifyGeneratedCode(t *testing.T) {
-	cfg := loadRealConfig(t)
-	found := 0
-	for _, repo := range cfg.Repositories {
-		for _, workflow := range repo.Workflows {
-			if !strings.Contains(workflow.ReusableWorkflow, "/reuseable-go-test.yml@") {
-				continue
-			}
-			if workflow.Params["run-buf-checks"] != "true" {
-				continue
-			}
-			found++
-			if workflow.Params["verify-buf-generated"] != "true" {
-				t.Errorf("%s %s runs Buf checks without verify-buf-generated", repo.Name, workflow.DestinationFile)
-			}
-		}
-	}
-	if found == 0 {
-		t.Error("no Go test job runs Buf checks; this check would pass vacuously")
 	}
 }

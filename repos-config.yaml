@@ -65,10 +65,21 @@ profiles:
   # docker-standard: the shared shape for every simple Docker wrapper repo.
   # A repo using this profile only supplies `vars` (image + description) and,
   # for genuinely special cases, `overrides`.
-  docker-standard:
+  docker-standard: &docker-standard
     settings:
       delete_branch_on_merge: true
     collaborators: []
+    dependabot: |
+      version: 2
+      updates:
+        - package-ecosystem: docker
+          directory: /
+          schedule:
+            interval: weekly
+        - package-ecosystem: github-actions
+          directory: /
+          schedule:
+            interval: weekly
     branch_protection:
       - branch: main
         <<: *branch_protection_defaults
@@ -119,10 +130,38 @@ profiles:
           ghcr-image: "blinklabs-io/${image}"
           description: "${description}"
 
+  docker-actions-only:
+    <<: *docker-standard
+    dependabot: |
+      version: 2
+      updates:
+        - package-ecosystem: github-actions
+          directory: /
+          schedule:
+            interval: weekly
+
+  docker-deps-prefix:
+    <<: *docker-standard
+    dependabot: |
+      version: 2
+      updates:
+        - package-ecosystem: docker
+          directory: /
+          schedule:
+            interval: weekly
+          commit-message:
+            prefix: "chore(deps):"
+        - package-ecosystem: github-actions
+          directory: /
+          schedule:
+            interval: weekly
+          commit-message:
+            prefix: "chore(deps):"
+
   # repository-standard: baseline governance for repositories whose CI and
   # release workflows are still maintained locally. Release workflows are
   # added only after each repository's needs have been reviewed.
-  repository-standard:
+  repository-standard: &repository-standard
     settings:
       delete_branch_on_merge: true
     collaborators: []
@@ -135,6 +174,63 @@ profiles:
         reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
         triggers:
           pull_request:
+
+  helm-charts-standard:
+    <<: *repository-standard
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        triggers:
+          pull_request:
+      - destination_file: publish-helm-charts.yml
+        workflow_name: "Publish Helm Charts"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-helm-publish.yml@main"
+        pin_to_latest_change: true
+        supersedes:
+          - publish-adder-helm-chart.yml
+          - publish-balius-helm-chart.yml
+          - publish-balius-operator-helm-chart.yml
+          - publish-bind9-helm-chart.yml
+          - publish-bluefin-helm-chart.yml
+          - publish-bursa-helm-chart.yml
+          - publish-butane-oracle-helm-chart.yml
+          - publish-cardano-db-sync-helm-chart.yml
+          - publish-cardano-node-helm-chart.yml
+          - publish-cardano-node-leios-helm-chart.yml
+          - publish-cdnsd-helm-chart.yml
+          - publish-demeter-fabric-helm-chart.yml
+          - publish-dingo-helm-chart.yml
+          - publish-dingo-operator-helm-chart.yml
+          - publish-dolos-helm-chart.yml
+          - publish-ergo-node-helm-chart.yml
+          - publish-ext-blockfrost-operator-helm-chart.yml
+          - publish-ext-cardano-node-operator-helm-chart.yml
+          - publish-ext-kupo-operator-helm-chart.yml
+          - publish-ext-ogmios-operator-helm-chart.yml
+          - publish-ext-proxy-helm-chart.yml
+          - publish-ext-tx-submit-api-operator-helm-chart.yml
+          - publish-ext-utxorpc-operator-helm-chart.yml
+          - publish-handshake-node-helm-chart.yml
+          - publish-hsd-helm-chart.yml
+          - publish-hydrozoa-helm-chart.yml
+          - publish-kupo-helm-chart.yml
+          - publish-ogmios-helm-chart.yml
+          - publish-openvpn-helm-chart.yml
+          - publish-postgres-cluster-helm-chart.yml
+          - publish-rbac-helm-chart.yml
+          - publish-storageclasses-helm-chart.yml
+          - publish-svc-dns-stack-helm-chart.yml
+          - publish-tx-submit-api-helm-chart.yml
+          - publish-tx-submit-api-mirror-helm-chart.yml
+          - publish-vpn-indexer-helm-chart.yml
+          - publish-wireguard-helm-chart.yml
+        triggers:
+          push:
+            branches: [main]
+        permissions:
+          contents: read
+          packages: write
 
   go-ci-standard:
     settings:
@@ -204,7 +300,7 @@ profiles:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           pull_request:
           push:
@@ -267,7 +363,7 @@ profiles:
         needs: [go-test]
         if: startsWith(github.ref, 'refs/tags/')
         workflow_name: publish
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           pull_request:
           push:
@@ -349,7 +445,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -433,7 +529,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -508,7 +604,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -612,7 +708,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -693,7 +789,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -711,7 +807,7 @@ repositories:
           go-version: "1.26.x"
           binary-target-matrix: '[{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"}]'
   - name: blinklabs-io/docker-cardano-configs
-    profile: docker-standard
+    profile: docker-actions-only
     vars:
       image: cardano-configs
       description: Configuration files for named Cardano blockchain networks
@@ -936,7 +1032,7 @@ repositories:
         needs: [go]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -1000,7 +1096,7 @@ repositories:
       image: haskell
       description: GHC and Cabal built on Debian for Cardano
   - name: blinklabs-io/docker-kupo
-    profile: docker-standard
+    profile: docker-deps-prefix
     vars:
       image: kupo
       description: Kupo built from source on Debian
@@ -1131,7 +1227,7 @@ repositories:
         # SHA ("cannot find workflow"), which fails the caller before any job is
         # created. Always pin to a commit that lands on main (the squash/merge
         # commit), never to a feature-branch commit.
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@4bd982e304108466798c95d29e0aab260d0502c2"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -1172,6 +1268,10 @@ repositories:
           # Preserve the capitalized Authenticode display name the in-repo
           # workflow used (application-name is lowercase "adder").
           windows-signing-name: "Adder"
+          # The default rows minus darwin/amd64: stapler validation of the
+          # Intel .pkg fails reproducibly on macos-15-intel runners, so adder
+          # ships macOS for Apple silicon only.
+          binary-target-matrix: '[{"runner":"macos-15","os":"darwin","arch":"arm64","tray":true},{"runner":"ubuntu-latest","os":"freebsd","arch":"amd64","tray":false},{"runner":"ubuntu-latest","os":"freebsd","arch":"arm64","tray":false},{"runner":"ubuntu-latest","os":"linux","arch":"amd64","tray":true},{"runner":"ubuntu-24.04-arm","os":"linux","arch":"arm64","tray":true},{"runner":"windows-latest","os":"windows","arch":"amd64","tray":true},{"runner":"windows-11-arm","os":"windows","arch":"arm64","tray":true}]'
     release_fanout:
       - repo: blinklabs-io/ansible-cardano
         type: ansible-role
@@ -1476,7 +1576,7 @@ repositories:
         workflow_name: "publish"
         # This workflow receives tap-write credentials, so pin its reviewed
         # revision.
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@02b250527c9b7b20d017fe1cf456bc98dfbc3125"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -1553,8 +1653,8 @@ repositories:
         secrets:
           token: ORG_PROJECT_PAT
   # plutigo is a Go library (a Plutus interpreter). It uses git submodules for
-  # test fixtures and uploads coverage to Codecov, so go-test enables both;
-  # nilaway skips a stack-machine docstring. benchmark.yml is repository-specific
+  # test fixtures, so go-test enables submodules and runs one race pass without
+  # coverage; nilaway skips a stack-machine docstring. benchmark.yml is repository-specific
   # and remains hand-maintained.
   - name: blinklabs-io/plutigo
     settings:
@@ -1584,9 +1684,7 @@ repositories:
             tags: ['v*']
         params:
           submodules: "true"
-          pre-test-command: "make test"
-          test-flags: "-race -coverprofile=coverage.out -covermode=atomic"
-          upload-coverage: "true"
+          test-flags: "-race"
           run-golangci-lint: "true"
           run-nilaway: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/plutigo"
@@ -1597,7 +1695,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             tags: ['v*.*.*']
@@ -1659,7 +1757,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             tags: ['v*.*.*']
@@ -1724,7 +1822,7 @@ repositories:
         needs: [nilaway]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -1740,8 +1838,11 @@ repositories:
           attestations: write
         params:
           go-version: "1.26.x"
-  # bark's Go, Buf, and generated-code checks are combined in one shared CI
-  # job. publish.yml remains repository-specific because it regenerates and
+  # bark's Go and Buf checks run in one shared CI job. Generated-code
+  # verification stays in bark's ci.yml, which post-processes the Connect
+  # output with scripts/guard-connect-descriptors.py; the shared
+  # verify-buf-generated step runs a bare buf generate and would always see a
+  # diff. publish.yml remains repository-specific because it regenerates and
   # commits Go code on main before creating releases on tags.
   - name: blinklabs-io/bark
     settings:
@@ -1767,7 +1868,6 @@ repositories:
           run-golangci-lint: "true"
           run-nilaway: "true"
           run-buf-checks: "true"
-          verify-buf-generated: "true"
 
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
@@ -1820,7 +1920,7 @@ repositories:
         pipeline: ci.yml
         if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             tags: ['v*.*.*']
@@ -1864,7 +1964,7 @@ repositories:
         pipeline: ci.yml
         if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             tags: ['v*.*.*']
@@ -1908,7 +2008,7 @@ repositories:
         pipeline: ci.yml
         if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             tags: ['v*.*.*']
@@ -1952,7 +2052,7 @@ repositories:
         pipeline: ci.yml
         if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-module-release.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-module-release.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             tags: ['v*.*.*']
@@ -2030,7 +2130,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -2204,7 +2304,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: publish
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             branches: [main]
@@ -2268,7 +2368,7 @@ repositories:
         needs: [go-test]
         if: github.event_name == 'push'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           pull_request:
           push:
@@ -2348,7 +2448,7 @@ repositories:
 
       - destination_file: govulncheck.yml
         workflow_name: "govulncheck"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-govulncheck.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-govulncheck.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           pull_request:
           push:
@@ -2357,6 +2457,7 @@ repositories:
           schedule:
             - cron: '0 0 * * 1'
         permissions:
+          contents: read
           security-events: write
         params:
           run-gosec: "true"
@@ -2405,7 +2506,7 @@ repositories:
   - name: blinklabs-io/.github
     profile: repository-standard
   - name: blinklabs-io/helm-charts
-    profile: repository-standard
+    profile: helm-charts-standard
   - name: blinklabs-io/buidler-fest-2024-workshop
     profile: go-ci-standard
   - name: blinklabs-io/dns-contracts

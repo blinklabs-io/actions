@@ -33,7 +33,9 @@ type recordingGitHub struct {
 	// ends in one of the keys is returned with that exact content, and any other
 	// file 404s. It lets a test present a repository that already matches the
 	// desired state so nothing is staged.
-	contents map[string]string
+	contents          map[string]string
+	contentsErrors    map[string]int
+	malformedContents map[string]string
 }
 
 func (g *recordingGitHub) record(method, path string) {
@@ -79,6 +81,22 @@ func (g *recordingGitHub) handler() http.Handler {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"default_branch":"main"}`))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
+			for suffix, status := range g.contentsErrors {
+				if strings.HasSuffix(r.URL.Path, "/"+suffix) {
+					http.Error(w, `{"message":"lookup failure"}`, status)
+					return
+				}
+			}
+			for suffix, encoded := range g.malformedContents {
+				if strings.HasSuffix(r.URL.Path, "/"+suffix) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(w,
+						`{"type":"file","name":"x","sha":"deadbeef","content":%q,"encoding":"base64"}`,
+						encoded,
+					)
+					return
+				}
+			}
 			if g.contents != nil {
 				// Present only the files a test declares, byte-for-byte, so the
 				// engine's content comparison sees an exact match and stages
@@ -313,4 +331,57 @@ func TestFlushBatchSerializesDeletionAsNullSHA(t *testing.T) {
 	if strings.Contains(tree, `"content"`) {
 		t.Errorf("deletion entry must not carry content; tree was %s", tree)
 	}
+}
+
+func TestSyncWorkflowsAbortsMigrationOnLookupFailure(t *testing.T) {
+	t.Chdir("..")
+	workflows := []WorkflowConfig{{
+		DestinationFile:  "publish-helm-charts.yml",
+		WorkflowName:     "Publish Helm Charts",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-helm-publish.yml@main",
+		Supersedes:       []string{"publish-alpha-helm-chart.yml"},
+		Triggers:         map[string]interface{}{"push": nil},
+	}}
+	for _, path := range []string{
+		"publish-helm-charts.yml", "publish-alpha-helm-chart.yml",
+		"dependabot.yml", "release-fanout.yml",
+	} {
+		t.Run(path, func(t *testing.T) {
+			g := &recordingGitHub{
+				contents:       map[string]string{"publish-alpha-helm-chart.yml": "old publisher"},
+				contentsErrors: map[string]int{path: http.StatusInternalServerError},
+			}
+			syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows, "version: 2\n")
+			if g.saw(http.MethodPost, "/git/trees") || g.saw(http.MethodPatch, "/git/refs/") {
+				t.Fatalf("committed an incomplete migration after lookup failure for %s", path)
+			}
+		})
+	}
+	for _, path := range []string{
+		"publish-helm-charts.yml", "dependabot.yml", "release-fanout.yml",
+	} {
+		t.Run("malformed "+path, func(t *testing.T) {
+			g := &recordingGitHub{
+				contents:          map[string]string{"publish-alpha-helm-chart.yml": "old publisher"},
+				malformedContents: map[string]string{path: "%%%"},
+			}
+			syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows, "version: 2\n")
+			if !g.saw(http.MethodGet, "/"+path) {
+				t.Fatalf("did not read malformed file %s", path)
+			}
+			if g.saw(http.MethodPost, "/git/trees") || g.saw(http.MethodPatch, "/git/refs/") {
+				t.Fatalf("committed an incomplete migration after decoding %s failed", path)
+			}
+		})
+	}
+	t.Run("missing publisher is created", func(t *testing.T) {
+		g := &recordingGitHub{contents: map[string]string{"publish-alpha-helm-chart.yml": "old publisher"}}
+		syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows)
+		if !g.saw(http.MethodPatch, "/git/refs/") {
+			t.Fatal("a 404 for the new publisher prevented migration")
+		}
+		if !strings.Contains(g.tree(), `"sha":null`) || !strings.Contains(g.tree(), "reuseable-helm-publish.yml") {
+			t.Fatalf("migration did not replace the old publisher atomically: %s", g.tree())
+		}
+	})
 }

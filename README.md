@@ -44,6 +44,88 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-check-versions-packages.yml` — check upstream release/image versions against `packages/<pkg>/<pkg>-*.yaml` version files, validate with the cardano-up CLI, and open update PRs (for cardano-up package repositories).
 - `reuseable-release-dispatch.yml` — announce a published release to the central `release-fanout.yml` workflow (used by the generated `release-fanout.yml` wrapper).
 - `reuseable-package-validate.yml` — validate cardano-up package definitions with the cardano-up CLI (plus optional filename/content version-consistency check).
+- `reuseable-helm-publish.yml` — package changed charts under `charts/*` and publish them to GHCR on default-branch pushes.
+- `reuseable-helm-deploy.yml` — deploy a local or OCI Helm chart to Kubernetes from a caller workflow.
+
+The Helm publisher compares the push's before and after commits, including
+all commits in a multi-commit push. It publishes each changed directory that
+still contains `Chart.yaml`, skips deleted charts, and publishes all charts on
+an initial branch push. Charts are packaged before any upload, then pushed
+serially to `oci://ghcr.io/<owner>/<repository>/charts` with the caller's
+`GITHUB_TOKEN`. Chart names and versions come from their metadata; bump the
+chart version when changing a chart. Dependencies must already be vendored.
+The caller must grant `contents: read` and `packages: write` and pin the call
+to a full commit SHA. `helm-version` defaults to `v4.3.1`.
+
+Call the Helm charts publisher on every `main` push. It does its
+own Git diff instead of using workflow path filters, whose changed-file list
+is limited. A push without chart changes performs no packaging or registry
+login. It uses no canceling concurrency group: every push must publish its own
+changed charts, including when several pushes arrive close together. Configure
+the caller in `repos-config.yaml` only after this workflow lands on `main`,
+using that merged commit SHA. A feature-branch SHA is not a durable pin after
+a squash merge.
+
+To deploy a chart, configure a protected environment in the caller repository
+and invoke the workflow from its default branch. Store the target cluster's
+kubeconfig as a secret named `kubeconfig` in that environment. Do not store
+`kubeconfig` as a repository or organization secret; the workflow rejects those
+credentials and fails if the selected environment has no `kubeconfig` secret.
+Declare only `kubeconfig` in the caller's secret mapping. GitHub resolves the
+selected environment's secret for the deployment job. The caller supplies that
+environment, a release name, chart path or
+OCI reference, and namespace; `values-files`
+accepts one repository-relative file path per line.
+Every chart must set `chart-sha256` to the reviewed SHA-256 of the complete
+`.tgz` chart archive. For an OCI chart, also set `chart-version`; the archive
+hash differs from the OCI manifest digest printed by `helm pull`.
+For a local chart with dependencies, commit `Chart.lock` alongside `Chart.yaml`.
+The preparation job runs `helm dependency build` only when the lock exists, then
+packages the complete chart. If the lock is missing or an upstream chart is
+replaced, the workflow fails before accessing the cluster. Helm's lock records
+dependency versions; `chart-sha256` checks the actual package bytes, including
+the resolved dependencies. Calculate that hash from the complete archive made
+with Helm 4.3.1, review it, and store it in the caller workflow. A job without
+cluster credentials pulls or packages the chart, checks its hash, and uses Helm
+4.3.1 to lint and render it with the caller's values. The deployment job
+verifies the prepared archive again before receiving the `kubeconfig` secret
+and running `helm upgrade --install --atomic --wait`.
+
+Keep application credentials out of chart files, dependencies, and
+`values-files`. The preparation job uploads the complete chart archive as a
+workflow artifact for one day. [Anyone with repository read access can download
+it](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts).
+Separate values files are not uploaded unless they are also inside the chart
+directory. Committed values remain readable in the repository, and Helm stores
+[supplied values with the release in Kubernetes](https://helm.sh/docs/topics/advanced/#storage-backends).
+
+Provision application secrets separately and put only references to those
+Kubernetes Secrets in the chart and values files. Keep `kubeconfig` only in the
+selected GitHub environment. The workflow cannot reliably identify and remove
+arbitrary secret values; removing fields would change what Helm deploys. Helm
+errors may include values in workflow logs, and [GitHub warns that secret
+redaction is not guaranteed](https://docs.github.com/en/actions/concepts/security/secrets).
+
+```yaml
+name: Deploy
+on:
+  workflow_dispatch:
+jobs:
+  deploy:
+    uses: blinklabs-io/actions/.github/workflows/reuseable-helm-deploy.yml@<full-commit-sha>
+    with:
+      release: example
+      chart: charts/example
+      chart-sha256: <reviewed-sha256-of-packaged-chart>
+      namespace: example
+      environment: production
+      values-files: deploy/production-values.yaml
+    secrets:
+      kubeconfig: ${{ secrets.kubeconfig }}
+```
+
+Replace `<full-commit-sha>` with a reviewed `actions` commit that contains
+`reuseable-helm-deploy.yml`.
 
 The org's free plan shares 20 concurrent jobs (5 of them macOS) across every repository, so each reusable workflow keeps one run narrow by default:
 
@@ -147,6 +229,7 @@ case in `validateFanout` (`app/fanout.go`), a case in `apply.sh`, and tests in
 Reconciliation is driven by `.github/workflows/sync.yaml`, which runs on:
 
 - a `push` to `main` that changes `repos-config.yaml`,
+- a `push` to `main` that changes the reusable Helm publisher,
 - a manual `workflow_dispatch`, or
 - a daily `schedule`. The scheduled run corrects drift and, when
   [auto-discovery](#auto-discovery-opt-in) is enabled, picks up newly-created
@@ -161,6 +244,13 @@ The sync workflow:
    token is scoped org-wide (all repositories the installation can access),
    since the target set is not known ahead of time.
 3. Runs the engine with `go run ./app`, passing the token as `GH_TOKEN`.
+
+The Helm Charts profile uses `pin_to_latest_change` for its publisher call.
+Governance renders the last `actions/main` commit that changed the reusable
+publisher as a full SHA in the generated caller. Merging a publisher change
+updates Helm Charts without a separate pin change, and unrelated Actions commits
+leave the caller unchanged. The publisher rejects changed charts whose versions
+did not increase and skips a retry when published chart contents already match.
 
 ## Configuration
 
@@ -241,6 +331,12 @@ An omitted or empty `dependabot` value leaves an existing
 `.github/dependabot.yml` untouched. This lets repositories keep manifests they
 manage outside the central configuration; removing a central value does not
 delete a repository file.
+
+The Docker profiles manage weekly update schedules for their repositories.
+`docker-standard` covers Docker and GitHub Actions; `docker-actions-only` and
+`docker-deps-prefix` preserve the different configurations of their existing
+users. Reconciliation replaces managed manifests, so review each repository's
+existing settings before assigning it to one of these profiles.
 
 For a genuinely one-off repository, omit `profile` and specify the full schema
 explicitly instead:
