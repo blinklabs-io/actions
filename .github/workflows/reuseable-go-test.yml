@@ -305,7 +305,7 @@ jobs:
         shell: bash
         run: |
           go mod tidy
-          if ! git diff --exit-code -- go.mod go.sum || [ -n "$(git ls-files --others --exclude-standard -- go.mod go.sum)" ]; then
+          if ! git diff --cached --exit-code -- go.mod go.sum || ! git diff --exit-code -- go.mod go.sum || [ -n "$(git ls-files --others --exclude-standard -- go.mod go.sum)" ]; then
             echo "go.mod or go.sum is not tidy. Run 'go mod tidy' to fix."
             exit 1
           fi
@@ -627,7 +627,8 @@ jobs:
         run: |
           buf generate
           go mod tidy
-          if ! git diff --exit-code || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+          if ! git diff --cached --exit-code || ! git diff --exit-code || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git diff --cached --stat
             git diff --stat
             git ls-files --others --exclude-standard
             echo "Generated code is out of date. Run 'buf generate && go mod tidy' to fix."
