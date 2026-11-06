@@ -300,48 +300,85 @@ func TestConfiguredPipelinesSupersedeTheirWrappers(t *testing.T) {
 
 func TestConfiguredConventionalCommitsPermissions(t *testing.T) {
 	cfg := loadRealConfig(t)
-	tmpl, err := buildWorkflowTemplate("../templates/workflow.tmpl")
+	wrapperTmpl, err := buildWorkflowTemplate("../templates/workflow.tmpl")
 	if err != nil {
 		t.Fatal(err)
+	}
+	pipelineTmpl := newPipelineTemplate(t)
+
+	check := func(repo string, workflow WorkflowConfig, workflows []WorkflowConfig) {
+		t.Helper()
+		const prefix = "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@"
+		if !strings.HasPrefix(workflow.ReusableWorkflow, prefix) || len(workflow.ReusableWorkflow) == len(prefix) {
+			t.Errorf("%s: unexpected conventional commits workflow %q", repo, workflow.ReusableWorkflow)
+			return
+		}
+		var out []byte
+		var err error
+		jobID := "orchestrate"
+		if workflow.Pipeline == "" {
+			out, err = renderWorkflow(wrapperTmpl, workflow)
+		} else {
+			_, pipelines := groupPipelines(workflows)
+			for _, members := range pipelines {
+				if members[0].Pipeline == workflow.Pipeline {
+					out, err = renderPipeline(pipelineTmpl, members)
+					break
+				}
+			}
+			jobID = workflow.jobID()
+		}
+		if err != nil || len(out) == 0 {
+			t.Errorf("%s: render caller: %v", repo, err)
+			return
+		}
+		var rendered struct {
+			Permissions map[string]string `yaml:"permissions"`
+			Jobs        map[string]struct {
+				Uses        string            `yaml:"uses"`
+				Permissions map[string]string `yaml:"permissions"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(out, &rendered); err != nil {
+			t.Errorf("%s: parse rendered caller: %v", repo, err)
+			return
+		}
+		job, ok := rendered.Jobs[jobID]
+		if !ok || job.Uses != workflow.ReusableWorkflow {
+			t.Errorf("%s: caller lost reusable workflow reference", repo)
+		}
+		permissions := rendered.Permissions
+		if workflow.Pipeline != "" {
+			permissions = job.Permissions
+		} else if job.Permissions != nil {
+			t.Errorf("%s: unexpected job-level permissions: %v", repo, job.Permissions)
+		}
+		if len(permissions) != 1 || permissions["contents"] != "read" {
+			t.Errorf("%s: caller permissions = %v, want contents: read only", repo, permissions)
+		}
 	}
 
 	checked := 0
 	for _, repo := range cfg.Repositories {
 		for _, workflow := range repo.Workflows {
-			if !strings.Contains(workflow.ReusableWorkflow, "/reuseable-conventional-commits.yml@") {
+			if workflow.DestinationFile != "conventional-commits.yml" {
 				continue
 			}
 			checked++
-			if workflow.Pipeline != "" {
-				if len(workflow.Permissions) != 1 || workflow.Permissions["contents"] != "read" {
-					t.Errorf("%s: caller permissions = %v, want contents: read only", repo.Name, workflow.Permissions)
-				}
-				continue
-			}
-			out, err := renderWorkflow(tmpl, workflow)
-			if err != nil {
-				t.Errorf("%s: render caller: %v", repo.Name, err)
-				continue
-			}
-			var rendered struct {
-				Permissions map[string]string `yaml:"permissions"`
-				Jobs        map[string]struct {
-					Uses string `yaml:"uses"`
-				} `yaml:"jobs"`
-			}
-			if err := yaml.Unmarshal(out, &rendered); err != nil {
-				t.Errorf("%s: parse rendered caller: %v", repo.Name, err)
-				continue
-			}
-			if len(rendered.Permissions) != 1 || rendered.Permissions["contents"] != "read" {
-				t.Errorf("%s: caller permissions = %v, want contents: read only", repo.Name, rendered.Permissions)
-			}
-			if rendered.Jobs["orchestrate"].Uses != workflow.ReusableWorkflow {
-				t.Errorf("%s: caller lost reusable workflow reference", repo.Name)
-			}
+			check(repo.Name, workflow, repo.Workflows)
 		}
 	}
 	if checked == 0 {
 		t.Fatal("no conventional commits callers checked")
 	}
+
+	// Exercise the pipeline path even while all configured callers are standalone.
+	workflow := WorkflowConfig{
+		DestinationFile:  "conventional-commits.yml",
+		Pipeline:         "ci.yml",
+		ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main",
+		Triggers:         map[string]interface{}{"pull_request": nil},
+		Permissions:      map[string]string{"contents": "read"},
+	}
+	check("pipeline fixture", workflow, []WorkflowConfig{workflow})
 }
