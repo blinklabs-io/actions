@@ -297,3 +297,51 @@ func TestConfiguredPipelinesSupersedeTheirWrappers(t *testing.T) {
 		}
 	}
 }
+
+func TestConfiguredConventionalCommitsPermissions(t *testing.T) {
+	cfg := loadRealConfig(t)
+	tmpl, err := buildWorkflowTemplate("../templates/workflow.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checked := 0
+	for _, repo := range cfg.Repositories {
+		for _, workflow := range repo.Workflows {
+			if !strings.Contains(workflow.ReusableWorkflow, "/reuseable-conventional-commits.yml@") {
+				continue
+			}
+			checked++
+			if workflow.Pipeline != "" {
+				if len(workflow.Permissions) != 1 || workflow.Permissions["contents"] != "read" {
+					t.Errorf("%s: caller permissions = %v, want contents: read only", repo.Name, workflow.Permissions)
+				}
+				continue
+			}
+			out, err := renderWorkflow(tmpl, workflow)
+			if err != nil {
+				t.Errorf("%s: render caller: %v", repo.Name, err)
+				continue
+			}
+			var rendered struct {
+				Permissions map[string]string `yaml:"permissions"`
+				Jobs        map[string]struct {
+					Uses string `yaml:"uses"`
+				} `yaml:"jobs"`
+			}
+			if err := yaml.Unmarshal(out, &rendered); err != nil {
+				t.Errorf("%s: parse rendered caller: %v", repo.Name, err)
+				continue
+			}
+			if len(rendered.Permissions) != 1 || rendered.Permissions["contents"] != "read" {
+				t.Errorf("%s: caller permissions = %v, want contents: read only", repo.Name, rendered.Permissions)
+			}
+			if rendered.Jobs["orchestrate"].Uses != workflow.ReusableWorkflow {
+				t.Errorf("%s: caller lost reusable workflow reference", repo.Name)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no conventional commits callers checked")
+	}
+}
