@@ -13,5 +13,56 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 https://github.com/actions/checkout/releases/tag/v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - uses: webiny/action-conventional-commits@7f91b1595ca1951cdb671ddc9f07a49081ec5b69 # v1.4.2 https://github.com/webiny/action-conventional-commits/releases/tag/v1.4.2
+      - name: Validate pull request commits
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+
+          allowed = {"feat", "fix", "docs", "style", "refactor", "test", "build", "perf", "ci", "chore", "revert", "merge", "wip"}
+          exceptions = ("Merge ", "Revert ", "Reapply ", "Initial plan")
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, text=True, capture_output=True).stdout
+
+          def valid(message):
+              if message.startswith(exceptions):
+                  return True
+              kind = message.split(":", 1)[0].lower()
+              kind = re.sub(r"\([^\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*?\)", "", kind, count=1)
+              kind = re.sub(r"[^a-z]", "", kind)
+              return kind in allowed
+
+          try:
+              sha = os.environ.get("GITHUB_SHA", "")
+              if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+                  raise ValueError("expected a pull_request event")
+              if not re.fullmatch(r"[0-9a-f]{40}", sha):
+                  raise ValueError("missing or invalid pull request merge SHA")
+              if git("rev-parse", "--is-shallow-repository").strip() != "false":
+                  raise ValueError("full commit history is required")
+              parents = git("rev-list", "--parents", "-n", "1", sha).split()
+              if len(parents) != 3 or parents[0] != sha:
+                  raise ValueError("pull request merge commit must have two parents")
+              commits = git("rev-list", f"{parents[1]}..{parents[2]}").splitlines()
+              if not commits:
+                  raise ValueError("pull request contains no commits to validate")
+              invalid = []
+              for commit in commits:
+                  message = git("show", "-s", "--format=%B", commit).rstrip("\n")
+                  if not valid(message):
+                      invalid.append(commit)
+              if invalid:
+                  for commit in invalid:
+                      print(f"Invalid commit {commit}", file=sys.stderr)
+                  sys.exit(1)
+              print(f"Validated {len(commits)} pull request commits.")
+          except (OSError, subprocess.CalledProcessError, ValueError) as error:
+              print(f"Unable to validate pull request commits: {error}", file=sys.stderr)
+              sys.exit(1)
+          PY
