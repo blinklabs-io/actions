@@ -39,7 +39,7 @@ downstream repositories via `workflow_call`. The current set:
 - `reuseable-golangci-lint.yml` — golangci-lint with a configurable tool version, additional invocation, optional formatting-diff check, nested modules (`additional-working-directories`), and a `pre-lint-command` for repository checks that belong in the lint stage.
 - `reuseable-nilaway.yml` — NilAway static analysis.
 - `reuseable-govulncheck.yml` — govulncheck, with an optional gosec SARIF upload; `govulncheck-command` substitutes a repository's own scan (for example a Makefile target) for the default `go run` invocation.
-- `reuseable-conventional-commits.yml` — conventional-commit PR title check.
+- `reuseable-conventional-commits.yml` — conventional-commit message check for all pull request commits.
 - `reuseable-check-versions.yml` — check upstream image versions against a docker-compose file and open update PRs.
 - `reuseable-check-versions-packages.yml` — check upstream release/image versions against `packages/<pkg>/<pkg>-*.yaml` version files, validate with the cardano-up CLI, and open update PRs (for cardano-up package repositories).
 - `reuseable-release-dispatch.yml` — announce a published release to the central `release-fanout.yml` workflow (used by the generated `release-fanout.yml` wrapper).
