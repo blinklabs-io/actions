@@ -372,15 +372,19 @@ func reconcileRepositories(ctx context.Context, client *github.Client, repos []R
 		}
 		syncLogf(repoCtx, "Starting sync for %s/%s\n", owner, repoName)
 		if err := reconcileRepoSettings(repoCtx, client, owner, repoName, repo.Settings, report); err != nil {
+			report.diagnostic("repository settings reconciliation failed")
 			result = errors.Join(result, err)
 		}
 		if err := reconcileCollaborators(repoCtx, client, owner, repoName, repo.Collaborators, report); err != nil {
+			report.diagnostic("collaborator reconciliation failed")
 			result = errors.Join(result, err)
 		}
 		if err := syncBranchProtection(repoCtx, client, owner, repoName, repo.BranchProtection); err != nil {
+			report.diagnostic("branch protection reconciliation failed")
 			result = errors.Join(result, err)
 		}
 		if err := syncWorkflows(repoCtx, client, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
+			report.diagnostic("managed file reconciliation failed")
 			result = errors.Join(result, err)
 		}
 	}
@@ -2127,6 +2131,9 @@ func flushBatch(
 
 	baseCommit, _, err := client.Git.GetCommit(ctx, owner, repo, baseCommitSHA)
 	if err != nil {
+		if report := reportFromContext(ctx); report != nil {
+			report.diagnostic("managed file base commit lookup failed")
+		}
 		syncLogf(ctx, "  Error reading base commit: %v\n", err)
 		return errors.New("managed file update failed")
 	}
@@ -2159,6 +2166,9 @@ func flushBatch(
 	}
 	newTree, _, err := client.Git.CreateTree(ctx, owner, repo, baseTreeSHA, entries)
 	if err != nil {
+		if report := reportFromContext(ctx); report != nil {
+			report.diagnostic("managed file tree creation failed")
+		}
 		syncLogf(ctx, "  Error creating tree: %v\n", err)
 		return errors.New("managed file update failed")
 	}
@@ -2170,6 +2180,9 @@ func flushBatch(
 	}
 	newCommit, _, err := client.Git.CreateCommit(ctx, owner, repo, commit, nil)
 	if err != nil || newCommit == nil || newCommit.GetSHA() == "" {
+		if report := reportFromContext(ctx); report != nil {
+			report.diagnostic("managed file commit creation failed")
+		}
 		syncLogf(ctx, "  Error creating commit: %v\n", err)
 		return errors.New("managed file update failed")
 	}
@@ -2184,6 +2197,14 @@ func flushBatch(
 		repositoryID = latestRepo.GetNodeID()
 	}
 	if err := updateManagedRef(ctx, client, repositoryID, defaultBranch, baseCommitSHA, newCommit.GetSHA()); err != nil {
+		if report := reportFromContext(ctx); report != nil {
+			var statusErr *refHTTPError
+			if errors.As(err, &statusErr) {
+				report.diagnostic(fmt.Sprintf("atomic ref update returned HTTP %d", statusErr.status))
+			} else {
+				report.diagnostic("atomic ref update failed")
+			}
+		}
 		syncLogf(ctx, "  Error updating branch ref: %v\n", err)
 		return errors.New("managed file update failed")
 	}

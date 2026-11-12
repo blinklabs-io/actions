@@ -39,9 +39,21 @@ func TestReconcileSettingsAndCollaborators(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var writes []string
+			permissionReads := 0
 			handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if req.Method == http.MethodGet {
+					if tt.collaborator && strings.HasSuffix(req.URL.Path, "/collaborators") {
+						if tt.name == "collaborator invited" {
+							_, _ = io.WriteString(w, `[]`)
+						} else {
+							_, _ = io.WriteString(w, `[{"login":"example-user"}]`)
+						}
+						return
+					}
+					if tt.collaborator {
+						permissionReads++
+					}
 					w.WriteHeader(tt.readCode)
 					if tt.name == "collaborator changed" && len(writes) > 0 {
 						_, _ = io.WriteString(w, `{"permission":"write","role_name":"maintain"}`)
@@ -92,11 +104,101 @@ func TestReconcileSettingsAndCollaborators(t *testing.T) {
 			if got := strings.Join(writes, ","); got != tt.writeMethod {
 				t.Errorf("write methods = %q, want %q", got, tt.writeMethod)
 			}
+			if tt.name == "collaborator changed" && permissionReads != 2 {
+				t.Errorf("permission reads = %d, want 2", permissionReads)
+			}
 			if err := report.render(); err != nil {
 				t.Fatal(err)
 			}
-			if got := output.String(); !strings.Contains(got, "["+tt.wantStatus+"]") || strings.Contains(got, "private detail") {
+			if got := output.String(); !strings.Contains(got, "["+tt.wantStatus+"]") || strings.Contains(got, "private detail") || strings.Contains(got, "example-user") {
 				t.Errorf("unexpected report: %s", got)
+			}
+		})
+	}
+}
+
+func TestCollaboratorMembershipPreventsPublicReadFalseMatch(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		listCode   int
+		wantWrites int
+	}{
+		{"absent collaborator is invited with read alias", http.StatusOK, 1},
+		{"inaccessible collaborator list is unchecked", http.StatusForbidden, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			writes := 0
+			client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
+				r := httptest.NewRecorder()
+				r.Header().Set("Content-Type", "application/json")
+				switch req.Method {
+				case http.MethodGet:
+					if !strings.HasSuffix(req.URL.Path, "/collaborators") {
+						t.Fatalf("unexpected permission lookup: %s", req.URL.Path)
+					}
+					r.WriteHeader(tt.listCode)
+					_, _ = io.WriteString(r, `[]`)
+				case http.MethodPut:
+					writes++
+					body, _ := io.ReadAll(req.Body)
+					if !strings.Contains(string(body), `"permission":"pull"`) {
+						t.Errorf("read alias not mapped to pull: %s", body)
+					}
+					r.WriteHeader(http.StatusCreated)
+					_, _ = io.WriteString(r, `{}`)
+				}
+				return r.Result(), nil
+			})})
+			var output strings.Builder
+			report := newDriftReport(&output)
+			report.beginRepo("example/public", true)
+			err := reconcileCollaborators(context.Background(), client, "example", "public", []Collaborator{{Username: "example-user", Permission: "read"}}, report)
+			if (err != nil) != (tt.listCode != http.StatusOK) || writes != tt.wantWrites {
+				t.Fatalf("error %v, writes %d", err, writes)
+			}
+		})
+	}
+}
+
+func TestCollaboratorMembershipRequiresCompleteValidList(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		firstBody  string
+		secondCode int
+		wantError  bool
+	}{
+		{"member on second page", `[{"login":"other"}]`, http.StatusOK, false},
+		{"second page fails", `[{"login":"other"}]`, http.StatusForbidden, true},
+		{"null response", `null`, 0, true},
+		{"empty response", ``, 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			writes := 0
+			client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
+				r := httptest.NewRecorder()
+				r.Header().Set("Content-Type", "application/json")
+				if req.Method != http.MethodGet {
+					writes++
+					t.Fatal("partial membership must not cause a write")
+				}
+				if strings.HasSuffix(req.URL.Path, "/permission") {
+					_, _ = io.WriteString(r, `{"permission":"write","role_name":"maintain"}`)
+				} else if req.URL.Query().Get("page") == "2" {
+					r.WriteHeader(tt.secondCode)
+					_, _ = io.WriteString(r, `[{"login":"EXAMPLE-USER"}]`)
+				} else {
+					if tt.secondCode != 0 {
+						r.Header().Set("Link", `<https://api.github.com/repos/example/public/collaborators?page=2>; rel="next"`)
+					}
+					_, _ = io.WriteString(r, tt.firstBody)
+				}
+				return r.Result(), nil
+			})})
+			report := newDriftReport(io.Discard)
+			report.beginRepo("example/public", true)
+			err := reconcileCollaborators(context.Background(), client, "example", "public", []Collaborator{{Username: "example-user", Permission: "maintain"}}, report)
+			if (err != nil) != tt.wantError || writes != 0 {
+				t.Fatalf("error %v, writes %d", err, writes)
 			}
 		})
 	}

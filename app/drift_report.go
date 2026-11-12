@@ -15,9 +15,17 @@ type driftReport struct {
 }
 
 type driftRepo struct {
-	name    string
-	public  bool
-	entries []*driftEntry
+	name        string
+	public      bool
+	entries     []*driftEntry
+	diagnostics []string
+}
+
+// diagnostics are fixed application messages and are retained only for public repos.
+func (r *driftReport) diagnostic(message string) {
+	if r.active != nil && r.active.public {
+		r.active.diagnostics = append(r.active.diagnostics, message)
+	}
 }
 
 type driftEntry struct {
@@ -103,7 +111,7 @@ func (r *driftReport) render() error {
 	}
 	output.WriteString("\n")
 	if privateRepos > 0 {
-		fmt.Fprintf(&output, "Private or unknown items: %d matched, %d corrected, %d invited, %d failed, %d unchecked, %d skipped, %d pending.\n\n", privateCounts["matched"], privateCounts["corrected"], privateCounts["invited"], privateCounts["failed"], privateCounts["unchecked"], privateCounts["skipped"], privateCounts["pending"])
+		fmt.Fprintf(&output, "Private or unknown items: %d matched, %d unmanaged, %d corrected, %d invited, %d failed, %d unchecked, %d skipped, %d pending.\n\n", privateCounts["matched"], privateCounts["unmanaged"], privateCounts["corrected"], privateCounts["invited"], privateCounts["failed"], privateCounts["unchecked"], privateCounts["skipped"], privateCounts["pending"])
 	}
 
 	for _, repo := range r.repos {
@@ -112,6 +120,9 @@ func (r *driftReport) render() error {
 		}
 		var detail strings.Builder
 		fmt.Fprintf(&detail, "%s (%d item(s))\n", driftLine(repo.name), len(repo.entries))
+		for _, message := range repo.diagnostics {
+			fmt.Fprintf(&detail, "diagnostic: %s\n", driftLine(message))
+		}
 		for _, entry := range repo.entries {
 			status := entry.status
 			if status == "" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/google/go-github/v60/github"
@@ -14,6 +15,12 @@ const updateRefsMutation = `mutation UpdateManagedRef($input: UpdateRefsInput!) 
 		__typename
 	}
 }`
+
+type refHTTPError struct{ status int }
+
+func (e *refHTTPError) Error() string {
+	return fmt.Sprintf("atomic ref update request failed (HTTP %d)", e.status)
+}
 
 // updateManagedRef publishes a staged commit only if the observed branch head
 // is still current. A non-force REST ref update alone accepts a rewind to an
@@ -63,7 +70,10 @@ func updateManagedRef(ctx context.Context, client *github.Client, repositoryID, 
 		} `json:"data"`
 		Errors []json.RawMessage `json:"errors"`
 	}
-	if _, err := client.Do(ctx, req, &response); err != nil {
+	if res, err := client.Do(ctx, req, &response); err != nil {
+		if res != nil && res.StatusCode >= 400 {
+			return &refHTTPError{status: res.StatusCode}
+		}
 		return errors.New("atomic ref update request failed")
 	}
 	if len(response.Errors) > 0 {

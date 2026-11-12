@@ -77,3 +77,20 @@ func TestDriftReportEscapesRunnerCommands(t *testing.T) {
 		t.Fatalf("report contains a runner command: %s", output.String())
 	}
 }
+
+func TestDriftReportDiagnosticsArePublicOnly(t *testing.T) {
+	var output strings.Builder
+	report := newDriftReport(&output)
+	report.beginRepo("hidden", false)
+	report.change("setting", "target", "", "").status = "failed"
+	report.diagnostic("private diagnostic")
+	report.beginRepo("example/public", true)
+	report.change("setting", "target", "", "").status = "failed"
+	report.diagnostic("public diagnostic")
+	if err := report.render(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "private diagnostic") || !strings.Contains(output.String(), "public diagnostic") {
+		t.Fatalf("unexpected diagnostics: %s", output.String())
+	}
+}

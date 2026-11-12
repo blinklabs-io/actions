@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/google/go-github/v60/github"
 )
@@ -28,6 +29,7 @@ func planRepoSettings(ctx context.Context, client *github.Client, owner, repo st
 
 	current, _, err := client.Repositories.Get(ctx, owner, repo)
 	if err != nil || current == nil || current.DeleteBranchOnMerge == nil {
+		report.diagnostic("repository settings observation failed")
 		report.change("setting", field, "", "").status = "unchecked"
 		return nil, errors.New("could not observe repository settings")
 	}
@@ -45,6 +47,7 @@ func planRepoSettings(ctx context.Context, client *github.Client, owner, repo st
 		}
 		update := &github.Repository{DeleteBranchOnMerge: github.Bool(desired)}
 		if _, _, err := client.Repositories.Edit(ctx, owner, repo, update); err != nil {
+			report.diagnostic("repository settings update failed")
 			entry.status = "failed"
 			return errors.New("could not update repository settings")
 		}
@@ -64,24 +67,44 @@ func reconcileCollaborators(ctx context.Context, client *github.Client, owner, r
 func planCollaborators(ctx context.Context, client *github.Client, owner, repo string, collaborators []Collaborator, report *driftReport) (func() error, error) {
 	var changes []func() error
 	var observeErr error
+	var members map[string]bool
+	var membersErr error
+	if len(collaborators) > 0 {
+		members, membersErr = observeCollaboratorMembership(ctx, client, owner, repo)
+	}
 	for _, c := range collaborators {
 		if c.Username == "" || c.Permission == "" {
 			report.change("collaborator", "configured user", "", "").status = "unchecked"
 			observeErr = errors.New("collaborator configuration is incomplete")
 			continue
 		}
-		current, err := observeCollaboratorRole(ctx, client, owner, repo, c.Username)
+		if membersErr != nil {
+			report.diagnostic("collaborator membership observation failed")
+			report.change("collaborator", "configured user", "", "").status = "unchecked"
+			observeErr = errors.New("could not observe collaborator membership")
+			continue
+		}
+		current := "none"
+		var err error
+		if members[strings.ToLower(c.Username)] {
+			current, err = observeCollaboratorRole(ctx, client, owner, repo, c.Username)
+		}
 		if err != nil {
+			report.diagnostic("collaborator permission observation failed")
 			report.change("collaborator", "configured user", "", "").status = "unchecked"
 			observeErr = errors.New("could not observe collaborator permissions")
 			continue
 		}
-		desired := c.Permission
+		desired, requested := c.Permission, c.Permission
 		switch desired {
 		case "pull":
 			desired = "read"
 		case "push":
 			desired = "write"
+		case "read":
+			requested = "pull"
+		case "write":
+			requested = "push"
 		}
 		if current == desired {
 			report.change("collaborator", "configured user", "", "").status = "matched"
@@ -93,9 +116,10 @@ func planCollaborators(ctx context.Context, client *github.Client, owner, repo s
 				entry.status = "skipped"
 				return errors.New("could not record planned collaborator change")
 			}
-			options := &github.RepositoryAddCollaboratorOptions{Permission: c.Permission}
+			options := &github.RepositoryAddCollaboratorOptions{Permission: requested}
 			_, response, err := client.Repositories.AddCollaborator(ctx, owner, repo, c.Username, options)
 			if err != nil {
+				report.diagnostic("collaborator update failed")
 				entry.status = "failed"
 				return errors.New("could not update collaborator permissions")
 			}
@@ -105,6 +129,7 @@ func planCollaborators(ctx context.Context, client *github.Client, owner, repo s
 			}
 			observed, err := observeCollaboratorRole(ctx, client, owner, repo, c.Username)
 			if err != nil || observed != desired {
+				report.diagnostic("effective collaborator permission did not match after update")
 				entry.status = "failed"
 				return errors.New("collaborator update did not produce the configured effective permission")
 			}
@@ -122,6 +147,30 @@ func planCollaborators(ctx context.Context, client *github.Client, owner, repo s
 		}
 		return result
 	}, observeErr
+}
+
+func observeCollaboratorMembership(ctx context.Context, client *github.Client, owner, repo string) (map[string]bool, error) {
+	members := make(map[string]bool)
+	opts := &github.ListCollaboratorsOptions{ListOptions: github.ListOptions{PerPage: 100}}
+	for {
+		users, response, err := client.Repositories.ListCollaborators(ctx, owner, repo, opts)
+		if err != nil || response == nil || response.StatusCode != http.StatusOK || users == nil {
+			return nil, errors.New("could not list collaborators")
+		}
+		for _, user := range users {
+			if user == nil || user.GetLogin() == "" {
+				return nil, errors.New("collaborator list contained an invalid user")
+			}
+			members[strings.ToLower(user.GetLogin())] = true
+		}
+		if response.NextPage == 0 {
+			return members, nil
+		}
+		if response.NextPage <= opts.Page {
+			return nil, errors.New("collaborator list pagination did not advance")
+		}
+		opts.Page = response.NextPage
+	}
 }
 
 func observeCollaboratorRole(ctx context.Context, client *github.Client, owner, repo, user string) (string, error) {

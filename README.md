@@ -164,7 +164,9 @@ invitations, failures, unchecked items, and skipped or pending work. A
 correction means GitHub accepted the update; collaborator permissions are also
 read again, while other corrections have no separate verification read. The
 collaborator comparison uses effective permissions, which can include grants from
-teams or the organization. Invitations may still be awaiting acceptance. Observation or correction
+teams or the organization. Membership is observed from the complete collaborator
+list visible to the governance app; an incomplete list prevents invitations.
+Invitations may still be awaiting acceptance. Observation or correction
 errors cause the sync to fail rather than report a clean result.
 Branch protection updates are skipped when an unmanaged control could be lost
 by GitHub's replacement API; those cases require manual attention.

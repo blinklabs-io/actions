@@ -20,7 +20,7 @@ func TestUpdateManagedRef(t *testing.T) {
 	}{
 		{"success", 200, `{"data":{"updateRefs":{"__typename":"UpdateRefsPayload"}}}`, ""},
 		{"GraphQL error", 200, `{"data":{"updateRefs":{"__typename":"UpdateRefsPayload"}},"errors":[{"message":"private detail"}]}`, "GitHub rejected the atomic ref update"},
-		{"HTTP error", 403, `{"message":"private detail"}`, "atomic ref update request failed"},
+		{"HTTP error", 403, `{"message":"private detail"}`, "atomic ref update request failed (HTTP 403)"},
 		{"malformed JSON", 200, `private detail`, "atomic ref update request failed"},
 		{"malformed payload", 200, `{"data":{"updateRefs":{"__typename":"private detail"}}}`, "GitHub did not confirm the atomic ref update"},
 		{"missing data", 200, `{}`, "GitHub did not confirm the atomic ref update"},
