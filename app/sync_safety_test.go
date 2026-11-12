@@ -79,7 +79,7 @@ func (g *recordingGitHub) handler() http.Handler {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"default_branch":"main"}`))
+			_, _ = w.Write([]byte(`{"default_branch":"main","node_id":"repo-id"}`))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/"):
 			for suffix, status := range g.contentsErrors {
 				if strings.HasSuffix(r.URL.Path, "/"+suffix) {
@@ -149,13 +149,14 @@ func (g *recordingGitHub) handler() http.Handler {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"sha":"newcommit"}`))
-		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/git/refs/"):
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
 			if g.failAt == "ref" {
-				http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"errors":[{"message":"rejected"}]}`))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ref":"refs/heads/main","object":{"sha":"newcommit"}}`))
+			_, _ = w.Write([]byte(`{"data":{"updateRefs":{"__typename":"UpdateRefsPayload"}}}`))
+
 		default:
 			http.Error(w, `{"message":"unexpected"}`, http.StatusInternalServerError)
 		}
@@ -191,7 +192,9 @@ func TestSyncWorkflowsKeepsWrappersWhenPipelineWriteFails(t *testing.T) {
 	g := &recordingGitHub{failAt: "tree"}
 	client := newRecordingClient(t, g)
 
-	syncWorkflows(context.Background(), client, "o", "r", goPipeline())
+	if err := syncWorkflows(context.Background(), client, "o", "r", goPipeline()); err == nil {
+		t.Fatal("expected a tree creation error")
+	}
 
 	if !g.saw(http.MethodPost, "/git/trees") {
 		t.Fatalf("expected an attempt to build the commit tree; requests were %v", g.requests)
@@ -202,7 +205,7 @@ func TestSyncWorkflowsKeepsWrappersWhenPipelineWriteFails(t *testing.T) {
 		t.Errorf("staged tree did not write the pipeline ci.yml; tree was %s", g.tree())
 	}
 	// The write failed, so the branch must not have advanced.
-	if g.saw(http.MethodPatch, "/git/refs/") {
+	if g.saw(http.MethodPost, "/graphql") {
 		t.Errorf(
 			"advanced the branch after the commit write failed; the wrappers "+
 				"would be deleted with no pipeline to replace them. Requests were %v",
@@ -220,13 +223,15 @@ func TestSyncWorkflowsRemovesWrappersAfterSuccessfulWrite(t *testing.T) {
 	g := &recordingGitHub{}
 	client := newRecordingClient(t, g)
 
-	syncWorkflows(context.Background(), client, "o", "r", goPipeline())
+	if err := syncWorkflows(context.Background(), client, "o", "r", goPipeline()); err != nil {
+		t.Fatal(err)
+	}
 
 	// Aggregation: many file changes, exactly one commit and one branch update.
 	if got := g.count(http.MethodPost, "/git/commits"); got != 1 {
 		t.Fatalf("expected exactly one commit for all changes, got %d; requests were %v", got, g.requests)
 	}
-	if got := g.count(http.MethodPatch, "/git/refs/"); got != 1 {
+	if got := g.count(http.MethodPost, "/graphql"); got != 1 {
 		t.Fatalf("expected exactly one branch update, got %d; requests were %v", got, g.requests)
 	}
 
@@ -286,13 +291,14 @@ func TestSyncWorkflowsNoOpMakesNoCommit(t *testing.T) {
 	}}
 	client := newRecordingClient(t, g)
 
-	syncWorkflows(context.Background(), client, "o", "r", []WorkflowConfig{wf})
+	if err := syncWorkflows(context.Background(), client, "o", "r", []WorkflowConfig{wf}); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, probe := range []struct{ method, path string }{
-		{http.MethodGet, "/git/ref/"},
 		{http.MethodPost, "/git/trees"},
 		{http.MethodPost, "/git/commits"},
-		{http.MethodPatch, "/git/refs/"},
+		{http.MethodPost, "/graphql"},
 	} {
 		if g.saw(probe.method, probe.path) {
 			t.Errorf(
@@ -315,7 +321,9 @@ func TestFlushBatchSerializesDeletionAsNullSHA(t *testing.T) {
 	batch := &commitBatch{}
 	batch.remove(".github/workflows/go-test.yml", "remove go-test.yml")
 
-	flushBatch(context.Background(), client, "o", "r", "main", batch)
+	if err := flushBatch(context.Background(), client, "o", "r", "main", batch); err != nil {
+		t.Fatal(err)
+	}
 
 	tree := g.tree()
 	if !strings.Contains(tree, "go-test.yml") {
@@ -351,8 +359,10 @@ func TestSyncWorkflowsAbortsMigrationOnLookupFailure(t *testing.T) {
 				contents:       map[string]string{"publish-alpha-helm-chart.yml": "old publisher"},
 				contentsErrors: map[string]int{path: http.StatusInternalServerError},
 			}
-			syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows, "version: 2\n")
-			if g.saw(http.MethodPost, "/git/trees") || g.saw(http.MethodPatch, "/git/refs/") {
+			if err := syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows, "version: 2\n"); err == nil {
+				t.Fatal("expected a lookup failure")
+			}
+			if g.saw(http.MethodPost, "/git/trees") || g.saw(http.MethodPost, "/graphql") {
 				t.Fatalf("committed an incomplete migration after lookup failure for %s", path)
 			}
 		})
@@ -365,19 +375,23 @@ func TestSyncWorkflowsAbortsMigrationOnLookupFailure(t *testing.T) {
 				contents:          map[string]string{"publish-alpha-helm-chart.yml": "old publisher"},
 				malformedContents: map[string]string{path: "%%%"},
 			}
-			syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows, "version: 2\n")
+			if err := syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows, "version: 2\n"); err == nil {
+				t.Fatal("expected a decoding failure")
+			}
 			if !g.saw(http.MethodGet, "/"+path) {
 				t.Fatalf("did not read malformed file %s", path)
 			}
-			if g.saw(http.MethodPost, "/git/trees") || g.saw(http.MethodPatch, "/git/refs/") {
+			if g.saw(http.MethodPost, "/git/trees") || g.saw(http.MethodPost, "/graphql") {
 				t.Fatalf("committed an incomplete migration after decoding %s failed", path)
 			}
 		})
 	}
 	t.Run("missing publisher is created", func(t *testing.T) {
 		g := &recordingGitHub{contents: map[string]string{"publish-alpha-helm-chart.yml": "old publisher"}}
-		syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows)
-		if !g.saw(http.MethodPatch, "/git/refs/") {
+		if err := syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows); err != nil {
+			t.Fatal(err)
+		}
+		if !g.saw(http.MethodPost, "/graphql") {
 			t.Fatal("a 404 for the new publisher prevented migration")
 		}
 		if !strings.Contains(g.tree(), `"sha":null`) || !strings.Contains(g.tree(), "reuseable-helm-publish.yml") {

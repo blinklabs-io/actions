@@ -165,29 +165,33 @@ func stageObsoleteFanoutWrapper(
 	desired []WorkflowConfig,
 ) {
 	path := ".github/workflows/" + fanoutWorkflowFile
-	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
+	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, batch.contentOptions())
 	if err != nil {
 		if !isNotFound(err) {
-			fmt.Printf("  Error checking %s for cleanup: %v\n", path, err)
+			syncLogf(ctx, "  Error checking %s for cleanup: %v\n", path, err)
+			reportManagedFile(ctx, batch, path, "", "", "unchecked")
 			batch.failed = true
 		}
 		return
 	}
 	if fileContent == nil || fileContent.SHA == nil {
-		fmt.Printf("  Error checking %s for cleanup: path is not a file\n", path)
+		syncLogf(ctx, "  Error checking %s for cleanup: path is not a file\n", path)
+		reportManagedFile(ctx, batch, path, "", "", "unchecked")
 		batch.failed = true
 		return
 	}
 	existing, err := fileContent.GetContent()
 	if err != nil {
-		fmt.Printf("  Error decoding %s: %v\n", path, err)
+		syncLogf(ctx, "  Error decoding %s: %v\n", path, err)
+		reportManagedFile(ctx, batch, path, "", "", "unchecked")
 		batch.failed = true
 		return
 	}
 	if !fanoutWrapperObsolete(desired, []byte(existing)) {
 		return
 	}
-	fmt.Printf("  Staging removal of %s...\n", path)
+	syncLogf(ctx, "  Staging removal of %s...\n", path)
+	reportManagedFile(ctx, batch, path, "git blob: "+fileContent.GetSHA(), "absent", "pending")
 	batch.remove(path, "remove "+fanoutWorkflowFile)
 }
 

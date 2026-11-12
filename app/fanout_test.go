@@ -411,7 +411,9 @@ func TestSyncWorkflowsRemovesObsoleteFanoutWrapper(t *testing.T) {
 			g := &recordingGitHub{contents: map[string]string{fanoutWorkflowFile: tc.content}}
 			client := newRecordingClient(t, g)
 
-			syncWorkflows(context.Background(), client, "o", "r", nil)
+			if err := syncWorkflows(context.Background(), client, "o", "r", nil); err != nil {
+				t.Fatal(err)
+			}
 
 			deleted := strings.Contains(g.tree(), fanoutWorkflowFile) && strings.Contains(g.tree(), `"sha":null`)
 			if deleted != tc.wantDelete {
@@ -444,7 +446,9 @@ func TestSyncWorkflowsKeepsDesiredFanoutWrapper(t *testing.T) {
 	g := &recordingGitHub{contents: map[string]string{fanoutWorkflowFile: string(rendered)}}
 	client := newRecordingClient(t, g)
 
-	syncWorkflows(context.Background(), client, "o", "r", []WorkflowConfig{wf})
+	if err := syncWorkflows(context.Background(), client, "o", "r", []WorkflowConfig{wf}); err != nil {
+		t.Fatal(err)
+	}
 
 	if g.saw(http.MethodPost, "/git/trees") {
 		t.Errorf("a desired wrapper must not be removed or rewritten; requests %v", g.requests)
