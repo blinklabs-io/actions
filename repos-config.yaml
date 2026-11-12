@@ -1203,17 +1203,17 @@ repositories:
             tags: ['v*']
         params:
           go-versions: '["1.26.x","1.27.x"]'
-          platforms: '["ubuntu-latest","windows-latest"]'
+          platforms: '["ubuntu-26.04","windows-latest"]'
           system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
           pre-test-command: "make build"
           test-flags: "-v -timeout 10m"
           windows-test-packages: "./tray/setup/..."
           test-env: "LANG=en_US.UTF-8"
           run-golangci-lint: "true"
-          golangci-platform: "ubuntu-latest"
+          golangci-platform: "ubuntu-26.04"
           golangci-cgo-enabled: "true"
           run-nilaway: "true"
-          nilaway-platform: "ubuntu-latest"
+          nilaway-platform: "ubuntu-26.04"
           nilaway-cgo-enabled: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/adder"
           nilaway-exclude-pkgs: "github.com/go-gl/glfw"
@@ -1295,7 +1295,7 @@ repositories:
           # The default rows minus darwin/amd64: stapler validation of the
           # Intel .pkg fails reproducibly on macos-15-intel runners, so adder
           # ships macOS for Apple silicon only.
-          binary-target-matrix: '[{"runner":"macos-15","os":"darwin","arch":"arm64","tray":true},{"runner":"ubuntu-latest","os":"freebsd","arch":"amd64","tray":false},{"runner":"ubuntu-latest","os":"freebsd","arch":"arm64","tray":false},{"runner":"ubuntu-latest","os":"linux","arch":"amd64","tray":true},{"runner":"ubuntu-24.04-arm","os":"linux","arch":"arm64","tray":true},{"runner":"windows-latest","os":"windows","arch":"amd64","tray":true},{"runner":"windows-11-arm","os":"windows","arch":"arm64","tray":true}]'
+          binary-target-matrix: '[{"runner":"macos-15","os":"darwin","arch":"arm64","tray":true},{"runner":"ubuntu-26.04","os":"freebsd","arch":"amd64","tray":false},{"runner":"ubuntu-26.04","os":"freebsd","arch":"arm64","tray":false},{"runner":"ubuntu-26.04","os":"linux","arch":"amd64","tray":true},{"runner":"ubuntu-26.04-arm","os":"linux","arch":"arm64","tray":true},{"runner":"windows-latest","os":"windows","arch":"amd64","tray":true},{"runner":"windows-11-arm","os":"windows","arch":"arm64","tray":true}]'
     release_fanout:
       - repo: blinklabs-io/ansible-cardano
         type: ansible-role
@@ -2485,12 +2485,12 @@ repositories:
             tags: ['v*']
         params:
           go-versions: '["1.26.x","1.27.x"]'
-          platforms: '["ubuntu-latest","macos-latest","windows-latest"]'
+          platforms: '["ubuntu-26.04","macos-latest","windows-latest"]'
           pre-test-command: "make build"
           test-flags: "-v -race -timeout 10m"
           run-golangci-lint: "true"
           golangci-go-version: "1.26.x"
-          golangci-platform: "ubuntu-latest"
+          golangci-platform: "ubuntu-26.04"
 
       - destination_file: govulncheck.yml
         workflow_name: "govulncheck"
@@ -2526,7 +2526,7 @@ repositories:
             branches: [main]
         params:
           go-versions: '["1.26.x","1.27.x"]'
-          platforms: '["ubuntu-latest","windows-latest"]'
+          platforms: '["ubuntu-26.04","windows-latest"]'
           check-mod-tidy: "true"
           verify-modules: "true"
           run-vet: "true"

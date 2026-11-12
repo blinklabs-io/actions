@@ -238,10 +238,10 @@ func TestDesktopBinaryTargetMatrixDefault(t *testing.T) {
 	}
 	want := []desktopTargetRow{
 		{"macos-15", "darwin", "arm64", true},
-		{"ubuntu-latest", "freebsd", "amd64", false},
-		{"ubuntu-latest", "freebsd", "arm64", false},
-		{"ubuntu-latest", "linux", "amd64", true},
-		{"ubuntu-24.04-arm", "linux", "arm64", true},
+		{"ubuntu-26.04", "freebsd", "amd64", false},
+		{"ubuntu-26.04", "freebsd", "arm64", false},
+		{"ubuntu-26.04", "linux", "amd64", true},
+		{"ubuntu-26.04-arm", "linux", "arm64", true},
 		{"windows-latest", "windows", "amd64", true},
 		{"windows-11-arm", "windows", "arm64", true},
 		{"macos-15-intel", "darwin", "amd64", true},

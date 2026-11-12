@@ -127,7 +127,7 @@ on:
         description: golangci-lint version used when run-golangci-lint is true.
         required: false
         type: string
-        default: "latest"
+        default: "v2.15.0"
       golangci-go-version:
         description: Go matrix version on which to run golangci-lint. Empty runs it on every matrix version.
         required: false
@@ -219,10 +219,10 @@ on:
         type: boolean
         default: true
       platforms:
-        description: JSON array of runner platforms to test on (e.g. '["ubuntu-latest","windows-latest"]').
+        description: JSON array of runner platforms to test on (e.g. '["ubuntu-26.04","windows-latest"]').
         required: false
         type: string
-        default: '["ubuntu-latest"]'
+        default: '["ubuntu-26.04"]'
       system-dependencies:
         description: Space-separated apt packages to install before testing (Linux runners only). Empty skips installation.
         required: false
@@ -287,6 +287,14 @@ jobs:
         with:
           submodules: ${{ inputs.submodules }}
           persist-credentials: false
+      - name: Validate tool platform selectors
+        if: >-
+          (inputs.run-golangci-lint && inputs.golangci-platform != '' && !contains(fromJSON(inputs.platforms), inputs.golangci-platform)) ||
+          (inputs.run-nilaway && inputs.nilaway-platform != '' && !contains(fromJSON(inputs.platforms), inputs.nilaway-platform))
+        shell: bash
+        run: |
+          echo "A selected lint platform is not present in the platforms input." >&2
+          exit 1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
           go-version: ${{ matrix.go-version }}
