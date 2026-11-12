@@ -127,6 +127,14 @@ jobs:
 Replace `<full-commit-sha>` with a reviewed `actions` commit that contains
 `reuseable-helm-deploy.yml`.
 
+The shared Go lint workflows default to golangci-lint v2.15.0. Update both
+workflow defaults together in a reviewed pull request when advancing the tool.
+Callers may override the version explicitly. Shared Linux jobs that install
+system packages default to Ubuntu 26.04; package versions remain unpinned.
+When a caller selects lint or NilAway by platform, include that exact runner
+label in its `platforms` list. A selector absent from the list fails the job
+instead of silently skipping the check.
+
 The org's free plan shares 20 concurrent jobs (5 of them macOS) across every repository, so each reusable workflow keeps one run narrow by default:
 
 - `reuseable-go-test.yml` starts cross-builds only after tests pass and builds every `cross-build-targets` entry in a single job; `cross-build-max-parallel` is accepted but ignored. `max-parallel` (default 4) bounds the go-version x go-arch x platform test matrix.
