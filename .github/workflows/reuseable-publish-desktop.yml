@@ -295,7 +295,7 @@ jobs:
 
       # Sign Windows build
       - name: Set up Java
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0 https://github.com/actions/setup-java/releases/tag/v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0 https://github.com/actions/setup-java/releases/tag/v6.2.0
         if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
         with:
           java-version: 21
@@ -677,12 +677,12 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1 https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1
       - name: Login to Docker Hub
         if: inputs.docker-image != ''
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0 https://github.com/docker/login-action/releases/tag/v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0 https://github.com/docker/login-action/releases/tag/v4.8.0
         with:
           username: ${{ inputs.dockerhub-username }}
           password: ${{ secrets.docker-password }} # uses token
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0 https://github.com/docker/login-action/releases/tag/v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0 https://github.com/docker/login-action/releases/tag/v4.8.0
         with:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -736,12 +736,12 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1 https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1
       - name: Login to Docker Hub
         if: inputs.docker-image != ''
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0 https://github.com/docker/login-action/releases/tag/v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0 https://github.com/docker/login-action/releases/tag/v4.8.0
         with:
           username: ${{ inputs.dockerhub-username }}
           password: ${{ secrets.docker-password }} # uses token
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0 https://github.com/docker/login-action/releases/tag/v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0 https://github.com/docker/login-action/releases/tag/v4.8.0
         with:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -821,7 +821,7 @@ jobs:
     steps:
       - name: Login to GHCR
         if: inputs.enable-trivy-scan
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0 https://github.com/docker/login-action/releases/tag/v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0 https://github.com/docker/login-action/releases/tag/v4.8.0
         with:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -869,7 +869,7 @@ jobs:
         # Distinct category per arch: upload-sarif keys results by category, so a
         # shared category would let the arm64 upload overwrite the amd64 one.
         if: always() && inputs.enable-trivy-scan && steps.meta.outputs.version != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3 https://github.com/github/codeql-action/releases/tag/codeql-bundle-v4.39.3
         with:
           sarif_file: 'trivy-results-${{ matrix.arch }}.sarif'
           category: 'trivy-${{ matrix.arch }}'
