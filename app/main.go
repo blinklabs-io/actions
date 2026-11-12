@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -297,7 +298,7 @@ func main() {
 
 	var cfg Config
 	if err := yaml.Unmarshal(configFile, &cfg); err != nil {
-		fmt.Printf("Failed to parse config: %v\n", err)
+		fmt.Println("Failed to parse governance configuration")
 		os.Exit(1)
 	}
 
@@ -307,7 +308,7 @@ func main() {
 		fmt.Printf("🔍 Discovering managed repositories in %s\n", cfg.Discovery.Organization)
 		discovered, err := discoverRepositories(ctx, client.Repositories, cfg.Discovery)
 		if err != nil {
-			fmt.Printf("Failed to discover repositories: %v\n", err)
+			fmt.Println("Failed to discover repositories")
 			os.Exit(1)
 		}
 		mergeDiscovered(&cfg, discovered)
@@ -315,30 +316,79 @@ func main() {
 	}
 
 	if err := expandProfiles(&cfg); err != nil {
-		fmt.Printf("Failed to expand profiles: %v\n", err)
+		fmt.Println("Failed to expand governance profiles")
 		os.Exit(1)
 	}
 	if err := resolvePinnedWorkflowRefs(&cfg, latestWorkflowChange); err != nil {
-		fmt.Printf("Invalid pinned workflow: %v\n", err)
+		fmt.Println("Invalid pinned workflow configuration")
 		os.Exit(1)
 	}
 	if err := validateDependabotConfigs(cfg.Repositories); err != nil {
-		fmt.Printf("Invalid Dependabot config: %v\n", err)
+		fmt.Println("Invalid Dependabot configuration")
 		os.Exit(1)
 	}
-	for _, repo := range cfg.Repositories {
-		owner, repoName := parseRepoString(repo.Name)
-		fmt.Printf("⚡ Starting sync for %s/%s\n", owner, repoName)
-
-		// Observe-Compare-Act loop per repo
-		syncRepoSettings(ctx, client, owner, repoName, repo.Settings)
-		syncCollaborators(ctx, client, owner, repoName, repo.Collaborators)
-		if err := syncBranchProtection(ctx, client, owner, repoName, repo.BranchProtection); err != nil {
-			fmt.Printf("Error syncing branch protection for %s/%s: %v\n", owner, repoName, err)
+	var reportOutput io.Writer = os.Stdout
+	var summary *os.File
+	if path := os.Getenv("GITHUB_STEP_SUMMARY"); path != "" {
+		summary, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			fmt.Println("Unable to open drift report output")
 			os.Exit(1)
 		}
-		syncWorkflows(ctx, client, owner, repoName, repo.Workflows, repo.Dependabot)
+		reportOutput = io.MultiWriter(os.Stdout, summary)
 	}
+	report := newDriftReport(reportOutput)
+	report.configRevision = os.Getenv("GITHUB_SHA")
+	failed := reconcileRepositories(ctx, client, cfg.Repositories, report) != nil
+	if err := report.render(); err != nil {
+		fmt.Println("Unable to write drift report")
+		failed = true
+	}
+	if summary != nil {
+		if err := summary.Close(); err != nil {
+			fmt.Println("Unable to close drift report")
+			failed = true
+		}
+	}
+	if failed {
+		os.Exit(1)
+	}
+
+}
+
+// reconcileRepositories reports only configured items and redacts non-public repositories.
+func reconcileRepositories(ctx context.Context, client *github.Client, repos []RepoConfig, report *driftReport) error {
+	var result error
+	for _, repo := range repos {
+		owner, repoName := parseRepoString(repo.Name)
+		info, _, err := client.Repositories.Get(ctx, owner, repoName)
+		public := err == nil && info != nil && info.Private != nil && !info.GetPrivate() && info.GetVisibility() == "public"
+		report.beginRepo(repo.Name, public)
+		repoCtx := context.WithValue(ctx, driftContextKey{}, report)
+		if err != nil || info == nil || info.Private == nil {
+			report.change("repository", "visibility and access", "", "").status = "unchecked"
+			result = errors.Join(result, errors.New("repository visibility could not be checked"))
+			continue
+		}
+		syncLogf(repoCtx, "Starting sync for %s/%s\n", owner, repoName)
+		if err := reconcileRepoSettings(repoCtx, client, owner, repoName, repo.Settings, report); err != nil {
+			report.diagnostic("repository settings reconciliation failed")
+			result = errors.Join(result, err)
+		}
+		if err := reconcileCollaborators(repoCtx, client, owner, repoName, repo.Collaborators, report); err != nil {
+			report.diagnostic("collaborator reconciliation failed")
+			result = errors.Join(result, err)
+		}
+		if err := syncBranchProtection(repoCtx, client, owner, repoName, repo.BranchProtection); err != nil {
+			report.diagnostic("branch protection reconciliation failed")
+			result = errors.Join(result, err)
+		}
+		if err := syncWorkflows(repoCtx, client, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
+			report.diagnostic("managed file reconciliation failed")
+			result = errors.Join(result, err)
+		}
+	}
+	return result
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +398,7 @@ func main() {
 func parseRepoString(fullName string) (string, string) {
 	parts := strings.SplitN(fullName, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		fmt.Printf("Error: invalid repo name %q — expected \"owner/repo\"\n", fullName)
+		fmt.Println("Error: invalid repository name")
 		os.Exit(1)
 	}
 	return parts[0], parts[1]
@@ -715,17 +765,17 @@ func discoverRepositories(ctx context.Context, client discoveryClient, d Discove
 			if content == nil {
 				// marker_path resolved to a directory (or otherwise has no file
 				// content); GetContent would panic, so treat it as no marker.
-				fmt.Printf("  ⚠️ discovery: marker path for %s is not a file; skipping\n", fullName)
+				fmt.Println("  discovery: marker path is not a file; skipping")
 				continue
 			}
 			decoded, err := content.GetContent()
 			if err != nil {
-				fmt.Printf("  ⚠️ discovery: decoding marker for %s: %v\n", fullName, err)
+				fmt.Println("  discovery: could not decode marker; skipping")
 				continue
 			}
 			repoCfg, err := parseMarker([]byte(decoded), fullName)
 			if err != nil {
-				fmt.Printf("  ⚠️ discovery: %v\n", err)
+				fmt.Println("  discovery: invalid marker; skipping")
 				continue
 			}
 			discovered = append(discovered, repoCfg)
@@ -766,11 +816,11 @@ func mergeDiscovered(cfg *Config, discovered []RepoConfig) {
 	for _, r := range discovered {
 		key := strings.ToLower(r.Name)
 		if seen[key] {
-			fmt.Printf("  discovery: %s is pinned in repos-config.yaml; skipping marker\n", r.Name)
+			fmt.Println("  discovery: explicitly configured repository; skipping marker")
 			continue
 		}
 		if _, ok := cfg.Profiles[r.Profile]; !ok {
-			fmt.Printf("  ⚠️ discovery: %s references unknown profile %q; skipping\n", r.Name, r.Profile)
+			fmt.Println("  discovery: unknown profile; skipping")
 			continue
 		}
 		// Expand the discovered repository in isolation so a bad marker (an
@@ -780,7 +830,7 @@ func mergeDiscovered(cfg *Config, discovered []RepoConfig) {
 		// profile untouched if expansion fails.
 		expanded := r
 		if err := expandRepo(cfg, &expanded); err != nil {
-			fmt.Printf("  ⚠️ discovery: %s: %v; skipping\n", r.Name, err)
+			fmt.Println("  discovery: invalid repository configuration; skipping")
 			continue
 		}
 		seen[key] = true
@@ -793,9 +843,25 @@ func mergeDiscovered(cfg *Config, discovered []RepoConfig) {
 // ---------------------------------------------------------------------------
 
 func syncBranchProtection(ctx context.Context, client *github.Client, owner, repo string, protections []BranchProtection) error {
+	var failures error
 	for _, bp := range protections {
+		if bp.RequireUpToDate && len(bp.RequiredStatusChecks) == 0 {
+			if report := reportFromContext(ctx); report != nil {
+				report.change("branch protection", bp.Branch, "", "").status = "unchecked"
+			}
+			failures = errors.Join(failures, errors.New("strict status checks require at least one required check"))
+			continue
+		}
 		// Observe current state first so unmodeled settings can be preserved.
-		current, _, getErr := client.Repositories.GetBranchProtection(ctx, owner, repo, bp.Branch)
+		current, getResponse, getErr := client.Repositories.GetBranchProtection(ctx, owner, repo, bp.Branch)
+
+		if getErr == nil && current == nil {
+			if report := reportFromContext(ctx); report != nil {
+				report.change("branch protection", bp.Branch, "", "").status = "unchecked"
+			}
+			failures = errors.Join(failures, errors.New("branch protection response was empty"))
+			continue
+		}
 
 		// Build desired protection request.
 		req := &github.ProtectionRequest{
@@ -854,103 +920,58 @@ func syncBranchProtection(ctx context.Context, client *github.Client, owner, rep
 			req.RequiredPullRequestReviews = prReq
 		}
 
-		// Drift check: skip update if current state already matches desired.
-		if getErr == nil {
-			hasPR := current.GetRequiredPullRequestReviews() != nil
-			wantsPR := !bp.BypassPullRequest
-
-			var currentChecks []string
-			currentStrict := false
-			if c := current.GetRequiredStatusChecks(); c != nil {
-				if c.Contexts != nil {
-					currentChecks = *c.Contexts
-				}
-				currentStrict = c.Strict
+		if getErr != nil && (getResponse == nil || getResponse.StatusCode != http.StatusNotFound || !branchIsUnprotected(getErr)) {
+			if report := reportFromContext(ctx); report != nil {
+				report.change("branch protection", bp.Branch, "", "").status = "unchecked"
 			}
-
-			currentEnforceAdmins := false
-			if ea := current.GetEnforceAdmins(); ea != nil {
-				currentEnforceAdmins = ea.Enabled
+			failures = errors.Join(failures, errors.New("could not observe branch protection"))
+			continue
+		}
+		before, after := branchProtectionDiff(current, bp)
+		var entry *driftEntry
+		if report := reportFromContext(ctx); report != nil {
+			entry = report.change("branch protection", bp.Branch, before, after)
+		}
+		if getErr == nil && before == "" {
+			if entry != nil {
+				entry.status = "matched"
 			}
-			currentAllowForcePushes := false
-			if afp := current.GetAllowForcePushes(); afp != nil {
-				currentAllowForcePushes = afp.Enabled
+			syncLogf(ctx, "Branch protection on %s already matches desired state.\n", bp.Branch)
+			continue
+		}
+		if hasUnmanagedProtection(current) {
+			if entry != nil {
+				entry.status = "skipped"
 			}
-			currentAllowDeletions := false
-			if ad := current.GetAllowDeletions(); ad != nil {
-				currentAllowDeletions = ad.Enabled
-			}
-			currentLinear := false
-			if rl := current.GetRequireLinearHistory(); rl != nil {
-				currentLinear = rl.Enabled
-			}
-			currentConvRes := false
-			if cr := current.GetRequiredConversationResolution(); cr != nil {
-				currentConvRes = cr.Enabled
-			}
-			currentLock := false
-			if lb := current.GetLockBranch(); lb != nil {
-				currentLock = lb.GetEnabled()
-			}
-
-			// Only check PR-review subfields when PR reviews are desired;
-			// when bypassed those fields are not sent in the request.
-			prReviewsMatch := true
-			if wantsPR {
-				currentApprovals := 0
-				currentDismiss := false
-				currentCodeOwner := false
-				var currentBypassUsers, currentBypassTeams, currentBypassApps []string
-				if r := current.GetRequiredPullRequestReviews(); r != nil {
-					currentApprovals = r.RequiredApprovingReviewCount
-					currentDismiss = r.DismissStaleReviews
-					currentCodeOwner = r.RequireCodeOwnerReviews
-					if b := r.BypassPullRequestAllowances; b != nil {
-						for _, u := range b.Users {
-							currentBypassUsers = append(currentBypassUsers, u.GetLogin())
-						}
-						for _, t := range b.Teams {
-							currentBypassTeams = append(currentBypassTeams, t.GetSlug())
-						}
-						for _, a := range b.Apps {
-							currentBypassApps = append(currentBypassApps, a.GetSlug())
-						}
-					}
-				}
-				prReviewsMatch = currentApprovals == bp.RequiredApprovingReviewCount &&
-					currentDismiss == bp.DismissStaleReviews &&
-					currentCodeOwner == bp.RequireCodeOwnerReviews &&
-					statusChecksEqual(currentBypassUsers, bp.BypassActorsUsers) &&
-					statusChecksEqual(currentBypassTeams, bp.BypassActorsTeams) &&
-					statusChecksEqual(currentBypassApps, bp.BypassActorsApps)
-			}
-
-			if hasPR == wantsPR &&
-				statusChecksEqual(currentChecks, bp.RequiredStatusChecks) &&
-				currentStrict == bp.RequireUpToDate &&
-				prReviewsMatch &&
-				currentEnforceAdmins == bp.EnforceAdmins &&
-				currentAllowForcePushes == bp.AllowForcePushes &&
-				currentAllowDeletions == bp.AllowDeletions &&
-				currentLinear == bp.RequireLinearHistory &&
-				currentConvRes == bp.RequiredConversationResolution &&
-				currentLock == bp.LockBranch {
-				fmt.Printf("✅ Branch protection on %s already matches desired state.\n", bp.Branch)
-				continue
-			}
+			failures = errors.Join(failures, errors.New("branch protection includes unmanaged controls that cannot be safely replaced"))
+			continue
 		}
 
 		action := "Updating"
 		if getErr != nil {
 			action = "Creating"
 		}
-		fmt.Printf("  %s branch protection on %s...\n", action, bp.Branch)
-		if _, _, updateErr := client.Repositories.UpdateBranchProtection(ctx, owner, repo, bp.Branch, req); updateErr != nil {
-			return fmt.Errorf("branch %s: %s protection: %w", bp.Branch, action, updateErr)
+		syncLogf(ctx, "  %s branch protection on %s...\n", action, bp.Branch)
+		if report := reportFromContext(ctx); report != nil {
+			if err := report.checkpoint(entry); err != nil {
+				entry.status = "skipped"
+				failures = errors.Join(failures, errors.New("could not record planned branch protection change"))
+				continue
+			}
 		}
-		fmt.Printf("✅ Branch protection %s on %s\n", action, bp.Branch)
+		if _, _, updateErr := client.Repositories.UpdateBranchProtection(ctx, owner, repo, bp.Branch, req); updateErr != nil {
+			if entry != nil {
+				entry.status = "failed"
+			}
+			failures = errors.Join(failures, errors.New("could not update branch protection"))
+			continue
+		}
+		if entry != nil {
+			entry.status = "corrected"
+		}
+		syncLogf(ctx, "✅ Branch protection %s on %s\n", action, bp.Branch)
 	}
-	return nil
+	return failures
 }
 
 // renderTriggers marshals the triggers map to an indented YAML block suitable
@@ -1002,64 +1023,6 @@ func renderMatrix(matrix map[string]interface{}) (string, error) {
 		lines[i] = "        " + l
 	}
 	return strings.Join(lines, "\n"), nil
-}
-
-// statusChecksEqual reports whether two context slices contain the same set of
-// check names, independent of order (GitHub may return them in any sequence).
-func statusChecksEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	ac := make([]string, len(a))
-	bc := make([]string, len(b))
-	copy(ac, a)
-	copy(bc, b)
-	sort.Strings(ac)
-	sort.Strings(bc)
-	for i := range ac {
-		if ac[i] != bc[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func syncRepoSettings(ctx context.Context, client *github.Client, owner, repo string, settings RepoSettings) {
-	current, _, err := client.Repositories.Get(ctx, owner, repo)
-	if err != nil {
-		fmt.Printf("  Error getting repo details: %v\n", err)
-		return
-	}
-
-	// An unset (nil) DeleteBranchOnMerge means the setting is unmanaged; leave
-	// the repository's current value untouched.
-	if settings.DeleteBranchOnMerge == nil {
-		fmt.Println("✅ No repository settings to reconcile.")
-		return
-	}
-
-	if current.GetDeleteBranchOnMerge() != *settings.DeleteBranchOnMerge {
-		fmt.Println("  Updating repository settings...")
-		update := &github.Repository{
-			DeleteBranchOnMerge: github.Bool(*settings.DeleteBranchOnMerge),
-		}
-		_, _, _ = client.Repositories.Edit(ctx, owner, repo, update)
-	} else {
-		fmt.Println("✅ Repository settings already match desired state.")
-	}
-}
-
-func syncCollaborators(ctx context.Context, client *github.Client, owner, repo string, collaborators []Collaborator) {
-	for _, c := range collaborators {
-		perm, _, err := client.Repositories.GetPermissionLevel(ctx, owner, repo, c.Username)
-		if err == nil && perm.GetPermission() == c.Permission {
-			fmt.Printf("✅ Collaborator %s already has permission %s\n", c.Username, c.Permission)
-			continue
-		}
-		fmt.Printf("  Updating collaborator %s to permission %s\n", c.Username, c.Permission)
-		opts := &github.RepositoryAddCollaboratorOptions{Permission: c.Permission}
-		_, _, _ = client.Repositories.AddCollaborator(ctx, owner, repo, c.Username, opts)
-	}
 }
 
 // buildWorkflowTemplate parses the wrapper template from templatePath using the
@@ -1837,12 +1800,15 @@ func declaresWorkflowCall(on yaml.Node) bool {
 	return false
 }
 
-func syncWorkflows(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig, dependabotConfig ...string) {
+func syncWorkflows(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig, dependabotConfig ...string) error {
 	// Fetch repo info once to get the actual default branch name.
 	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
-	if err != nil {
-		fmt.Printf("  Error getting repo info: %v\n", err)
-		return
+	if err != nil || repoInfo == nil || repoInfo.GetDefaultBranch() == "" {
+		syncLogf(ctx, "  Error getting repo info: %v\n", err)
+		if report := reportFromContext(ctx); report != nil {
+			report.change("managed files", "repository", "", "").status = "unchecked"
+		}
+		return errors.New("could not observe repository for managed files")
 	}
 	defaultBranch := repoInfo.GetDefaultBranch()
 	dependabot := ""
@@ -1852,8 +1818,11 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 
 	tmpl, err := buildWorkflowTemplate("templates/workflow.tmpl")
 	if err != nil {
-		fmt.Printf("  Template compilation error: %v\n", err)
-		return
+		syncLogf(ctx, "  Template compilation error: %v\n", err)
+		if report := reportFromContext(ctx); report != nil {
+			report.change("managed files", "template", "", "").status = "unchecked"
+		}
+		return errors.New("could not load workflow template")
 	}
 
 	standalone, pipelines := groupPipelines(workflows)
@@ -1861,12 +1830,21 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 	// Every managed file change this repository needs is staged here and written
 	// as one commit, so a reconciliation that touches several files starts one
 	// CI run instead of one run per file.
-	batch := &commitBatch{}
+	ref, _, err := client.Git.GetRef(ctx, owner, repo, "heads/"+defaultBranch)
+	if err != nil || ref == nil || ref.GetObject() == nil || ref.GetObject().GetSHA() == "" {
+		if report := reportFromContext(ctx); report != nil {
+			report.change("managed files", "default branch", "", "").status = "unchecked"
+		}
+		return errors.New("could not observe managed-file base revision")
+	}
+	batch := &commitBatch{baseCommitSHA: ref.GetObject().GetSHA(), repositoryID: repoInfo.GetNodeID()}
 
 	for _, wf := range standalone {
 		desiredContent, err := renderWorkflow(tmpl, wf)
 		if err != nil {
-			fmt.Printf("  Render error for %s: %v\n", wf.DestinationFile, err)
+			syncLogf(ctx, "  Render error for %s: %v\n", wf.DestinationFile, err)
+			reportManagedFile(ctx, batch, wf.DestinationFile, "", "", "unchecked")
+			batch.failed = true
 			continue
 		}
 		stageWorkflowFile(ctx, client, owner, repo, batch, wf.DestinationFile, desiredContent)
@@ -1876,17 +1854,19 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 	if len(pipelines) > 0 {
 		pipelineTmpl, perr := buildWorkflowTemplate("templates/pipeline.tmpl")
 		if perr != nil {
-			fmt.Printf("  Pipeline template compilation error: %v\n", perr)
-			// Still commit the standalone changes already staged.
-			flushBatch(ctx, client, owner, repo, defaultBranch, batch)
-			return
+			syncLogf(ctx, "  Pipeline template compilation error: %v\n", perr)
+			reportManagedFile(ctx, batch, "pipeline template", "", "", "unchecked")
+			batch.failed = true
+			_ = flushBatch(ctx, client, owner, repo, defaultBranch, batch)
+			return errors.New("could not load pipeline template")
 		}
 		for _, members := range pipelines {
 			desiredContent, rerr := renderPipeline(pipelineTmpl, members)
 			if rerr != nil {
-				fmt.Printf("  Render error for pipeline %s: %v\n", members[0].Pipeline, rerr)
-				// Leave the superseded wrappers in place: they are this
-				// repository's only CI until the pipeline renders.
+				syncLogf(ctx, "  Render error for pipeline %s: %v\n", members[0].Pipeline, rerr)
+				// Keep the batch atomic when any desired pipeline cannot render.
+				reportManagedFile(ctx, batch, members[0].Pipeline, "", "", "unchecked")
+				batch.failed = true
 				continue
 			}
 			// Stage the pipeline and the removal of the wrappers it supersedes
@@ -1906,7 +1886,7 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 		stageManagedFile(ctx, client, owner, repo, batch, ".github/dependabot.yml", []byte(dependabot))
 	}
 
-	flushBatch(ctx, client, owner, repo, defaultBranch, batch)
+	return flushBatch(ctx, client, owner, repo, defaultBranch, batch)
 }
 
 // stageManagedFile stages a managed file only when its contents differ from the
@@ -1919,34 +1899,40 @@ func stageManagedFile(
 	path string,
 	desiredContent []byte,
 ) {
-	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
+	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, batch.contentOptions())
 	if err == nil {
 		if fileContent == nil {
-			fmt.Printf("  Error reading managed file %s: path is not a file\n", path)
+			reportManagedFile(ctx, batch, path, "", "", "unchecked")
+			syncLogf(ctx, "  Error reading managed file %s: path is not a file\n", path)
 			batch.failed = true
 			return
 		}
 		existingContent, decErr := fileContent.GetContent()
 		if decErr != nil {
-			fmt.Printf("  Error decoding %s: %v\n", path, decErr)
+			reportManagedFile(ctx, batch, path, "", "", "unchecked")
+			syncLogf(ctx, "  Error decoding %s: %v\n", path, decErr)
 			batch.failed = true
 			return
 		}
 		if existingContent == string(desiredContent) {
-			fmt.Printf("✅ Managed file %s matches perfectly. Skipping push.\n", path)
+			reportManagedFile(ctx, batch, path, "", "", "matched")
+			syncLogf(ctx, "✅ Managed file %s matches perfectly. Skipping push.\n", path)
 			return
 		}
-		fmt.Printf("  Drift detected in %s. Staging update...\n", path)
+		syncLogf(ctx, "  Drift detected in %s. Staging update...\n", path)
+		reportManagedFile(ctx, batch, path, fileDigest([]byte(existingContent)), fileDigest(desiredContent), "pending")
 		batch.upsert(path, desiredContent, fmt.Sprintf("update %s", path))
 		return
 	}
 	if !isNotFound(err) {
-		fmt.Printf("  Error reading managed file %s: %v\n", path, err)
+		reportManagedFile(ctx, batch, path, "", "", "unchecked")
+		syncLogf(ctx, "  Error reading managed file %s: %v\n", path, err)
 		batch.failed = true
 		return
 	}
 
-	fmt.Printf("  Staging creation of missing managed file %s...\n", path)
+	syncLogf(ctx, "  Staging creation of missing managed file %s...\n", path)
+	reportManagedFile(ctx, batch, path, "absent", fileDigest(desiredContent), "pending")
 	batch.upsert(path, desiredContent, fmt.Sprintf("add %s", path))
 }
 
@@ -1962,37 +1948,43 @@ func stageWorkflowFile(
 	desiredContent []byte,
 ) {
 	path := fmt.Sprintf(".github/workflows/%s", destinationFile)
-	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, nil)
+	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, batch.contentOptions())
 
 	if err != nil && !isNotFound(err) {
-		fmt.Printf("  Error reading workflow file %s: %v\n", path, err)
+		reportManagedFile(ctx, batch, path, "", "", "unchecked")
+		syncLogf(ctx, "  Error reading workflow file %s: %v\n", path, err)
 		batch.failed = true
 		return
 	}
 	if err == nil {
 		if fileContent == nil {
-			fmt.Printf("  Error reading workflow file %s: path is not a file\n", path)
+			reportManagedFile(ctx, batch, path, "", "", "unchecked")
+			syncLogf(ctx, "  Error reading workflow file %s: path is not a file\n", path)
 			batch.failed = true
 			return
 		}
 		// File exists — GetContent() already returns the decoded string.
 		existingContent, decErr := fileContent.GetContent()
 		if decErr != nil {
-			fmt.Printf("  Error decoding %s: %v\n", path, decErr)
+			reportManagedFile(ctx, batch, path, "", "", "unchecked")
+			syncLogf(ctx, "  Error decoding %s: %v\n", path, decErr)
 			batch.failed = true
 			return
 		}
 		if existingContent == string(desiredContent) {
-			fmt.Printf("✅ Workflow file %s matches perfectly. Skipping push.\n", destinationFile)
+			reportManagedFile(ctx, batch, path, "", "", "matched")
+			syncLogf(ctx, "✅ Workflow file %s matches perfectly. Skipping push.\n", destinationFile)
 			return
 		}
-		fmt.Printf("  Drift detected in %s. Staging update...\n", destinationFile)
+		syncLogf(ctx, "  Drift detected in %s. Staging update...\n", destinationFile)
+		reportManagedFile(ctx, batch, path, fileDigest([]byte(existingContent)), fileDigest(desiredContent), "pending")
 		batch.upsert(path, desiredContent, fmt.Sprintf("update %s", destinationFile))
 		return
 	}
 
 	// File does not exist — stage its creation.
-	fmt.Printf("  Staging creation of missing workflow file %s...\n", destinationFile)
+	syncLogf(ctx, "  Staging creation of missing workflow file %s...\n", destinationFile)
+	reportManagedFile(ctx, batch, path, "absent", fileDigest(desiredContent), "pending")
 	batch.upsert(path, desiredContent, fmt.Sprintf("add %s", destinationFile))
 }
 
@@ -2008,22 +2000,25 @@ func stageRemovals(
 	paths []string,
 ) {
 	for _, workflowPath := range paths {
-		fileContent, _, _, getErr := client.Repositories.GetContents(ctx, owner, repo, workflowPath, nil)
+		fileContent, _, _, getErr := client.Repositories.GetContents(ctx, owner, repo, workflowPath, batch.contentOptions())
 		if getErr != nil {
 			if isNotFound(getErr) {
 				continue
 			}
-			fmt.Printf("  Error checking %s for cleanup: %v\n", workflowPath, getErr)
+			reportManagedFile(ctx, batch, workflowPath, "", "", "unchecked")
+			syncLogf(ctx, "  Error checking %s for cleanup: %v\n", workflowPath, getErr)
 			batch.failed = true
 			return
 		}
 		if fileContent == nil || fileContent.SHA == nil {
-			fmt.Printf("  Error checking %s for cleanup: path is not a file\n", workflowPath)
+			reportManagedFile(ctx, batch, workflowPath, "", "", "unchecked")
+			syncLogf(ctx, "  Error checking %s for cleanup: path is not a file\n", workflowPath)
 			batch.failed = true
 			return
 		}
 
-		fmt.Printf("  Staging removal of %s...\n", workflowPath)
+		syncLogf(ctx, "  Staging removal of %s...\n", workflowPath)
+		reportManagedFile(ctx, batch, workflowPath, "git blob: "+fileContent.GetSHA(), "absent", "pending")
 		batch.remove(workflowPath, fmt.Sprintf(
 			"remove %s", strings.TrimPrefix(workflowPath, ".github/workflows/"),
 		))
@@ -2051,9 +2046,19 @@ type fileOp struct {
 // files into N commits and N CI runs; batching to one commit per repo replaces
 // that fan-out with a single run.
 type commitBatch struct {
-	failed  bool
-	ops     []fileOp
-	summary []string
+	failed        bool
+	ops           []fileOp
+	summary       []string
+	reportEntries []*driftEntry
+	baseCommitSHA string
+	repositoryID  string
+}
+
+func (b *commitBatch) contentOptions() *github.RepositoryContentGetOptions {
+	if b.baseCommitSHA == "" {
+		return nil
+	}
+	return &github.RepositoryContentGetOptions{Ref: b.baseCommitSHA}
 }
 
 // upsert stages writing content to path. desc is a short line for the commit body.
@@ -2095,22 +2100,42 @@ func flushBatch(
 	client *github.Client,
 	owner, repo, defaultBranch string,
 	batch *commitBatch,
-) {
-	if batch.failed || len(batch.ops) == 0 {
-		return
+) (result error) {
+	defer func() {
+		for _, entry := range batch.reportEntries {
+			if batch.failed {
+				entry.status = "skipped"
+			} else if result != nil {
+				entry.status = "failed"
+			} else {
+				entry.status = "corrected"
+			}
+		}
+	}()
+	if batch.failed {
+		return errors.New("managed file observation failed")
+	}
+	if len(batch.ops) == 0 {
+		return nil
 	}
 
 	ref, _, err := client.Git.GetRef(ctx, owner, repo, "heads/"+defaultBranch)
-	if err != nil {
-		fmt.Printf("  Error reading %s ref: %v\n", defaultBranch, err)
-		return
+	if err != nil || ref == nil || ref.GetObject() == nil || ref.GetObject().GetSHA() == "" {
+		syncLogf(ctx, "  Error reading %s ref: %v\n", defaultBranch, err)
+		return errors.New("managed file update failed")
 	}
 	baseCommitSHA := ref.GetObject().GetSHA()
+	if batch.baseCommitSHA != "" && baseCommitSHA != batch.baseCommitSHA {
+		return errors.New("managed file base changed during reconciliation")
+	}
 
 	baseCommit, _, err := client.Git.GetCommit(ctx, owner, repo, baseCommitSHA)
 	if err != nil {
-		fmt.Printf("  Error reading base commit: %v\n", err)
-		return
+		if report := reportFromContext(ctx); report != nil {
+			report.diagnostic("managed file base commit lookup failed")
+		}
+		syncLogf(ctx, "  Error reading base commit: %v\n", err)
+		return errors.New("managed file update failed")
 	}
 	baseTreeSHA := baseCommit.GetTree().GetSHA()
 
@@ -2131,10 +2156,21 @@ func flushBatch(
 		entries = append(entries, entry)
 	}
 
+	if report := reportFromContext(ctx); report != nil {
+		for _, entry := range batch.reportEntries {
+			if err := report.checkpoint(entry); err != nil {
+				batch.failed = true
+				return errors.New("could not record planned managed file changes")
+			}
+		}
+	}
 	newTree, _, err := client.Git.CreateTree(ctx, owner, repo, baseTreeSHA, entries)
 	if err != nil {
-		fmt.Printf("  Error creating tree: %v\n", err)
-		return
+		if report := reportFromContext(ctx); report != nil {
+			report.diagnostic("managed file tree creation failed")
+		}
+		syncLogf(ctx, "  Error creating tree: %v\n", err)
+		return errors.New("managed file update failed")
 	}
 
 	commit := &github.Commit{
@@ -2143,19 +2179,44 @@ func flushBatch(
 		Parents: []*github.Commit{{SHA: github.String(baseCommitSHA)}},
 	}
 	newCommit, _, err := client.Git.CreateCommit(ctx, owner, repo, commit, nil)
-	if err != nil {
-		fmt.Printf("  Error creating commit: %v\n", err)
-		return
+	if err != nil || newCommit == nil || newCommit.GetSHA() == "" {
+		if report := reportFromContext(ctx); report != nil {
+			report.diagnostic("managed file commit creation failed")
+		}
+		syncLogf(ctx, "  Error creating commit: %v\n", err)
+		return errors.New("managed file update failed")
 	}
 
-	ref.Object.SHA = newCommit.SHA
-	if _, _, err := client.Git.UpdateRef(ctx, owner, repo, ref, false); err != nil {
-		fmt.Printf("  Error updating %s ref: %v\n", defaultBranch, err)
-		return
+	// Recheck the default branch and publish only if its observed head is unchanged.
+	latestRepo, _, err := client.Repositories.Get(ctx, owner, repo)
+	if err != nil || latestRepo == nil || latestRepo.GetDefaultBranch() != defaultBranch {
+		return errors.New("default branch changed during reconciliation")
+	}
+	repositoryID := batch.repositoryID
+	if repositoryID == "" {
+		repositoryID = latestRepo.GetNodeID()
+	}
+	if err := updateManagedRef(ctx, client, repositoryID, defaultBranch, baseCommitSHA, newCommit.GetSHA()); err != nil {
+		if report := reportFromContext(ctx); report != nil {
+			var statusErr *refHTTPError
+			if errors.As(err, &statusErr) {
+				report.diagnostic(fmt.Sprintf("atomic ref update returned HTTP %d", statusErr.status))
+			} else {
+				report.diagnostic("atomic ref update failed")
+			}
+		}
+		syncLogf(ctx, "  Error updating branch ref: %v\n", err)
+		return errors.New("managed file update failed")
 	}
 
-	fmt.Printf(
+	if report := reportFromContext(ctx); report != nil && report.active.public {
+		for _, entry := range batch.reportEntries {
+			entry.commit = newCommit.GetSHA()
+		}
+	}
+	syncLogf(ctx,
 		"✅ Committed %d managed file change(s) to %s/%s@%s in one commit.\n",
 		len(batch.ops), owner, repo, defaultBranch,
 	)
+	return nil
 }

@@ -101,7 +101,10 @@ publish-wireguard-helm-chart.yml
 	for _, failAt := range []string{"", "tree"} {
 		t.Run("failure="+failAt, func(t *testing.T) {
 			g := &recordingGitHub{contents: contents, failAt: failAt}
-			syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows)
+			err := syncWorkflows(context.Background(), newRecordingClient(t, g), "o", "r", workflows)
+			if (err != nil) != (failAt != "") {
+				t.Fatalf("sync error = %v, failure point = %q", err, failAt)
+			}
 			var tree struct {
 				Entries []struct {
 					Path    string  `json:"path"`
@@ -142,7 +145,7 @@ publish-wireguard-helm-chart.yml
 			if failAt != "" {
 				wantUpdates = 0
 			}
-			if got := g.count(http.MethodPatch, "/git/refs/"); got != wantUpdates {
+			if got := g.count(http.MethodPost, "/graphql"); got != wantUpdates {
 				t.Errorf("branch updates = %d, want %d", got, wantUpdates)
 			}
 		})

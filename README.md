@@ -139,8 +139,8 @@ The engine (`app/main.go`) runs as a batch job — there is no long-running
 server or webhook listener. For each repository in `repos-config.yaml` it
 performs an observe → compare → act loop:
 
-1. `syncRepoSettings` — reconciles repository settings (e.g. `delete_branch_on_merge`).
-2. `syncCollaborators` — reconciles collaborators and their permission levels.
+1. `reconcileRepoSettings` — reconciles repository settings (e.g. `delete_branch_on_merge`).
+2. `reconcileCollaborators` — reconciles collaborators and their permission levels.
 3. `syncBranchProtection` — reconciles branch protection rules.
 4. `syncWorkflows` — renders standalone wrappers from `templates/workflow.tmpl`
    and grouped pipelines from `templates/pipeline.tmpl`. Configured workflows
@@ -149,6 +149,27 @@ performs an observe → compare → act loop:
 
 Writes go **directly to each repository's default branch**; the engine does not
 open pull requests.
+
+The governance sync reports observed differences before applying changes, using
+`-` for the observed value and `+` for the configured value. Results appear in
+the job log and GitHub Actions job summary. Public repository file changes are
+represented by hashes rather than file contents; collaborator and bypass actor
+names are redacted. Private or unknown-visibility repositories appear only in
+aggregate counts. The report covers configured settings, collaborators, branch
+protections, and managed files; it does not audit unmanaged items or identify
+who made a change.
+
+The final report distinguishes matches, unmanaged settings, corrections,
+invitations, failures, unchecked items, and skipped or pending work. A
+correction means GitHub accepted the update; collaborator permissions are also
+read again, while other corrections have no separate verification read. The
+collaborator comparison uses effective permissions, which can include grants from
+teams or the organization. Membership is observed from the complete collaborator
+list visible to the governance app; an incomplete list prevents invitations.
+Invitations may still be awaiting acceptance. Observation or correction
+errors cause the sync to fail rather than report a clean result.
+Branch protection updates are skipped when an unmanaged control could be lost
+by GitHub's replacement API; those cases require manual attention.
 
 ## Release fan-out
 
