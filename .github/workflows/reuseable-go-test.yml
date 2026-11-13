@@ -305,7 +305,7 @@ jobs:
             ${{ inputs.working-directory }}/go.sum
       - name: Setup Buf
         if: inputs.run-buf-checks || inputs.verify-buf-generated
-        uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0 https://github.com/bufbuild/buf-action/releases/tag/v1.6.0
+        uses: bufbuild/buf-action@37ac33d8960807670a6e9719080e885197b09cc6 # v1.7.0 https://github.com/bufbuild/buf-action/releases/tag/v1.7.0
         with:
           setup_only: true
       - name: Check go.mod is tidy
