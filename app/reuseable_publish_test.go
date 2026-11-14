@@ -49,6 +49,37 @@ func TestReusablePublishReleaseAssetAuthentication(t *testing.T) {
 	t.Fatal("build-binaries job has no Upload release asset step")
 }
 
+func TestGoSCLSUsesSharedDraftPublisher(t *testing.T) {
+	config := loadRealConfig(t)
+	for _, repo := range config.Repositories {
+		if repo.Name != "blinklabs-io/go-scls" {
+			continue
+		}
+		for _, workflow := range repo.Workflows {
+			if workflow.DestinationFile != "publish.yml" {
+				continue
+			}
+			if !strings.Contains(workflow.ReusableWorkflow, "/reuseable-publish.yml@") {
+				t.Fatalf("go-scls publish workflow = %q, want shared reusable publisher", workflow.ReusableWorkflow)
+			}
+			if got := workflow.Params["binary-name"]; got != "scls" {
+				t.Errorf("binary-name = %q, want scls", got)
+			}
+			if got := workflow.Params["update-go-proxy"]; got != "true" {
+				t.Errorf("update-go-proxy = %q, want true", got)
+			}
+			for _, target := range []string{`"os":"darwin"`, `"os":"freebsd"`, `"os":"linux"`, `"os":"windows"`} {
+				if !strings.Contains(workflow.Params["binary-target-matrix"], target) {
+					t.Errorf("binary-target-matrix is missing %s: %s", target, workflow.Params["binary-target-matrix"])
+				}
+			}
+			return
+		}
+		t.Fatal("go-scls has no configured publish workflow")
+	}
+	t.Fatal("go-scls is absent from repository configuration")
+}
+
 func TestReusablePublishPassesPrereleaseToScriptThroughEnvironment(t *testing.T) {
 	workflowData, err := os.ReadFile("../.github/workflows/reuseable-publish.yml")
 	if err != nil {
