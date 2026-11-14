@@ -35,8 +35,9 @@ func TestGovernanceSyncRequiresEnvironmentBeforeAppToken(t *testing.T) {
 			If          string `yaml:"if"`
 			Environment string `yaml:"environment"`
 			Steps       []struct {
-				Uses string `yaml:"uses"`
-				Run  string `yaml:"run"`
+				Uses string            `yaml:"uses"`
+				Run  string            `yaml:"run"`
+				Env  map[string]string `yaml:"env"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -55,7 +56,7 @@ func TestGovernanceSyncRequiresEnvironmentBeforeAppToken(t *testing.T) {
 	if job.Environment != "governance-sync" || !strings.Contains(job.If, "refs/heads/main") {
 		t.Fatalf("sync is not restricted to the protected main environment: %+v", job)
 	}
-	verify, mint := -1, -1
+	verify, mint, identity, engine := -1, -1, -1, -1
 	for i, step := range job.Steps {
 		if strings.Contains(step.Run, "verify-governance-approval") {
 			verify = i
@@ -63,9 +64,18 @@ func TestGovernanceSyncRequiresEnvironmentBeforeAppToken(t *testing.T) {
 		if strings.Contains(step.Uses, "actions/create-github-app-token@") {
 			mint = i
 		}
+		if strings.Contains(step.Run, `test "$APP_SLUG" = blinklabs-governance`) {
+			identity = i
+			if step.Env["APP_SLUG"] != "${{ steps.generate-token.outputs.app-slug }}" {
+				t.Error("the identity check does not use the minted token's app slug")
+			}
+		}
+		if strings.TrimSpace(step.Run) == "go run ./app" {
+			engine = i
+		}
 	}
-	if verify < 0 || mint < 0 || verify >= mint {
-		t.Fatalf("approval check %d must precede app token %d", verify, mint)
+	if verify < 0 || mint < 0 || identity < 0 || engine < 0 || verify >= mint || mint >= identity || identity >= engine {
+		t.Fatalf("approval, token, identity and execution are out of order: %d %d %d %d", verify, mint, identity, engine)
 	}
 }
 

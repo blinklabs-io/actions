@@ -54,6 +54,11 @@ jobs:
           permission-contents: write
           permission-workflows: write
 
+      - name: Verify governance app identity
+        env:
+          APP_SLUG: ${{ steps.generate-token.outputs.app-slug }}
+        run: test "$APP_SLUG" = blinklabs-governance
+
       - name: Run governance sync
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
