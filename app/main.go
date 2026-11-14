@@ -111,6 +111,10 @@ type WorkflowOverride struct {
 type RepoConfig struct {
 	Name    string `yaml:"name"`
 	Profile string `yaml:"profile"`
+	// Private controls creation only; an existing repository's visibility is unchanged.
+	Private *bool `yaml:"private"`
+	// ArchiveOnRemoval arms archival only after this configuration has been applied.
+	ArchiveOnRemoval bool `yaml:"archive_on_removal"`
 	// Dependabot is the complete manifest written to .github/dependabot.yml.
 	Dependabot string `yaml:"dependabot"`
 	// Vars supplies the per-repo values substituted into ${var} placeholders in
@@ -274,6 +278,14 @@ type pipelineData struct {
 // ---------------------------------------------------------------------------
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "verify-governance-approval" {
+		client := github.NewClient(nil).WithAuthToken(os.Getenv("GH_TOKEN"))
+		if err := verifyGovernanceApproval(context.Background(), client, os.Getenv("GITHUB_REPOSITORY"), os.Getenv("GITHUB_RUN_ID"), os.Getenv("GITHUB_RUN_ATTEMPT")); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if code, handled := runFanoutCommand(os.Args[1:], os.Stdout, os.Stderr); handled {
 		os.Exit(code)
 	}
@@ -300,6 +312,45 @@ func main() {
 	if err := yaml.Unmarshal(configFile, &cfg); err != nil {
 		fmt.Println("Failed to parse governance configuration")
 		os.Exit(1)
+	}
+	controllerName := os.Getenv("GITHUB_REPOSITORY")
+	revision := os.Getenv("GITHUB_SHA")
+	controller, err := loadLifecycle(ctx, client, controllerName, revision, []byte(os.Getenv("GOVERNANCE_LIFECYCLE_STATE_KEY")))
+	if err != nil {
+		fmt.Println("Could not load governance lifecycle state")
+		os.Exit(1)
+	}
+	if err := validateExplicitRepositories(cfg.Repositories, controller.owner); err != nil {
+		fmt.Println("Invalid configured repositories")
+		os.Exit(1)
+	}
+	if cfg.Discovery.Enabled && !strings.EqualFold(strings.TrimSpace(cfg.Discovery.Organization), controller.owner) {
+		fmt.Println("Discovery must use the controller organization")
+		os.Exit(1)
+	}
+	head, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	committedConfig, configErr := exec.Command("git", "show", revision+":repos-config.yaml").Output()
+	if err != nil || strings.TrimSpace(string(head)) != revision || configErr != nil || !bytes.Equal(committedConfig, configFile) {
+		fmt.Println("Governance configuration must match the checked-out revision")
+		os.Exit(1)
+	}
+	if err := controller.requireCurrentMain(ctx, client); err != nil {
+		fmt.Println("Governance revision is not the current main branch")
+		os.Exit(1)
+	}
+	if err := controller.requireStateProtection(ctx, client); err != nil {
+		fmt.Println("Governance lifecycle state is not protected")
+		os.Exit(1)
+	}
+	explicit := append([]RepoConfig(nil), cfg.Repositories...)
+	candidates := map[string]RepoConfig{}
+	if controller.state.Revision != "" {
+		previous, transitions, err := appliedHistory(controller.state.Revision, revision, controller.owner)
+		if err != nil {
+			fmt.Println("Could not validate applied governance history")
+			os.Exit(1)
+		}
+		candidates = transitionCandidates(previous, transitions, controller.state.Marked, controller.key)
 	}
 
 	// Optional org-wide auto-discovery. Disabled by default, so absent config
@@ -338,8 +389,26 @@ func main() {
 		reportOutput = io.MultiWriter(os.Stdout, summary)
 	}
 	report := newDriftReport(reportOutput)
-	report.configRevision = os.Getenv("GITHUB_SHA")
-	failed := reconcileRepositories(ctx, client, cfg.Repositories, report) != nil
+	report.configRevision = revision
+	var result error
+	var identities map[string]int64
+	var nextState lifecycleState
+	if result = controller.ensureRepositories(ctx, client, explicit, report); result == nil {
+		identities, result = reconcileRepositoriesWithIdentities(ctx, client, cfg.Repositories, report)
+	}
+	if result == nil {
+		nextState, result = controller.prepareApplied(ctx, client, explicit, identities)
+	}
+	if result == nil {
+		result = controller.archiveRemoved(ctx, client, candidates, cfg.Repositories, report)
+	}
+	if result == nil {
+		result = controller.saveApplied(ctx, client, nextState)
+	}
+	failed := result != nil
+	if failed {
+		fmt.Println("Governance reconciliation failed")
+	}
 	if err := report.render(); err != nil {
 		fmt.Println("Unable to write drift report")
 		failed = true
@@ -358,7 +427,13 @@ func main() {
 
 // reconcileRepositories reports only configured items and redacts non-public repositories.
 func reconcileRepositories(ctx context.Context, client *github.Client, repos []RepoConfig, report *driftReport) error {
+	_, err := reconcileRepositoriesWithIdentities(ctx, client, repos, report)
+	return err
+}
+
+func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Client, repos []RepoConfig, report *driftReport) (map[string]int64, error) {
 	var result error
+	identities := make(map[string]int64, len(repos))
 	for _, repo := range repos {
 		owner, repoName := parseRepoString(repo.Name)
 		info, _, err := client.Repositories.Get(ctx, owner, repoName)
@@ -370,25 +445,30 @@ func reconcileRepositories(ctx context.Context, client *github.Client, repos []R
 			result = errors.Join(result, errors.New("repository visibility could not be checked"))
 			continue
 		}
+		var repoErr error
 		syncLogf(repoCtx, "Starting sync for %s/%s\n", owner, repoName)
 		if err := reconcileRepoSettings(repoCtx, client, owner, repoName, repo.Settings, report); err != nil {
 			report.diagnostic("repository settings reconciliation failed")
-			result = errors.Join(result, err)
+			repoErr = errors.Join(repoErr, err)
 		}
 		if err := reconcileCollaborators(repoCtx, client, owner, repoName, repo.Collaborators, report); err != nil {
 			report.diagnostic("collaborator reconciliation failed")
-			result = errors.Join(result, err)
+			repoErr = errors.Join(repoErr, err)
 		}
 		if err := syncBranchProtection(repoCtx, client, owner, repoName, repo.BranchProtection); err != nil {
 			report.diagnostic("branch protection reconciliation failed")
-			result = errors.Join(result, err)
+			repoErr = errors.Join(repoErr, err)
 		}
 		if err := syncWorkflows(repoCtx, client, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
 			report.diagnostic("managed file reconciliation failed")
-			result = errors.Join(result, err)
+			repoErr = errors.Join(repoErr, err)
 		}
+		if repoErr == nil && info.GetID() > 0 && strings.EqualFold(info.GetFullName(), repo.Name) {
+			identities[strings.ToLower(repo.Name)] = info.GetID()
+		}
+		result = errors.Join(result, repoErr)
 	}
-	return result
+	return identities, result
 }
 
 // ---------------------------------------------------------------------------

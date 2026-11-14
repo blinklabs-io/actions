@@ -36,6 +36,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -109,8 +110,9 @@ jobs:
 
   apply:
     needs: plan
-    if: needs.plan.outputs.has-targets == 'true'
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.has-targets == 'true'
     runs-on: ubuntu-latest
+    environment: release-fanout
     strategy:
       fail-fast: false
       # One release can fan out to many repositories; each job only opens a
@@ -120,6 +122,16 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     name: ${{ matrix.product }} ${{ matrix.version }} -> ${{ matrix.name }} (${{ matrix.type }})
     steps:
+      - name: Verify release environment branch protection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/environments/release-fanout" |
+            jq -e '.name == "release-fanout" and .can_admins_bypass == false and .deployment_branch_policy.protected_branches == false and .deployment_branch_policy.custom_branch_policies == true' >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/environments/release-fanout/deployment-branch-policies" |
+            jq -e '.total_count == 1 and (.branch_policies | length) == 1 and .branch_policies[0].name == "main" and .branch_policies[0].type == "branch"' >/dev/null
+
       - name: Check out fan-out scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
@@ -129,8 +141,8 @@ jobs:
         id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          client-id: ${{ secrets.GOVERNANCE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+          client-id: ${{ secrets.FANOUT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FANOUT_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ matrix.name }}
           permission-contents: write
