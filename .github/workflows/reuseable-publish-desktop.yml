@@ -256,6 +256,7 @@ jobs:
 
           if ("$env:MATRIX_ARCH" -eq "amd64") {
             $msys2Loc = "$env:MSYS2_AMD64_LOC"
+            $env:PATH = "$msys2Loc\mingw64\bin;$env:PATH"
             $env:CC = "$msys2Loc\mingw64\bin\gcc.exe"
             $env:CXX = "$msys2Loc\mingw64\bin\g++.exe"
 
@@ -265,6 +266,7 @@ jobs:
 
           if ("$env:MATRIX_ARCH" -eq "arm64") {
             $msys2Loc = "$env:MSYS2_ARM64_LOC"
+            $env:PATH = "$msys2Loc\clangarm64\bin;$env:PATH"
             $env:CC = "$msys2Loc\clangarm64\bin\clang.exe"
             $env:CXX = "$msys2Loc\clangarm64\bin\clang++.exe"
 
