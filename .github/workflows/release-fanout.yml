@@ -1,7 +1,7 @@
 name: release-fanout
 
 # Pushes a released version to every downstream repository declared under
-# `release_fanout` in repos-config.yaml. Direct pushes with the governance app
+# `release_fanout` in repos-config.yaml. Direct pushes with a GitHub App
 # token (a branch-protection bypass actor); no pull requests.
 #
 # Triggers: repository_dispatch from a product's generated release-fanout.yml

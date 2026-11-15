@@ -184,7 +184,7 @@ by GitHub's replacement API; those cases require manual attention.
 A repository can declare downstream repositories that pin its released version
 under `release_fanout` in `repos-config.yaml`. The central `release-fanout.yml`
 workflow pushes a release's version straight to each target's default branch
-with the governance app token; there are no pull requests. It runs from a
+with a GitHub App token; there are no pull requests. It runs from a
 manual `workflow_dispatch`, from the product's generated wrapper (run when its `publish` workflow completes, because releases created with `GITHUB_TOKEN` fire no `release` event) once
 `release_fanout_dispatch_ref` is set (see below), and from a daily backstop, so
 until that key is set a release reaches its targets within about a day. A
@@ -320,7 +320,9 @@ re-add a deleted repository unless recreating it is intended.
 Configure a separate `release-fanout` environment with administrator bypass
 disabled and deployment restricted to `main`; it does not require a reviewer.
 Store the app credentials there as `FANOUT_APP_CLIENT_ID` and
-`FANOUT_APP_PRIVATE_KEY`. Release fan-out remains automatic on `main`.
+`FANOUT_APP_PRIVATE_KEY`. Release fan-out remains automatic on `main`. The App
+needs access to each target repository and any branch-protection bypass required
+to push to its default branch.
 
 Before enabling the new workflows, generate a new app key and populate the
 environment secrets. After rollout, remove the older repository-level
@@ -427,10 +429,16 @@ repositories:
 
 To onboard or change a repository, edit `repos-config.yaml` and push to `main`.
 An explicitly listed repository that does not exist is created with an initial
-README. New repositories are public by default; set `private: true` on the
-entry to create a private repository. This field does not change an existing
-repository's visibility. The organization's default branch must match any
-branch-protection names in its configuration.
+README. New repositories are public by default. The `private: true` setting
+controls creation only and does not change an existing repository's visibility.
+The organization's default branch must match any branch-protection names in its
+configuration.
+
+This controller and its workflow runs are public. Do not put private repository
+names or other private details in the tracked configuration or fan-out inputs;
+fan-out also includes repository names in job metadata. Confidential private
+repository management requires a private configuration source and an execution
+path that keeps private details out of public logs and artifacts.
 
 To archive an explicitly managed repository, first add
 `archive_on_removal: true` to its entry and allow that configuration to be
