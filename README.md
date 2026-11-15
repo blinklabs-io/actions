@@ -319,16 +319,23 @@ re-add a deleted repository unless recreating it is intended.
 
 Configure a separate `release-fanout` environment with administrator bypass
 disabled and deployment restricted to `main`; it does not require a reviewer.
-Store the app credentials there as `FANOUT_APP_CLIENT_ID` and
-`FANOUT_APP_PRIVATE_KEY`. Release fan-out remains automatic on `main`. The App
-needs access to each target repository and any branch-protection bypass required
-to push to its default branch.
+Store credentials for the same governance GitHub App there as
+`FANOUT_APP_CLIENT_ID` and `FANOUT_APP_PRIVATE_KEY`. A separate private key for
+that App can be used for independent rotation. Release fan-out remains automatic
+on `main`. The App needs access to each target repository and any
+branch-protection bypass required to push to its default branch.
+
+Core approval gates the governance sync job, not every use of the App. Fan-out
+requests a contents-write token scoped to its target repository, but its private
+key can authenticate as the same App with the App's broader permissions. See
+GitHub's [installation token documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
 
 Before enabling the new workflows, generate a new app key and populate the
 environment secrets. After rollout, remove the older repository-level
 `GOVERNANCE_APP_CLIENT_ID` and `GOVERNANCE_APP_PRIVATE_KEY` secrets and revoke
 the old key. Until the old credentials are removed, earlier workflow revisions
-can still authenticate without the governance environment approval.
+can still authenticate without the governance environment approval. Fan-out
+continues to authenticate automatically using its environment credentials.
 
 ## Managing repositories
 

@@ -89,8 +89,11 @@ func TestReleaseFanoutUsesMainOnlyEnvironment(t *testing.T) {
 			If          string `yaml:"if"`
 			Environment string `yaml:"environment"`
 			Steps       []struct {
+				ID   string            `yaml:"id"`
+				Uses string            `yaml:"uses"`
 				Run  string            `yaml:"run"`
 				With map[string]string `yaml:"with"`
+				Env  map[string]string `yaml:"env"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -101,19 +104,34 @@ func TestReleaseFanoutUsesMainOnlyEnvironment(t *testing.T) {
 	if job.Environment != "release-fanout" || !strings.Contains(job.If, "refs/heads/main") {
 		t.Fatalf("fan-out apply is not restricted to the main environment: %+v", job)
 	}
-	checked, authenticated := false, false
-	for _, step := range job.Steps {
+	checked, authenticated, identity, target := -1, -1, -1, -1
+	for i, step := range job.Steps {
 		if strings.Contains(step.Run, "deployment-branch-policies") {
-			checked = true
+			checked = i
 		}
-		if strings.Contains(step.With["private-key"], "FANOUT_APP_PRIVATE_KEY") {
-			authenticated = true
-			if !checked {
-				t.Error("fan-out must verify environment protection before minting a token")
+		if strings.Contains(step.Uses, "actions/create-github-app-token@") {
+			authenticated = i
+			if step.ID != "app" || step.With["client-id"] != "${{ secrets.FANOUT_APP_CLIENT_ID }}" ||
+				step.With["private-key"] != "${{ secrets.FANOUT_APP_PRIVATE_KEY }}" ||
+				step.With["repositories"] != "${{ matrix.name }}" || step.With["permission-contents"] != "write" {
+				t.Errorf("fan-out token is not restricted to the target repository: %+v", step.With)
+			}
+			for key := range step.With {
+				if strings.HasPrefix(key, "permission-") && key != "permission-contents" {
+					t.Errorf("fan-out token requests unexpected permission %s", key)
+				}
 			}
 		}
+		if strings.TrimSpace(step.Run) == `test "$APP_SLUG" = blinklabs-governance` &&
+			step.Env["APP_SLUG"] == "${{ steps.app.outputs.app-slug }}" {
+			identity = i
+		}
+		if strings.Contains(step.Uses, "actions/checkout@") && step.With["repository"] == "${{ matrix.repo }}" {
+			target = i
+		}
 	}
-	if !checked || !authenticated {
-		t.Fatal("fan-out environment check or credentials are missing")
+	if checked < 0 || authenticated < 0 || identity < 0 || target < 0 ||
+		checked >= authenticated || authenticated >= identity || identity >= target {
+		t.Fatalf("fan-out environment check, token, identity and target checkout are out of order: %d %d %d %d", checked, authenticated, identity, target)
 	}
 }
