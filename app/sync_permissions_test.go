@@ -38,6 +38,7 @@ func TestGovernanceSyncRequiresEnvironmentBeforeAppToken(t *testing.T) {
 				Uses string            `yaml:"uses"`
 				Run  string            `yaml:"run"`
 				Env  map[string]string `yaml:"env"`
+				With map[string]string `yaml:"with"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -63,6 +64,10 @@ func TestGovernanceSyncRequiresEnvironmentBeforeAppToken(t *testing.T) {
 		}
 		if strings.Contains(step.Uses, "actions/create-github-app-token@") {
 			mint = i
+			if step.With["client-id"] != "${{ secrets.GOVERNANCE_APP_CLIENT_ID }}" ||
+				step.With["private-key"] != "${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}" {
+				t.Error("sync does not use the existing governance app credentials")
+			}
 		}
 		if strings.Contains(step.Run, `test "$APP_SLUG" = blinklabs-governance`) {
 			identity = i
@@ -111,9 +116,11 @@ func TestReleaseFanoutUsesMainOnlyEnvironment(t *testing.T) {
 		}
 		if strings.Contains(step.Uses, "actions/create-github-app-token@") {
 			authenticated = i
-			if step.ID != "app" || step.With["client-id"] != "${{ secrets.FANOUT_APP_CLIENT_ID }}" ||
-				step.With["private-key"] != "${{ secrets.FANOUT_APP_PRIVATE_KEY }}" ||
-				step.With["repositories"] != "${{ matrix.name }}" || step.With["permission-contents"] != "write" {
+			if step.ID != "app" || step.With["client-id"] != "${{ secrets.GOVERNANCE_APP_CLIENT_ID }}" ||
+				step.With["private-key"] != "${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}" {
+				t.Error("fan-out does not use the existing governance app credentials")
+			}
+			if step.With["repositories"] != "${{ matrix.name }}" || step.With["permission-contents"] != "write" {
 				t.Errorf("fan-out token is not restricted to the target repository: %+v", step.With)
 			}
 			for key := range step.With {

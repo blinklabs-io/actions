@@ -296,14 +296,16 @@ The sync engine requires these environment variables:
 | `GOVERNANCE_LIFECYCLE_STATE_KEY` | A stable, random secret of at least 32 bytes used to authenticate lifecycle state and conceal repository identities. |
 
 Configure `governance-sync` with Core as its only required reviewer, disable
-administrator bypass, and restrict deployment to the `main` branch. Set these
-secrets on that environment, not on the repository or organization:
+administrator bypass, and restrict deployment to the `main` branch. Set the
+following secret on that environment:
 
 | Secret | Description |
 |---|---|
-| `GOVERNANCE_SYNC_APP_CLIENT_ID` | Client ID of the governance GitHub App. |
-| `GOVERNANCE_SYNC_APP_PRIVATE_KEY` | PEM private key for the governance GitHub App. |
 | `GOVERNANCE_LIFECYCLE_STATE_KEY` | Stable random key for the applied-state record. |
+
+Both governance sync and release fan-out use the existing repository secrets
+`GOVERNANCE_APP_CLIENT_ID` and `GOVERNANCE_APP_PRIVATE_KEY` for the governance
+GitHub App.
 
 Protect `refs/heads/governance-applied-state` with an active repository ruleset
 named `governance-lifecycle-state`. Restrict creation, updates, deletion, and
@@ -319,23 +321,15 @@ re-add a deleted repository unless recreating it is intended.
 
 Configure a separate `release-fanout` environment with administrator bypass
 disabled and deployment restricted to `main`; it does not require a reviewer.
-Store credentials for the same governance GitHub App there as
-`FANOUT_APP_CLIENT_ID` and `FANOUT_APP_PRIVATE_KEY`. A separate private key for
-that App can be used for independent rotation. Release fan-out remains automatic
-on `main`. The App needs access to each target repository and any
-branch-protection bypass required to push to its default branch.
+Release fan-out remains automatic on `main`. The App needs access to each target
+repository and any branch-protection bypass required to push to its default
+branch.
 
-Core approval gates the governance sync job, not every use of the App. Fan-out
-requests a contents-write token scoped to its target repository, but its private
-key can authenticate as the same App with the App's broader permissions. See
-GitHub's [installation token documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
-
-Before enabling the new workflows, generate a new app key and populate the
-environment secrets. After rollout, remove the older repository-level
-`GOVERNANCE_APP_CLIENT_ID` and `GOVERNANCE_APP_PRIVATE_KEY` secrets and revoke
-the old key. Until the old credentials are removed, earlier workflow revisions
-can still authenticate without the governance environment approval. Fan-out
-continues to authenticate automatically using its environment credentials.
+Core approval gates the governance sync job, not every use of the App. The
+repository-level key is also available to other eligible workflows and earlier
+workflow revisions. Fan-out requests a contents-write token scoped to its
+target repository, but its private key can authenticate as the same App with the
+App's broader permissions. See GitHub's [installation token documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
 
 ## Managing repositories
 
