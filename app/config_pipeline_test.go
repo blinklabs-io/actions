@@ -300,6 +300,13 @@ func TestConfiguredPipelinesSupersedeTheirWrappers(t *testing.T) {
 
 func TestConfiguredConventionalCommitsPermissions(t *testing.T) {
 	cfg := loadRealConfig(t)
+	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
+	t.Setenv("GITHUB_REF", "refs/heads/main")
+	if err := resolvePinnedWorkflowRefs(&cfg, func(string) (string, []byte, error) {
+		return strings.Repeat("a", 40), []byte(callableWorkflowYAML), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	wrapperTmpl, err := buildWorkflowTemplate("../templates/workflow.tmpl")
 	if err != nil {
 		t.Fatal(err)
