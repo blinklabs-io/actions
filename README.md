@@ -284,6 +284,14 @@ updates Helm Charts without a separate pin change, and unrelated Actions commits
 leave the caller unchanged. The publisher rejects changed charts whose versions
 did not increase and skips a retry when published chart contents already match.
 
+The `actions` and `docker-template` repositories use the
+`repository-standard-pinned` profile for their Conventional Commits callers.
+Their protected default branches require pull requests, so governance cannot
+update those wrappers directly. After the reusable Conventional Commits workflow
+changes, update both wrappers to the latest workflow-changing commit through
+reviewed pull requests before approving the next sync. Otherwise the sync fails
+when it tries to update the protected files.
+
 ## Configuration
 
 The sync engine requires these environment variables:
