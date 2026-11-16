@@ -27,6 +27,7 @@ const lifecycleAppID = 4081860
 var lifecycleRevision = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var lifecycleHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var lifecycleRepoName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
+var errInvalidLifecycleConfig = errors.New("configuration history is invalid")
 
 // Names and repository IDs are not stored in the public controller state.
 type lifecycleState struct {
@@ -264,9 +265,6 @@ func (c *lifecycleController) ensureRepositories(ctx context.Context, client *gi
 			if !strings.EqualFold(info.GetFullName(), repo.Name) {
 				return errors.New("configured repository was renamed or redirected")
 			}
-			if repo.Private != nil && (info.Private == nil || info.GetPrivate() != *repo.Private) {
-				return errors.New("configured repository visibility does not match")
-			}
 			if repo.ArchiveOnRemoval && (info.ID == nil || info.GetID() <= 0 || info.Fork == nil || info.GetFork() || info.Archived == nil || info.GetArchived()) {
 				return errors.New("could not verify marked repository")
 			}
@@ -336,14 +334,15 @@ func transitionCandidates(previous []RepoConfig, transitions [][]RepoConfig, mar
 }
 
 // appliedHistory follows main's first-parent history so an unapplied, skipped
-// unmark cannot be mistaken for a continuing archival intent.
-func appliedHistory(previous, current, owner string) ([]RepoConfig, [][]RepoConfig, error) {
+// unmark cannot be mistaken for a continuing archival intent. An invalid
+// intermediate configuration creates a gap that cancels all prior intent.
+func appliedHistory(previous, current, owner string) ([]RepoConfig, [][]RepoConfig, bool, error) {
 	if !lifecycleRevision.MatchString(previous) || !lifecycleRevision.MatchString(current) {
-		return nil, nil, errors.New("invalid configuration revision")
+		return nil, nil, false, errors.New("invalid configuration revision")
 	}
 	out, err := exec.Command("git", "rev-list", "--first-parent", current).Output()
 	if err != nil {
-		return nil, nil, errors.New("could not inspect configuration history")
+		return nil, nil, false, errors.New("could not inspect configuration history")
 	}
 	revisions := strings.Fields(string(out))
 	index := -1
@@ -354,7 +353,7 @@ func appliedHistory(previous, current, owner string) ([]RepoConfig, [][]RepoConf
 		}
 	}
 	if index < 0 {
-		return nil, nil, errors.New("applied configuration is not on main history")
+		return nil, nil, false, errors.New("applied configuration is not on main history")
 	}
 	read := func(revision string) ([]RepoConfig, error) {
 		content, err := exec.Command("git", "show", revision+":repos-config.yaml").Output()
@@ -363,23 +362,31 @@ func appliedHistory(previous, current, owner string) ([]RepoConfig, [][]RepoConf
 		}
 		var cfg Config
 		if yaml.Unmarshal(content, &cfg) != nil || validateExplicitRepositories(cfg.Repositories, owner) != nil {
-			return nil, errors.New("configuration history is invalid")
+			return nil, errInvalidLifecycleConfig
 		}
 		return cfg.Repositories, nil
 	}
 	before, err := read(previous)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	transitions := make([][]RepoConfig, 0, index)
+	gap := false
 	for i := index - 1; i >= 0; i-- {
 		repos, err := read(revisions[i])
 		if err != nil {
-			return nil, nil, err
+			if i > 0 && errors.Is(err, errInvalidLifecycleConfig) {
+				gap = true
+				continue
+			}
+			return nil, nil, false, err
 		}
 		transitions = append(transitions, repos)
 	}
-	return before, transitions, nil
+	if gap {
+		return before, nil, true, nil
+	}
+	return before, transitions, false, nil
 }
 
 func (c *lifecycleController) archiveRemoved(ctx context.Context, client *github.Client, candidates map[string]RepoConfig, current []RepoConfig, report *driftReport) error {

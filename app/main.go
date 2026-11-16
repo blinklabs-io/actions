@@ -345,12 +345,16 @@ func main() {
 	explicit := append([]RepoConfig(nil), cfg.Repositories...)
 	candidates := map[string]RepoConfig{}
 	if controller.state.Revision != "" {
-		previous, transitions, err := appliedHistory(controller.state.Revision, revision, controller.owner)
+		previous, transitions, gap, err := appliedHistory(controller.state.Revision, revision, controller.owner)
 		if err != nil {
 			fmt.Println("Could not validate applied governance history")
 			os.Exit(1)
 		}
-		candidates = transitionCandidates(previous, transitions, controller.state.Marked, controller.key)
+		if gap {
+			fmt.Println("Invalid intermediate configuration canceled pending archival intent")
+		} else {
+			candidates = transitionCandidates(previous, transitions, controller.state.Marked, controller.key)
+		}
 	}
 
 	// Optional org-wide auto-discovery. Disabled by default, so absent config

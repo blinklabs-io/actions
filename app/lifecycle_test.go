@@ -134,6 +134,38 @@ func TestLifecycleCreationUsesPublicDefaultAndFailsClosed(t *testing.T) {
 	}
 }
 
+func TestExistingRepositoryIgnoresCreationVisibility(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		actualPrivate bool
+		createPrivate bool
+	}{
+		{"existing public, private creation setting", false, true},
+		{"existing private, public creation setting", true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := 0
+			client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
+				requests++
+				if req.Method != http.MethodGet || req.URL.Path != "/repos/org/example" {
+					t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+				}
+				r := httptest.NewRecorder()
+				_, _ = fmt.Fprintf(r, `{"full_name":"org/example","private":%t}`, tt.actualPrivate)
+				return r.Result(), nil
+			})})
+			controller := &lifecycleController{owner: "org", repo: "actions", revision: testLifecycleSHA}
+			repos := []RepoConfig{{Name: "org/example", Private: github.Bool(tt.createPrivate)}}
+			if err := controller.ensureRepositories(context.Background(), client, repos, newDriftReport(io.Discard)); err != nil {
+				t.Fatalf("existing repository blocked by creation setting: %v", err)
+			}
+			if requests != 1 {
+				t.Fatalf("got %d requests, want one read", requests)
+			}
+		})
+	}
+}
+
 func TestLifecycleArchiveVerifiesIdentityAndUsesNodeID(t *testing.T) {
 	for _, tt := range []struct {
 		name         string
@@ -396,13 +428,101 @@ func TestAppliedHistoryRejectsSkippedUnmark(t *testing.T) {
 	write("repositories:\n  - name: org/example\n  - name: org/other\n")
 	current := write("repositories:\n  - name: org/other\n")
 	t.Chdir(dir)
-	before, transitions, err := appliedHistory(previous, current, "org")
+	before, transitions, gap, err := appliedHistory(previous, current, "org")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if gap {
+		t.Fatal("valid history must not be treated as a gap")
 	}
 	key := lifecycleNameKey(testLifecycleKey, "org/example")
 	marks := map[string]string{key: lifecycleIdentity(testLifecycleKey, "org/example", 42)}
 	if len(transitionCandidates(before, transitions, marks, testLifecycleKey)) != 0 {
 		t.Fatal("a skipped unmark must cancel archival")
+	}
+}
+
+func TestAppliedHistoryRecoversFromInvalidIntermediateConfig(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q")
+	write := func(content string) string {
+		if err := os.WriteFile(filepath.Join(dir, "repos-config.yaml"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		run("add", "repos-config.yaml")
+		run("-c", "commit.gpgsign=false", "commit", "-q", "-s", "-m", "test: change config")
+		return run("rev-parse", "HEAD")
+	}
+	applied := write("repositories:\n  - name: org/old\n    archive_on_removal: true\n")
+	invalid := write("repositories: [\n")
+	corrected := write("repositories:\n  - name: org/new\n    archive_on_removal: true\n")
+	later := write("repositories:\n  - name: org/other\n")
+	t.Chdir(dir)
+	before, transitions, gap, err := appliedHistory(applied, corrected, "org")
+	if err != nil {
+		t.Fatalf("corrected configuration should recover: %v", err)
+	}
+	if !gap {
+		t.Fatal("invalid intermediate configuration must be recorded as a gap")
+	}
+	oldKey := lifecycleNameKey(testLifecycleKey, "org/old")
+	oldMarks := map[string]string{oldKey: lifecycleIdentity(testLifecycleKey, "org/old", 42)}
+	if candidates := transitionCandidates(before, transitions, oldMarks, testLifecycleKey); len(candidates) != 0 {
+		t.Fatal("invalid history must cancel previously applied archival intent")
+	}
+	if _, _, _, err := appliedHistory(applied, invalid, "org"); err == nil {
+		t.Fatal("invalid current configuration must fail")
+	}
+	if _, _, _, err := appliedHistory(invalid, corrected, "org"); err == nil {
+		t.Fatal("invalid applied configuration must fail")
+	}
+	client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet || req.URL.Path != "/repos/org/new" {
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+		}
+		r := httptest.NewRecorder()
+		_, _ = io.WriteString(r, `{"id":43,"full_name":"org/new","fork":false,"archived":false}`)
+		return r.Result(), nil
+	})})
+	controller := &lifecycleController{owner: "org", repo: "actions", revision: corrected, key: testLifecycleKey}
+	current := []RepoConfig{{Name: "org/new", ArchiveOnRemoval: true}}
+	state, err := controller.prepareApplied(context.Background(), client, current, map[string]int64{"org/new": 43})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newKey := lifecycleNameKey(testLifecycleKey, "org/new")
+	if len(state.Marked) != 1 || state.Marked[newKey] != lifecycleIdentity(testLifecycleKey, "org/new", 43) {
+		t.Fatalf("recovery should record only the current applied marker: %v", state.Marked)
+	}
+	before, transitions, gap, err = appliedHistory(corrected, later, "org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gap {
+		t.Fatal("valid history after recovery must not be treated as a gap")
+	}
+	if _, found := transitionCandidates(before, transitions, state.Marked, testLifecycleKey)[newKey]; !found {
+		t.Fatal("a subsequently applied marker should allow a later removal")
+	}
+	write("repositories:\n  - name: org/example\n  - name: ORG/example\n")
+	newBaseline := write("repositories:\n  - name: org/other\n  - name: org/new\n")
+	if _, _, gap, err := appliedHistory(later, newBaseline, "org"); err != nil || !gap {
+		t.Fatalf("invalid intermediate repository list must create a gap: gap=%t error=%v", gap, err)
+	}
+	run("rm", "-q", "repos-config.yaml")
+	run("-c", "commit.gpgsign=false", "commit", "-q", "-s", "-m", "test: remove config")
+	restored := write("repositories:\n  - name: org/restored\n")
+	if _, _, _, err := appliedHistory(newBaseline, restored, "org"); err == nil {
+		t.Fatal("an unreadable historical config must fail")
 	}
 }

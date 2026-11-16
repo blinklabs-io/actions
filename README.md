@@ -459,6 +459,12 @@ Forks, the controller repository, and repositories still managed by discovery
 are never archived by this transition. A failed operation fails the run and is
 safe to retry with a new approved workflow run.
 
+If an intermediate configuration revision has invalid YAML or an invalid
+explicit repository list, the next successful sync cancels prior archival
+eligibility and records markers in the current configuration as new intent.
+Archival then requires a later removal and successful sync. Invalid current or
+last-applied configurations and Git history read failures still stop the run.
+
 Each reconciliation run processes **every** managed repository (all configured
 and discovered targets), not only the ones touched by the edit. The
 `actions` repository is included in the managed set. `repository-standard`
