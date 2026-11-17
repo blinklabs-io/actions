@@ -1,6 +1,7 @@
 name: Central Governance Sync Engine
 
 permissions:
+  actions: read
   contents: read
 
 on:
@@ -9,28 +10,21 @@ on:
     paths:
       - 'repos-config.yaml'
       - '.github/workflows/reuseable-helm-publish.yml'
-  workflow_dispatch:      # Trigger manually to run the sync
+  workflow_dispatch:
   schedule:
-    # Periodic reconciliation. When auto-discovery is enabled this picks up
-    # newly-created marker repositories without a repos-config.yaml change; it
-    # also corrects any drift on the managed set. Reconciliation is idempotent
-    # (writes only when rendered content differs), so this is safe when
-    # discovery is disabled too.
     - cron: '0 6 * * *'
 
-# Serialize reconciliation runs. The engine writes workflow files directly to
-# each managed repository's default branch, so two concurrent runs (e.g. a
-# scheduled run overlapping a push or manual dispatch) could race on the same
-# files. Never cancel an in-flight run midway through reconciliation.
 concurrency:
   group: governance-sync
   cancel-in-progress: false
 
 jobs:
   orchestrate-governance:
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    environment: governance-sync
     steps:
-      - name: Checkout Controller Code
+      - name: Checkout controller code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           fetch-depth: 0
@@ -42,111 +36,31 @@ jobs:
           go-version: '1.26.x'
           check-latest: true
 
-      # Scope the token only to the repos listed in repos-config.yaml rather
-      # than the whole org, reducing the blast radius if the token is leaked.
-      # When auto-discovery is enabled the explicit list cannot be known ahead
-      # of time, so the token is scoped org-wide (empty `repositories` input =
-      # all repositories the installation can access).
-      - name: Resolve target repositories from config
-        id: target-repos
-        run: |
-          config_parser=$(mktemp "${TMPDIR:-/tmp}/repos-config-parser-XXXXXX.go")
-          trap 'rm -f "$config_parser"' EXIT
-          cat > "$config_parser" <<'EOF'
-          package main
+      - name: Verify governance approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: go run ./app verify-governance-approval
 
-          import (
-            "fmt"
-            "os"
-            "strings"
-
-            "gopkg.in/yaml.v3"
-          )
-
-          type config struct {
-            Discovery struct {
-              Enabled      bool   `yaml:"enabled"`
-              Organization string `yaml:"organization"`
-            } `yaml:"discovery"`
-            Repositories []struct {
-              Name string `yaml:"name"`
-            } `yaml:"repositories"`
-          }
-
-          func main() {
-            raw, err := os.ReadFile("repos-config.yaml")
-            if err != nil {
-              fmt.Fprintf(os.Stderr, "failed to read repos-config.yaml: %v\n", err)
-              os.Exit(1)
-            }
-
-            var cfg config
-            if err := yaml.Unmarshal(raw, &cfg); err != nil {
-              fmt.Fprintf(os.Stderr, "failed to parse repos-config.yaml: %v\n", err)
-              os.Exit(1)
-            }
-
-            outPath := os.Getenv("GITHUB_OUTPUT")
-            if outPath == "" {
-              fmt.Fprintln(os.Stderr, "GITHUB_OUTPUT is not set")
-              os.Exit(1)
-            }
-            out, err := os.OpenFile(outPath, os.O_APPEND|os.O_WRONLY, 0o644)
-            if err != nil {
-              fmt.Fprintf(os.Stderr, "failed to open GITHUB_OUTPUT: %v\n", err)
-              os.Exit(1)
-            }
-            defer out.Close()
-
-            // Discovery mode: emit an empty list so the App token is scoped to
-            // the whole installation, and emit the discovery organization as
-            // the token owner so listing markers and writing to discovered
-            // repositories is authorized even when the discovery org differs
-            // from this controller repository's owner.
-            if cfg.Discovery.Enabled {
-              org := strings.TrimSpace(cfg.Discovery.Organization)
-              if org == "" {
-                fmt.Fprintln(os.Stderr, "discovery.enabled is true but discovery.organization is empty")
-                os.Exit(1)
-              }
-              fmt.Fprintf(out, "owner=%s\n", org)
-              fmt.Fprint(out, "list<<REPOS_EOF\nREPOS_EOF\n")
-              return
-            }
-
-            if len(cfg.Repositories) == 0 {
-              fmt.Fprintln(os.Stderr, "repos-config.yaml must define at least one repository (or enable discovery)")
-              os.Exit(1)
-            }
-
-            repos := make([]string, 0, len(cfg.Repositories))
-            for i, repo := range cfg.Repositories {
-              name := strings.TrimSpace(repo.Name)
-              if name == "" {
-                fmt.Fprintf(os.Stderr, "repos-config.yaml repository at index %d is missing name\n", i)
-                os.Exit(1)
-              }
-              repos = append(repos, name)
-            }
-
-            fmt.Fprintf(out, "list<<REPOS_EOF\n%s\nREPOS_EOF\n", strings.Join(repos, "\n"))
-          }
-          EOF
-          go run "$config_parser"
-
+      # Names for newly created and removed repositories cannot be scoped in
+      # advance. The App installation must cover all organization repositories.
       - name: Authenticate via GitHub App
         id: generate-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ secrets.GOVERNANCE_APP_CLIENT_ID }}
           private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
-          owner: ${{ steps.target-repos.outputs.owner || github.repository_owner }}
-          repositories: ${{ steps.target-repos.outputs.list }}
+          owner: ${{ github.repository_owner }}
+          permission-administration: write
+          permission-contents: write
+          permission-workflows: write
 
-      - name: Resolve Dependencies
-        run: go mod tidy
+      - name: Verify governance app identity
+        env:
+          APP_SLUG: ${{ steps.generate-token.outputs.app-slug }}
+        run: test "$APP_SLUG" = blinklabs-governance
 
-      - name: Run Engine Execution Loop
+      - name: Run governance sync
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          GOVERNANCE_LIFECYCLE_STATE_KEY: ${{ secrets.GOVERNANCE_LIFECYCLE_STATE_KEY }}
         run: go run ./app

@@ -184,7 +184,7 @@ by GitHub's replacement API; those cases require manual attention.
 A repository can declare downstream repositories that pin its released version
 under `release_fanout` in `repos-config.yaml`. The central `release-fanout.yml`
 workflow pushes a release's version straight to each target's default branch
-with the governance app token; there are no pull requests. It runs from a
+with a GitHub App token; there are no pull requests. It runs from a
 manual `workflow_dispatch`, from the product's generated wrapper (run when its `publish` workflow completes, because releases created with `GITHUB_TOKEN` fire no `release` event) once
 `release_fanout_dispatch_ref` is set (see below), and from a daily backstop, so
 until that key is set a release reaches its targets within about a day. A
@@ -264,15 +264,18 @@ Reconciliation is driven by `.github/workflows/sync.yaml`, which runs on:
   [auto-discovery](#auto-discovery-opt-in) is enabled, picks up newly-created
   marker repositories without a `repos-config.yaml` change.
 
-The sync workflow:
+The sync job runs only on `main` and requires approval by the Core team through
+the `governance-sync` environment. It verifies the environment and approval
+before minting a GitHub App token or changing repositories. Start a new workflow
+run after a failure: a rerun cannot reuse a previous run's approval. The engine
+checks `main` before lifecycle writes; if its revision changes, the run fails
+and a new approved run is required.
 
-1. Parses `repos-config.yaml` to resolve the list of target repositories.
-2. Mints a GitHub App installation token via `actions/create-github-app-token`.
-   By default the token is scoped **only** to the repositories listed in
-   `repos-config.yaml`, limiting blast radius. When discovery is enabled the
-   token is scoped org-wide (all repositories the installation can access),
-   since the target set is not known ahead of time.
-3. Runs the engine with `go run ./app`, passing the token as `GH_TOKEN`.
+The GitHub App installation must cover all repositories in the controller
+organization: new repositories do not exist when the token is minted, and an
+archival target is no longer in the current configuration. The token is limited
+to administration, contents, and workflow write permissions. Pull request
+checks do not run the sync.
 
 The Helm Charts profile uses `pin_to_latest_change` for its publisher call.
 Governance renders the last `actions/main` commit that changed the reusable
@@ -281,20 +284,60 @@ updates Helm Charts without a separate pin change, and unrelated Actions commits
 leave the caller unchanged. The publisher rejects changed charts whose versions
 did not increase and skips a retry when published chart contents already match.
 
+The `actions` and `docker-template` repositories use the
+`repository-standard-pinned` profile for their Conventional Commits callers.
+Their protected default branches require pull requests, so governance cannot
+update those wrappers directly. After the reusable Conventional Commits workflow
+changes, update both wrappers to the latest workflow-changing commit through
+reviewed pull requests before approving the next sync. Otherwise the sync fails
+when it tries to update the protected files.
+
 ## Configuration
 
-The engine requires a single environment variable:
+The sync engine requires these environment variables:
 
 | Variable | Description |
 |---|---|
-| `GH_TOKEN` | **Required.** A token with `contents: write`, `workflows: write`, and `administration`/`metadata` access to the managed repositories. `workflows: write` is required because the engine writes files under `.github/workflows`, which GitHub gates behind the separate Workflows permission. In CI this is the scoped GitHub App token minted by `sync.yaml`. |
+| `GH_TOKEN` | GitHub App installation token with administration, contents, and workflows write permissions and access to all organization repositories. |
+| `GITHUB_REPOSITORY` | The controller repository, supplied by GitHub Actions. |
+| `GITHUB_SHA` | The checked-out current `main` revision, supplied by GitHub Actions. |
+| `GOVERNANCE_LIFECYCLE_STATE_KEY` | A stable, random secret of at least 32 bytes used to authenticate lifecycle state and conceal repository identities. |
 
-The sync workflow additionally reads these repository secrets:
+Configure `governance-sync` with Core as its only required reviewer, disable
+administrator bypass, and restrict deployment to the `main` branch. Set the
+following secret on that environment:
 
 | Secret | Description |
 |---|---|
-| `GOVERNANCE_APP_CLIENT_ID` | Client ID of the governance GitHub App. |
-| `GOVERNANCE_APP_PRIVATE_KEY` | PEM private key for the governance GitHub App. |
+| `GOVERNANCE_LIFECYCLE_STATE_KEY` | Stable random key for the applied-state record. |
+
+Both governance sync and release fan-out use the existing repository secrets
+`GOVERNANCE_APP_CLIENT_ID` and `GOVERNANCE_APP_PRIVATE_KEY` for the governance
+GitHub App.
+
+Protect `refs/heads/governance-applied-state` with an active repository ruleset
+named `governance-lifecycle-state`. Restrict creation, updates, deletion, and
+non-fast-forward updates, with only the governance GitHub App as an always-on
+bypass actor. The engine checks the ruleset before it performs lifecycle work.
+The branch stores only authenticated revision and identity hashes, never
+repository names. Protect and retain the state key: losing or rotating it makes
+the existing state unreadable and requires deliberately re-arming archival
+markers. The first successful run establishes state without archiving anything.
+If a marked repository is renamed, deleted, or replaced before removal, the
+run fails without archiving it and requires operator intervention. Do not
+re-add a deleted repository unless recreating it is intended.
+
+Configure a separate `release-fanout` environment with administrator bypass
+disabled and deployment restricted to `main`; it does not require a reviewer.
+Release fan-out remains automatic on `main`. The App needs access to each target
+repository and any branch-protection bypass required to push to its default
+branch.
+
+Core approval gates the governance sync job, not every use of the App. The
+repository-level key is also available to other eligible workflows and earlier
+workflow revisions. Fan-out requests a contents-write token scoped to its
+target repository, but its private key can authenticate as the same App with the
+App's broader permissions. See GitHub's [installation token documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
 
 ## Managing repositories
 
@@ -394,6 +437,34 @@ repositories:
 ```
 
 To onboard or change a repository, edit `repos-config.yaml` and push to `main`.
+An explicitly listed repository that does not exist is created with an initial
+README. New repositories are public by default. The `private: true` setting
+controls creation only and does not change an existing repository's visibility.
+The organization's default branch must match any branch-protection names in its
+configuration.
+
+This controller and its workflow runs are public. Do not put private repository
+names or other private details in the tracked configuration or fan-out inputs;
+fan-out also includes repository names in job metadata. Confidential private
+repository management requires a private configuration source and an execution
+path that keeps private details out of public logs and artifacts.
+
+To archive an explicitly managed repository, first add
+`archive_on_removal: true` to its entry and allow that configuration to be
+successfully applied. Remove the entry in a later configuration change and
+approve another sync; the engine verifies the same repository identity and
+archives it. Removing the marker, or removing and re-adding the entry, cancels
+the old archival intent. Removing an unmarked entry only stops management.
+Forks, the controller repository, and repositories still managed by discovery
+are never archived by this transition. A failed operation fails the run and is
+safe to retry with a new approved workflow run.
+
+If an intermediate configuration revision has invalid YAML or an invalid
+explicit repository list, the next successful sync cancels prior archival
+eligibility and records markers in the current configuration as new intent.
+Archival then requires a later removal and successful sync. Invalid current or
+last-applied configurations and Git history read failures still stop the run.
+
 Each reconciliation run processes **every** managed repository (all configured
 and discovered targets), not only the ones touched by the edit. The
 `actions` repository is included in the managed set. `repository-standard`
@@ -421,8 +492,9 @@ is rejected. A per-repository `overrides` entry replaces the profile's block.
 ## Auto-discovery (opt-in)
 
 Instead of listing every repository in `repos-config.yaml`, the engine can
-discover managed repositories directly from the organization. Discovery is
-**disabled by default**; enable it with a `discovery` block:
+discover managed repositories directly from the controller organization.
+Discovery is **disabled by default**; enable it with a `discovery` block. The
+`repositories` list is still required and may be empty:
 
 ```yaml
 discovery:

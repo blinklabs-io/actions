@@ -179,6 +179,19 @@ profiles:
         permissions:
           contents: read
 
+  # Repositories requiring reviewed workflow changes pin this reusable call.
+  repository-standard-pinned:
+    <<: *repository-standard
+    workflows:
+      - destination_file: conventional-commits.yml
+        workflow_name: "Conventional Commits"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        pin_to_latest_change: true
+        triggers:
+          pull_request:
+        permissions:
+          contents: read
+
   helm-charts-standard:
     <<: *repository-standard
     workflows:
@@ -2615,9 +2628,9 @@ repositories:
   - name: blinklabs-io/treasury-proposal
     profile: repository-standard
   - name: blinklabs-io/actions
-    profile: repository-standard
+    profile: repository-standard-pinned
   - name: blinklabs-io/docker-template
-    profile: repository-standard
+    profile: repository-standard-pinned
   - name: blinklabs-io/dingo-operator
     profile: go-ci-race-nilaway
   - name: blinklabs-io/dns-protocol

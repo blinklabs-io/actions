@@ -58,7 +58,8 @@ publish-wireguard-helm-chart.yml
 `)
 	cfg := loadRealConfig(t)
 	if err := resolvePinnedWorkflowRefs(&cfg, func(path string) (string, []byte, error) {
-		if path != ".github/workflows/reuseable-helm-publish.yml" {
+		if path != ".github/workflows/reuseable-helm-publish.yml" &&
+			path != ".github/workflows/reuseable-conventional-commits.yml" {
 			t.Fatalf("unexpected workflow path %q", path)
 		}
 		return actionsSHA, []byte(callableWorkflowYAML), nil
@@ -158,7 +159,8 @@ func TestHelmPublisherPinsLatestChange(t *testing.T) {
 	t.Setenv("GITHUB_REF", "refs/heads/main")
 	cfg := loadRealConfig(t)
 	if err := resolvePinnedWorkflowRefs(&cfg, func(path string) (string, []byte, error) {
-		if path != ".github/workflows/reuseable-helm-publish.yml" {
+		if path != ".github/workflows/reuseable-helm-publish.yml" &&
+			path != ".github/workflows/reuseable-conventional-commits.yml" {
 			t.Fatalf("unexpected workflow path %q", path)
 		}
 		return actionsSHA, []byte(callableWorkflowYAML), nil
