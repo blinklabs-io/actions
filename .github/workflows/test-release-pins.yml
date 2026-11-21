@@ -3,13 +3,17 @@ name: Test infrastructure release pins
 on:
   pull_request:
     paths:
-      - scripts/release_pins/**
+      - cmd/release-pins/**
+      - go.mod
+      - go.sum
       - .github/workflows/daily-release-pins.yml
       - .github/workflows/test-release-pins.yml
   push:
     branches: [main]
     paths:
-      - scripts/release_pins/**
+      - cmd/release-pins/**
+      - go.mod
+      - go.sum
       - .github/workflows/daily-release-pins.yml
       - .github/workflows/test-release-pins.yml
   workflow_dispatch:
@@ -23,14 +27,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          python-version: '3.13'
-      - name: Install Python checks
-        run: python -m pip install ruff==0.17.5 ty==0.0.104
-      - name: Lint
-        run: ruff check --isolated --select E4,E7,E9,F,I,BLE,PIE,EXE,ANN scripts/release_pins
-      - name: Check types
-        run: ty check --python-version 3.13 scripts/release_pins
+          go-version-file: go.mod
+      - name: Check formatting
+        run: test -z "$(gofmt -l cmd/release-pins)"
+      - name: Vet
+        run: go vet ./cmd/release-pins
       - name: Test
-        run: python -B -m unittest discover -s scripts/release_pins -p test_release_pin_updater.py -v
+        run: go test ./cmd/release-pins -v

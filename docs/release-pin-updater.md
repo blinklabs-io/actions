@@ -30,14 +30,13 @@ mentioning the release also block duplicate updater PRs.
 The scanner reads files as text and does not decrypt Helmfile secrets. It
 reports dynamic releases, shared values files, non-semver pins, direct
 digest-pinned image references, and image references it cannot map to a
-registry. Update source mappings in `scripts/release_pins/release_pin_updater.py`
+registry. Update source mappings in `cmd/release-pins/scan.go`
 after checking the upstream chart's image default. Review generated PRs for
 breaking changes and deployment ordering before merge.
 
 For a local read-only scan, install Helm and `skopeo`, check out infrastructure,
-then run:
+then run from this repository:
 
 ```sh
-python scripts/release_pins/release_pin_updater.py \
-  --root /path/to/infrastructure
+go run ./cmd/release-pins --root /path/to/infrastructure
 ```

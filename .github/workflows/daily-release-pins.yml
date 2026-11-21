@@ -85,11 +85,12 @@ jobs:
         with:
           version: v3.17.0
 
-      - name: Install Python
+      - name: Install Go
         if: ${{ !inputs.auth_check_only }}
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          python-version: '3.13'
+          go-version-file: tools/go.mod
+          cache-dependency-path: tools/go.sum
 
       - name: Install registry tools
         if: ${{ !inputs.auth_check_only }}
@@ -109,8 +110,8 @@ jobs:
           bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
           git -C target config user.name "${APP_SLUG}[bot]"
           git -C target config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
-          args=(--root target --repository blinklabs-io/infrastructure --limit 10)
+          args=(--root ../target --repository blinklabs-io/infrastructure --limit 10)
           if [[ "$PUBLISH" == true ]]; then
             args+=(--publish)
           fi
-          python -B tools/scripts/release_pins/release_pin_updater.py "${args[@]}"
+          (cd tools && go run ./cmd/release-pins "${args[@]}")
