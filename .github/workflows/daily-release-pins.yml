@@ -1,0 +1,117 @@
+name: Daily infrastructure release pins
+
+on:
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Open or update release issues and PRs
+        type: boolean
+        default: false
+      auth_check_only:
+        description: Check the publication token without scanning
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-infrastructure-release-pins
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out updater
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tools
+
+      - name: Authenticate for publication
+        if: (github.event_name == 'schedule' && vars.INFRA_RELEASE_PINS_PUBLISH_ENABLED == 'true') || inputs.publish || inputs.auth_check_only
+        id: app_publish
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.GOVERNANCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: infrastructure
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Authenticate for read-only scan
+        if: (github.event_name == 'schedule' && vars.INFRA_RELEASE_PINS_PUBLISH_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && !inputs.publish && !inputs.auth_check_only)
+        id: app_read
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.GOVERNANCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: infrastructure
+          permission-contents: read
+
+      - name: Verify App and target access
+        env:
+          GH_TOKEN: ${{ steps.app_publish.outputs.token || steps.app_read.outputs.token }}
+          APP_SLUG: ${{ steps.app_publish.outputs.app-slug || steps.app_read.outputs.app-slug }}
+          MUST_PUSH: ${{ (github.event_name == 'schedule' && vars.INFRA_RELEASE_PINS_PUBLISH_ENABLED == 'true') || inputs.publish || inputs.auth_check_only }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = blinklabs-governance
+          can_push=$(gh api repos/blinklabs-io/infrastructure --jq '.permissions.push')
+          if [[ "$MUST_PUSH" == true && "$can_push" != true ]]; then
+            echo '::error::Governance App cannot push to infrastructure'
+            exit 1
+          fi
+
+      - name: Check out infrastructure
+        if: ${{ !inputs.auth_check_only }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: blinklabs-io/infrastructure
+          token: ${{ steps.app_publish.outputs.token || steps.app_read.outputs.token }}
+          path: target
+          fetch-depth: 0
+
+      - name: Install Helm
+        if: ${{ !inputs.auth_check_only }}
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.2
+
+      - name: Install Go
+        if: ${{ !inputs.auth_check_only }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/go.mod
+          cache-dependency-path: tools/go.sum
+
+      - name: Install registry tools
+        if: ${{ !inputs.auth_check_only }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y skopeo
+
+      - name: Scan releases and prepare PRs
+        if: ${{ !inputs.auth_check_only }}
+        env:
+          GH_TOKEN: ${{ steps.app_publish.outputs.token || steps.app_read.outputs.token }}
+          APP_SLUG: ${{ steps.app_publish.outputs.app-slug || steps.app_read.outputs.app-slug }}
+          RELEASE_PIN_ACTOR: app/${{ steps.app_publish.outputs.app-slug || steps.app_read.outputs.app-slug }}
+          PUBLISH: ${{ (github.event_name == 'schedule' && vars.INFRA_RELEASE_PINS_PUBLISH_ENABLED == 'true') || inputs.publish }}
+        run: |
+          set -euo pipefail
+          bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git -C target config user.name "${APP_SLUG}[bot]"
+          git -C target config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          args=(--root ../target --repository blinklabs-io/infrastructure --limit 10)
+          if [[ "$PUBLISH" == true ]]; then
+            args+=(--publish)
+          fi
+          (cd tools && go run ./cmd/release-pins "${args[@]}")

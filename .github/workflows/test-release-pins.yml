@@ -1,0 +1,38 @@
+name: Test infrastructure release pins
+
+on:
+  pull_request:
+    paths:
+      - cmd/release-pins/**
+      - go.mod
+      - go.sum
+      - .github/workflows/daily-release-pins.yml
+      - .github/workflows/test-release-pins.yml
+  push:
+    branches: [main]
+    paths:
+      - cmd/release-pins/**
+      - go.mod
+      - go.sum
+      - .github/workflows/daily-release-pins.yml
+      - .github/workflows/test-release-pins.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Check formatting
+        run: test -z "$(gofmt -l cmd/release-pins)"
+      - name: Vet
+        run: go vet ./cmd/release-pins
+      - name: Test
+        run: go test ./cmd/release-pins -v
