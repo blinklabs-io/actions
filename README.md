@@ -319,7 +319,8 @@ following secret on that environment:
 |---|---|
 | `GOVERNANCE_LIFECYCLE_STATE_KEY` | Stable random key for the applied-state record. |
 
-Both governance sync and release fan-out use the existing repository secrets
+Governance sync, release fan-out, and the
+[infrastructure release pin updater](docs/release-pin-updater.md) use the existing repository secrets
 `GOVERNANCE_APP_CLIENT_ID` and `GOVERNANCE_APP_PRIVATE_KEY` for the governance
 GitHub App.
 
