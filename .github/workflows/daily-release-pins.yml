@@ -60,15 +60,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app_publish.outputs.token || steps.app_read.outputs.token }}
           APP_SLUG: ${{ steps.app_publish.outputs.app-slug || steps.app_read.outputs.app-slug }}
-          MUST_PUSH: ${{ (github.event_name == 'schedule' && vars.INFRA_RELEASE_PINS_PUBLISH_ENABLED == 'true') || inputs.publish || inputs.auth_check_only }}
         run: |
           set -euo pipefail
           test "$APP_SLUG" = blinklabs-governance
-          can_push=$(gh api repos/blinklabs-io/infrastructure --jq '.permissions.push')
-          if [[ "$MUST_PUSH" == true && "$can_push" != true ]]; then
-            echo '::error::Governance App cannot push to infrastructure'
-            exit 1
-          fi
+          # Token creation rejects ungranted Contents, Issues, or PR write scopes.
+          # The repository endpoint verifies access; permissions.push is not a
+          # reliable installation-token write preflight.
+          test "$(gh api repos/blinklabs-io/infrastructure --jq .full_name)" = blinklabs-io/infrastructure
 
       - name: Check out infrastructure
         if: ${{ !inputs.auth_check_only }}
