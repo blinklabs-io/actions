@@ -313,9 +313,10 @@ func TestHelmPublishExistingVersion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			status := http.StatusOK
-			if tc.remote == "missing" {
+			switch tc.remote {
+			case "missing":
 				status = http.StatusNotFound
-			} else if tc.remote == "unauthorized" {
+			case "unauthorized":
 				status = http.StatusForbidden
 			}
 			registry := helmRegistryFixture(t, status)

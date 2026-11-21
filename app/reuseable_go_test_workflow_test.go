@@ -71,7 +71,7 @@ func TestReusableGoTestWorkflowUsesMatrixArchitectureAndEffectiveGuards(t *testi
 		}
 	}
 	formatRun := steps["Check formatting"].Run
-	if !strings.Contains(formatRun, "_diff=\"$(golangci-lint fmt --diff 2>&1)\"") ||
+	if !strings.Contains(formatRun, "_diff=\"$(golangci-lint fmt \"$@\" --diff 2>&1)\"") ||
 		!strings.Contains(formatRun, "_format_status") || strings.Contains(formatRun, "| grep") {
 		t.Errorf("format check does not preserve tool failures and diff output:\n%s", formatRun)
 	}
@@ -204,7 +204,7 @@ func TestReusableGolangciLintFormattingCheckPreservesToolFailures(t *testing.T) 
 			}
 		}
 	}
-	if !strings.Contains(formatRun, "_diff=\"$(golangci-lint fmt --diff 2>&1)\"") ||
+	if !strings.Contains(formatRun, "_diff=\"$(golangci-lint fmt \"$@\" --diff 2>&1)\"") ||
 		!strings.Contains(formatRun, "_format_status") || strings.Contains(formatRun, "| grep") {
 		t.Errorf("format check does not preserve tool failures and diff output:\n%s", formatRun)
 	}
