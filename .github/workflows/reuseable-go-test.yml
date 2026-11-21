@@ -149,7 +149,7 @@ on:
         type: string
         default: ""
       check-format:
-        description: Run `golangci-lint fmt --diff` after linting.
+        description: Check gofumpt and repository-configured formatters after linting.
         required: false
         type: boolean
         default: false
@@ -556,16 +556,20 @@ jobs:
         if: inputs.run-golangci-lint && inputs.check-format && (inputs.golangci-go-version == '' || matrix.go-version == inputs.golangci-go-version) && (inputs.golangci-platform == '' || matrix.platform == inputs.golangci-platform)
         shell: bash
         run: |
-          if _diff="$(golangci-lint fmt --diff 2>&1)"; then
-            _format_status=0
-          else
-            _format_status=$?
-          fi
-          if [ "$_format_status" -ne 0 ] || [ -n "$_diff" ]; then
-            echo "Code is not formatted"
-            printf '%s\n' "$_diff"
-            exit 1
-          fi
+          check_format() {
+            if _diff="$(golangci-lint fmt "$@" --diff 2>&1)"; then
+              _format_status=0
+            else
+              _format_status=$?
+            fi
+            if [ "$_format_status" -ne 0 ] || [ -n "$_diff" ]; then
+              echo "Code is not formatted"
+              printf '%s\n' "$_diff"
+              exit 1
+            fi
+          }
+          check_format
+          check_format --enable=gofumpt
       - name: Install NilAway
         if: inputs.run-nilaway && (inputs.nilaway-go-version == '' || matrix.go-version == inputs.nilaway-go-version) && (inputs.nilaway-platform == '' || matrix.platform == inputs.nilaway-platform)
         shell: bash

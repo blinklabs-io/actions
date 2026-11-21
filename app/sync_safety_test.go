@@ -105,10 +105,10 @@ func (g *recordingGitHub) handler() http.Handler {
 					if strings.HasSuffix(r.URL.Path, "/"+suffix) {
 						enc := base64.StdEncoding.EncodeToString([]byte(raw))
 						w.Header().Set("Content-Type", "application/json")
-						_, _ = w.Write([]byte(fmt.Sprintf(
+						_, _ = fmt.Fprintf(w,
 							`{"type":"file","name":"x","sha":"deadbeef","content":%q,"encoding":"base64"}`,
 							enc,
-						)))
+						)
 						return
 					}
 				}

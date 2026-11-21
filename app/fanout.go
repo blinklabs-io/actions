@@ -358,32 +358,32 @@ func runFanoutCommand(args []string, stdout, stderr io.Writer) (code int, handle
 	switch args[0] {
 	case "fanout-plan":
 		if len(args) != 3 {
-			fmt.Fprintln(stderr, "usage: fanout-plan <owner/repo> <version>")
+			_, _ = fmt.Fprintln(stderr, "usage: fanout-plan <owner/repo> <version>")
 			return 2, true
 		}
 		cfg, err := loadFanoutConfig("repos-config.yaml")
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 1, true
 		}
 		entries, err := fanoutPlan(cfg, args[1], args[2])
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 1, true
 		}
 		if err := json.NewEncoder(stdout).Encode(entries); err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 1, true
 		}
 		return 0, true
 	case "fanout-products":
 		cfg, err := loadFanoutConfig("repos-config.yaml")
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 1, true
 		}
 		for _, p := range fanoutProducts(cfg) {
-			fmt.Fprintln(stdout, p)
+			_, _ = fmt.Fprintln(stdout, p)
 		}
 		return 0, true
 	}

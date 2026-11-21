@@ -135,6 +135,14 @@ When a caller selects lint or NilAway by platform, include that exact runner
 label in its `platforms` list. A selector absent from the list fails the job
 instead of silently skipping the check.
 
+Enable `check-format: "true"` on a repository's Go workflow in
+`repos-config.yaml` to enforce gofumpt centrally. The shared formatting step
+explicitly enables gofumpt, so repositories do not need a `.golangci.yml` just
+to select it. Existing formatter settings and generated-code exclusions are
+preserved. In `reuseable-go-test.yml`, also enable `run-golangci-lint`; the
+formatting step uses the same tool, version, and platform selectors as lint.
+The switch defaults to false so repositories can be enabled individually.
+
 The org's free plan shares 20 concurrent jobs (5 of them macOS) across every repository, so each reusable workflow keeps one run narrow by default:
 
 - `reuseable-go-test.yml` starts cross-builds only after tests pass and builds every `cross-build-targets` entry in a single job; `cross-build-max-parallel` is accepted but ignored. `max-parallel` (default 4) bounds the go-version x go-arch x platform test matrix.
