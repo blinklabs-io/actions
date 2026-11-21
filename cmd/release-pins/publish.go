@@ -43,10 +43,12 @@ type openIssue struct {
 	Author author `json:"author"`
 }
 
-func upstreamLink(source string, urls map[string]string) string {
+func upstreamLink(kind, source string, urls map[string]string) string {
 	alias := strings.SplitN(source, "/", 2)[0]
-	if url := urls[alias]; url != "" {
-		return url
+	if kind == "chart" {
+		if url := urls[alias]; url != "" {
+			return url
+		}
 	}
 	if strings.HasPrefix(source, "oci://ghcr.io/") || strings.HasPrefix(source, "ghcr.io/") {
 		parts := strings.SplitN(strings.TrimPrefix(strings.TrimPrefix(source, "oci://ghcr.io/"), "ghcr.io/"), "/", 2)
@@ -65,7 +67,7 @@ func description(release string, pins []pin, urls map[string]string, issue int) 
 	var body strings.Builder
 	fmt.Fprintf(&body, markerFormat+"\n\nUpdate published pins for the `%s` Helmfile release.\n\n| Pin | Current on main | Proposed | Source |\n| --- | --- | --- | --- |\n", release, release)
 	for _, p := range pins {
-		fmt.Fprintf(&body, "| %s | `%s` | `%s` | [upstream](%s) |\n", p.Kind, p.Current, p.Target, upstreamLink(p.Source, urls))
+		fmt.Fprintf(&body, "| %s | `%s` | `%s` | [upstream](%s) |\n", p.Kind, p.Current, p.Target, upstreamLink(p.Kind, p.Source, urls))
 	}
 	body.WriteString("\nRegistry artifact existence is checked before this PR is opened. Normal PR checks validate the deployment diff. No deployment or merge is automatic.\n")
 	if issue > 0 {

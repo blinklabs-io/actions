@@ -11,12 +11,15 @@ import (
 
 type fakeRegistry struct{ tags map[string][]string }
 
-func (f fakeRegistry) Versions(source string) ([]string, error) {
+func (f fakeRegistry) ChartVersions(source string) ([]string, error) {
 	tags, ok := f.tags[source]
 	if !ok {
 		return nil, fmt.Errorf("unknown source: %s", source)
 	}
 	return tags, nil
+}
+func (f fakeRegistry) ImageVersions(source string) ([]string, error) {
+	return f.ChartVersions(source)
 }
 func (f fakeRegistry) Digest(string) (string, error) { return "sha256:test", nil }
 func (f fakeRegistry) Verify(p pin) error {
@@ -207,7 +210,7 @@ func TestRegistryDigestUsesRawManifestBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tags, err := r.Versions("oci://ghcr.io/example/charts/service")
+	tags, err := r.ChartVersions("oci://ghcr.io/example/charts/service")
 	if err != nil || len(tags) != 2 {
 		t.Fatalf("tags=%v err=%v", tags, err)
 	}
@@ -217,6 +220,40 @@ func TestRegistryDigestUsesRawManifestBytes(t *testing.T) {
 	}
 	if digest != fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("{\"schemaVersion\":2}\n"))) {
 		t.Fatalf("digest=%s", digest)
+	}
+}
+
+func TestImageNamespaceDoesNotUseMatchingHelmAlias(t *testing.T) {
+	root := fixture(t)
+	write(t, filepath.Join(root, reposPath), "repositories:\n  - name: grafana\n    url: https://example.invalid/charts\n")
+	bin := t.TempDir()
+	write(t, filepath.Join(bin, "helm"), "#!/bin/sh\nif [ \"$1 $2\" = \"search repo\" ]; then printf '[{\"name\":\"grafana/pdc-agent\",\"version\":\"1.2.4\"}]'; fi\n")
+	write(t, filepath.Join(bin, "skopeo"), "#!/bin/sh\nif [ \"$1\" = list-tags ]; then printf '{\"Tags\":[\"1.2.5\"]}'; fi\n")
+	for _, name := range []string{"helm", "skopeo"} {
+		if err := os.Chmod(filepath.Join(bin, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r, err := newRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chart, err := r.ChartVersions("grafana/pdc-agent")
+	if err != nil || len(chart) != 1 || chart[0] != "1.2.4" {
+		t.Fatalf("chart=%v err=%v", chart, err)
+	}
+	image, err := r.ImageVersions("grafana/pdc-agent")
+	if err != nil || len(image) != 1 || image[0] != "1.2.5" {
+		t.Fatalf("image=%v err=%v", image, err)
+	}
+	if r.checked != 2 {
+		t.Fatalf("expected independent chart and image queries, got %d", r.checked)
+	}
+	p := pin{Kind: "image", Source: "grafana/pdc-agent", Current: "1.2.3", Target: "1.2.5"}
+	body := description("pdc-agent", []pin{p}, r.URLs, 7)
+	if !strings.Contains(body, "https://hub.docker.com/r/grafana/pdc-agent/tags") || strings.Contains(body, "example.invalid") {
+		t.Fatalf("image source link used Helm alias: %s", body)
 	}
 }
 

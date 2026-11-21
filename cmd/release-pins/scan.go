@@ -70,7 +70,8 @@ type imageEntry struct {
 }
 
 type registryClient interface {
-	Versions(string) ([]string, error)
+	ChartVersions(string) ([]string, error)
+	ImageVersions(string) ([]string, error)
 	Digest(string) (string, error)
 	Verify(pin) error
 }
@@ -399,21 +400,18 @@ func newRegistry(root string) (*registry, error) {
 	return &registry{URLs: urls, tags: map[string][]string{}, prepared: map[string]bool{}}, nil
 }
 
-func (r *registry) Versions(source string) ([]string, error) {
-	if tags, ok := r.tags[source]; ok {
+func (r *registry) ChartVersions(source string) ([]string, error) {
+	key := "chart:" + source
+	if tags, ok := r.tags[key]; ok {
 		return tags, nil
 	}
 	var tags []string
 	if strings.HasPrefix(source, "oci://") {
-		out, err := command("", "skopeo", "list-tags", "docker://"+strings.TrimPrefix(source, "oci://"))
+		found, err := skopeoTags(strings.TrimPrefix(source, "oci://"))
 		if err != nil {
 			return nil, err
 		}
-		var result struct{ Tags []string }
-		if err = json.Unmarshal([]byte(out), &result); err != nil {
-			return nil, err
-		}
-		tags = result.Tags
+		tags = found
 	} else if parts := strings.SplitN(source, "/", 2); len(parts) == 2 && r.URLs[parts[0]] != "" {
 		if !r.prepared[parts[0]] {
 			if _, err := command("", "helm", "repo", "add", parts[0], r.URLs[parts[0]], "--force-update"); err != nil {
@@ -438,19 +436,37 @@ func (r *registry) Versions(source string) ([]string, error) {
 			}
 		}
 	} else {
-		out, err := command("", "skopeo", "list-tags", "docker://"+source)
-		if err != nil {
-			return nil, err
-		}
-		var result struct{ Tags []string }
-		if err = json.Unmarshal([]byte(out), &result); err != nil {
-			return nil, err
-		}
-		tags = result.Tags
+		return nil, fmt.Errorf("chart repository is not configured: %s", source)
 	}
-	r.tags[source] = tags
+	r.tags[key] = tags
 	r.checked++
 	return tags, nil
+}
+
+func (r *registry) ImageVersions(source string) ([]string, error) {
+	key := "image:" + source
+	if tags, ok := r.tags[key]; ok {
+		return tags, nil
+	}
+	tags, err := skopeoTags(source)
+	if err != nil {
+		return nil, err
+	}
+	r.tags[key] = tags
+	r.checked++
+	return tags, nil
+}
+
+func skopeoTags(source string) ([]string, error) {
+	out, err := command("", "skopeo", "list-tags", "docker://"+source)
+	if err != nil {
+		return nil, err
+	}
+	var result struct{ Tags []string }
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		return nil, err
+	}
+	return result.Tags, nil
 }
 
 func (r *registry) Digest(reference string) (string, error) {
@@ -498,7 +514,7 @@ func plan(root string, registry registryClient) (map[string][]pin, []string, err
 		if spec.ChartOwner != "" {
 			skipped = append(skipped, fmt.Sprintf("%s: chart version shared with %s", spec.Name, spec.ChartOwner))
 		} else if spec.Version != "" && !strings.HasPrefix(spec.Chart, "charts/") && !strings.HasPrefix(spec.Chart, "../") {
-			tags, e := registry.Versions(spec.Chart)
+			tags, e := registry.ChartVersions(spec.Chart)
 			if e == nil {
 				if target := newer(spec.Version, tags); target != "" {
 					p := pin{Release: spec.Name, Kind: "chart", Path: helmfilePath, Current: spec.Version, Target: target, Source: spec.Chart}
@@ -546,7 +562,7 @@ func plan(root string, registry registryClient) (map[string][]pin, []string, err
 					skipped = append(skipped, fmt.Sprintf("%s: image pin cannot be resolved safely: %s", spec.Name, relative))
 					continue
 				}
-				tags, e := registry.Versions(entry.Source)
+				tags, e := registry.ImageVersions(entry.Source)
 				if e == nil {
 					if target := newer(entry.Tag, tags); target != "" {
 						digest := ""
