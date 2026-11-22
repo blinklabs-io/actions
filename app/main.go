@@ -143,7 +143,6 @@ type RepoSettings struct {
 	HasIssues                *bool   `yaml:"has_issues" json:"has_issues,omitempty"`
 	HasProjects              *bool   `yaml:"has_projects" json:"has_projects,omitempty"`
 	HasWiki                  *bool   `yaml:"has_wiki" json:"has_wiki,omitempty"`
-	HasDiscussions           *bool   `yaml:"has_discussions" json:"has_discussions,omitempty"`
 	DeleteBranchOnMerge      *bool   `yaml:"delete_branch_on_merge" json:"delete_branch_on_merge,omitempty"`
 	AllowMergeCommit         *bool   `yaml:"allow_merge_commit" json:"allow_merge_commit,omitempty"`
 	AllowSquashMerge         *bool   `yaml:"allow_squash_merge" json:"allow_squash_merge,omitempty"`

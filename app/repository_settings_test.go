@@ -19,7 +19,7 @@ func TestRepositorySettingsDocumentedRequests(t *testing.T) {
 		name, config, observed string
 		want                   map[string]any
 	}{
-		{"explicit false and empty metadata", "description: ''\nhomepage: ''\nhas_issues: false\nhas_projects: false\nhas_wiki: false\nhas_discussions: false\n", `{"description":"old","homepage":"https://example.com","has_issues":true,"has_projects":true,"has_wiki":true,"has_discussions":true,"allow_auto_merge":true}`, map[string]any{"description": "", "homepage": "", "has_issues": false, "has_projects": false, "has_wiki": false, "has_discussions": false}},
+		{"explicit false and empty metadata", "description: ''\nhomepage: ''\nhas_issues: false\nhas_projects: false\nhas_wiki: false\n", `{"description":"old","homepage":"https://example.com","has_issues":true,"has_projects":true,"has_wiki":true,"allow_auto_merge":true}`, map[string]any{"description": "", "homepage": "", "has_issues": false, "has_projects": false, "has_wiki": false}},
 		{"nullable metadata already clear", "description: ''\nhomepage: ''", `{"description":null,"homepage":null}`, nil},
 		{"default branch and PR options", "default_branch: main\nallow_auto_merge: false\nallow_update_branch: true\nweb_commit_signoff_required: true", `{"default_branch":"develop","allow_auto_merge":true,"allow_update_branch":false,"web_commit_signoff_required":false}`, map[string]any{"default_branch": "main", "allow_auto_merge": false, "allow_update_branch": true, "web_commit_signoff_required": true}},
 		{"squash message includes matching title", "squash_merge_commit_title: PR_TITLE\nsquash_merge_commit_message: BLANK", `{"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"COMMIT_MESSAGES"}`, map[string]any{"squash_merge_commit_title": "PR_TITLE", "squash_merge_commit_message": "BLANK"}},
@@ -101,7 +101,7 @@ func TestRepositorySettingsConfigurationValidation(t *testing.T) {
 		"default_branch: ''", "squash_merge_commit_title: invalid", "squash_merge_commit_message: PR_BODY",
 		"merge_commit_message: PR_BODY", "merge_commit_title: PR_TITLE\nmerge_commit_message: COMMIT_MESSAGES",
 		"allow_merge_commit: false\nallow_squash_merge: false\nallow_rebase_merge: false",
-		"private: false", "archived: true", "name: renamed", "unknown_setting: true",
+		"private: false", "archived: true", "name: renamed", "unknown_setting: true", "has_discussions: false",
 	} {
 		var settings RepoSettings
 		err := yaml.Unmarshal([]byte(config), &settings)

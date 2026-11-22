@@ -644,7 +644,7 @@ Supported optional `settings` fields are:
 |---|---|
 | Metadata | `description`, `homepage` |
 | Default branch | `default_branch` (selects an existing branch; does not create or rename it) |
-| Features | `has_issues`, `has_projects`, `has_wiki`, `has_discussions` |
+| Features | `has_issues`, `has_projects`, `has_wiki` |
 | Pull requests | `allow_auto_merge`, `allow_update_branch`, `delete_branch_on_merge` |
 | Merge methods | `allow_merge_commit`, `allow_squash_merge`, `allow_rebase_merge` |
 | Web commits | `web_commit_signoff_required` |
