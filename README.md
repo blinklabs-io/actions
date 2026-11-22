@@ -452,11 +452,39 @@ controls creation only and does not change an existing repository's visibility.
 The organization's default branch must match any branch-protection names in its
 configuration.
 
-This controller and its workflow runs are public. Do not put private repository
-names or other private details in the tracked configuration or fan-out inputs;
-fan-out also includes repository names in job metadata. Confidential private
-repository management requires a private configuration source and an execution
-path that keeps private details out of public logs and artifacts.
+This controller is private. Declare private repositories directly in
+`repos-config.yaml`; a separate configuration source is not required:
+
+```yaml
+repositories:
+  - name: blinklabs-io/example-private
+    private: true
+    profile: repository-standard
+```
+
+The example name is a placeholder. `private` belongs on the repository entry,
+alongside `profile`, not inside `settings`. The `repository-standard` profile
+configures automatic branch deletion after merge, protection for `main`, and the
+Conventional Commits workflow. Other profiles can supply collaborators,
+workflows, and Dependabot configuration. Profile-based entries inherit these
+fields; do not duplicate them on the repository entry.
+
+The generated workflows also need permission to call this private repository's
+reusable workflows. Configure its GitHub Actions access policy for the intended
+private callers. Public repositories cannot call reusable workflows hosted in a
+private repository; see [GitHub's reusable workflow access rules](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations).
+
+GitHub requires Team or Enterprise for branch protection in private organization
+repositories. A private repository can be created on Free, but applying a profile
+with branch protection can then fail; creation does not mean reconciliation
+completed. See [GitHub's protected branch availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches).
+
+Verify this controller remains private before committing confidential entries.
+Keep private repository names and configuration out of public repositories and
+their generated files, workflow inputs, logs, and artifacts. Fan-out can include
+repository names in job metadata, so check the visibility of each execution
+destination. Credentials remain in GitHub secrets. Drift reports continue to
+show counts only for private or unknown-visibility repositories.
 
 To archive an explicitly managed repository, first add
 `archive_on_removal: true` to its entry and allow that configuration to be
