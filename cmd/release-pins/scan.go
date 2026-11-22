@@ -19,14 +19,15 @@ const (
 )
 
 var (
-	semverRE    = regexp.MustCompile(`^(v?)(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(\d+))?$`)
-	releaseRE   = regexp.MustCompile(`^  - name: (.+?)\s*$`)
-	fieldRE     = regexp.MustCompile(`^    (chart|version):\s*(\S+)\s*$`)
-	valueFileRE = regexp.MustCompile(`^      - ([\w./-]+\.ya?ml(?:\.gotmpl)?)\s*$`)
-	keyRE       = regexp.MustCompile(`^(\s*)([\w-]+):(?:\s*(.*))?$`)
-	rangeRE     = regexp.MustCompile(`^\s*\{\{-?\s*range \$(\w+) := list((?:\s+"[\w.-]+")+)\s*-?\}\}\s*$`)
-	quotedRE    = regexp.MustCompile(`"([^"]+)"`)
-	actionRE    = regexp.MustCompile(`\{\{-?\s*(if|range|with|define|block|end)\b`)
+	semverRE     = regexp.MustCompile(`^(v?)(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(\d+))?$`)
+	releaseRE    = regexp.MustCompile(`^  - name: (.+?)\s*$`)
+	fieldRE      = regexp.MustCompile(`^    (chart|version):\s*(\S+)\s*$`)
+	valueFileRE  = regexp.MustCompile(`^      - ([\w./-]+\.ya?ml(?:\.gotmpl)?)\s*$`)
+	keyRE        = regexp.MustCompile(`^(\s*)([\w-]+):(?:\s*(.*))?$`)
+	rangeRE      = regexp.MustCompile(`^\s*\{\{-?\s*range \$(\w+) := list((?:\s+"[\w.-]+")+)\s*-?\}\}\s*$`)
+	quotedRE     = regexp.MustCompile(`"([^"]+)"`)
+	assignmentRE = regexp.MustCompile(`^\$\w+\s*:?=\s+`)
+	actionRE     = regexp.MustCompile(`\{\{-?\s*(if|range|with|define|block|end)\b`)
 )
 
 var imageSources = map[string]string{
@@ -51,6 +52,7 @@ type releaseSpec struct {
 	Name, Chart, Version string
 	Values               []string
 	ChartOwner           string
+	UnsupportedValues    bool
 }
 
 type releaseBlock struct {
@@ -209,6 +211,15 @@ func matchingEnd(lines []string, start int) int {
 	return len(lines)
 }
 
+func conditionalLine(lines []string, line int) bool {
+	for i := 0; i <= line; i++ {
+		if match := actionRE.FindStringSubmatch(lines[i]); match != nil && match[1] != "end" && matchingEnd(lines, i) >= line {
+			return true
+		}
+	}
+	return false
+}
+
 func substitute(text, variable, value string) string {
 	re := regexp.MustCompile(`\{\{-?\s*\$` + regexp.QuoteMeta(variable) + `\s*-?\}\}`)
 	return re.ReplaceAllString(text, value)
@@ -272,10 +283,12 @@ func releases(root string) ([]releaseSpec, []string, error) {
 	for _, block := range releaseBlocks(lines) {
 		fields := map[string]string{}
 		var values []string
+		blockLines := make([]string, 0, block.End-block.Start)
 		for _, line := range lines[block.Start:block.End] {
 			if block.Binding != "" {
 				line = substitute(line, block.Binding, block.Value)
 			}
+			blockLines = append(blockLines, line)
 			if match := fieldRE.FindStringSubmatch(line); match != nil {
 				fields[match[1]] = match[2]
 			}
@@ -298,9 +311,52 @@ func releases(root string) ([]releaseSpec, []string, error) {
 		if owner == block.Name {
 			owner = ""
 		}
-		found = append(found, releaseSpec{Name: block.Name, Chart: fields["chart"], Version: fields["version"], Values: values, ChartOwner: owner})
+		found = append(found, releaseSpec{Name: block.Name, Chart: fields["chart"], Version: fields["version"], Values: values, ChartOwner: owner, UnsupportedValues: hasUnsupportedReleaseValues(blockLines)})
 	}
 	return found, skipped, nil
+}
+
+func hasUnsupportedReleaseValues(lines []string) bool {
+	inValues, seenValues := false, false
+	for i, line := range lines[1:] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if match := keyRE.FindStringSubmatch(line); match != nil && indent == 4 {
+			inValues = match[2] == "values"
+			switch match[2] {
+			case "values":
+				if seenValues || match[3] != "" || conditionalLine(lines, i+1) {
+					return true
+				}
+				seenValues = true
+			case "valuesTemplate", "set", "setString", "setTemplate", "inherit", "secrets":
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "{{") {
+			if inValues && indent >= 4 || indent <= 6 && !isNonRenderingAction(trimmed) {
+				return true
+			}
+			continue
+		}
+		if indent < 4 {
+			inValues = false
+			continue
+		}
+		if inValues {
+			match := valueFileRE.FindStringSubmatch(line)
+			if match == nil || !filepath.IsLocal(match[1]) || conditionalLine(lines, i+1) {
+				return true
+			}
+		} else if indent == 4 || valueFileRE.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 func repoURLs(root string) (map[string]string, error) {
@@ -584,6 +640,10 @@ func plan(root string, registry registryClient) (map[string][]pin, []string, err
 			}
 		}
 		if len(pins) > 0 {
+			if err := validateRuntime(root, spec, pins); err != nil {
+				skipped = append(skipped, fmt.Sprintf("%s: %v", spec.Name, err))
+				continue
+			}
 			result[spec.Name] = pins
 		}
 	}

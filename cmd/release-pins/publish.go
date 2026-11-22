@@ -70,6 +70,12 @@ func description(release string, pins []pin, urls map[string]string, issue int) 
 		fmt.Fprintf(&body, "| %s | `%s` | `%s` | [upstream](%s) |\n", p.Kind, p.Current, p.Target, upstreamLink(p.Kind, p.Source, urls))
 	}
 	body.WriteString("\nRegistry artifact existence is checked before this PR is opened. Normal PR checks validate the deployment diff. No deployment or merge is automatic.\n")
+	for _, p := range pins {
+		if p.Source == cardanoChart || p.Source == cardanoImage {
+			body.WriteString("\nCardano runtime initialization is checked against its bundled network configuration before publication. This does not validate chain synchronization or deployment readiness.\n")
+			break
+		}
+	}
 	if issue > 0 {
 		fmt.Fprintf(&body, "\nCloses #%d\n", issue)
 	}
@@ -81,9 +87,13 @@ func bodyFile(body string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
 	if _, err = file.WriteString(body); err != nil {
-		os.Remove(file.Name())
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+		return "", err
+	}
+	if err = file.Close(); err != nil {
+		_ = os.Remove(file.Name())
 		return "", err
 	}
 	return file.Name(), nil
@@ -272,7 +282,7 @@ func publishOne(root, repo, release string, pins []pin, urls map[string]string, 
 			if err != nil {
 				return "", err
 			}
-			defer os.Remove(file)
+			defer func() { _ = os.Remove(file) }()
 			url, err := command(root, "gh", "issue", "create", "--repo", repo, "--title", release+" release pins lag upstream", "--body-file", file)
 			if err != nil {
 				return "", err
@@ -306,12 +316,12 @@ func publishOne(root, repo, release string, pins []pin, urls map[string]string, 
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(temporary)
+	defer func() { _ = os.RemoveAll(temporary) }()
 	worktree := filepath.Join(temporary, "worktree")
 	if _, err = command(root, "git", "worktree", "add", "--detach", worktree, start); err != nil {
 		return "", err
 	}
-	defer command(root, "git", "worktree", "remove", "--force", worktree)
+	defer func() { _, _ = command(root, "git", "worktree", "remove", "--force", worktree) }()
 	if existing != nil || resume {
 		if _, err = command(worktree, "git", "merge", "origin/main", "--signoff", "-m", "chore: merge main into "+branch); err != nil {
 			return "", err
@@ -323,6 +333,23 @@ func publishOne(root, repo, release string, pins []pin, urls map[string]string, 
 	}
 	if len(changed) == 0 && existing == nil && !resume {
 		return "", fmt.Errorf("no changes produced for new release PR: %s", release)
+	}
+	specs, _, err := releases(worktree)
+	if err != nil {
+		return "", err
+	}
+	for _, spec := range specs {
+		if spec.Name == release {
+			for _, p := range pins {
+				if (p.Source == cardanoImage || p.Source == cardanoChart) && spec.Chart != cardanoChart {
+					return "", fmt.Errorf("cardano chart changed on branch: %s", release)
+				}
+			}
+			if err = validateRuntime(worktree, spec, nil); err != nil {
+				return "", err
+			}
+			break
+		}
 	}
 	if len(changed) > 0 {
 		if _, err = command(worktree, "git", "diff", "--check"); err != nil {
@@ -355,7 +382,7 @@ func publishOne(root, repo, release string, pins []pin, urls map[string]string, 
 			if e != nil {
 				return "", e
 			}
-			defer os.Remove(file)
+			defer func() { _ = os.Remove(file) }()
 			if _, e = command(worktree, "gh", "pr", "edit", strconv.Itoa(existing.Number), "--repo", repo, "--body-file", file); e != nil {
 				return "", e
 			}
@@ -370,7 +397,7 @@ func publishOne(root, repo, release string, pins []pin, urls map[string]string, 
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(file)
+	defer func() { _ = os.Remove(file) }()
 	if existing != nil {
 		if _, err = command(worktree, "gh", "pr", "edit", strconv.Itoa(existing.Number), "--repo", repo, "--body-file", file); err != nil {
 			return "", err

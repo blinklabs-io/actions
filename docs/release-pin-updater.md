@@ -27,6 +27,28 @@ another PR for that release while the first is open. A closed unmerged updater
 PR is reported for manual review. Existing hand-maintained PRs and issues
 mentioning the release also block duplicate updater PRs.
 
+Cardano node updates must also initialize the candidate runtime with the selected
+bundled network configuration. A failed check excludes the entire release,
+including accompanying chart updates. Existing updater branches are checked
+again after merging `main` and applying pins, before any push or PR-body update.
+This preserves the current pins when a newer image cannot load its configuration.
+
+For the Cardano node chart, static values files are applied in order to resolve
+the image, `cardano_network`, and optional `cardano_config`. The chart's default
+configuration path is `/opt/cardano/config/<network>/config.json`. Dynamic,
+conditional, ambiguous, and non-bundled configurations require manual review.
+The check uses the image's bundled topology; it does not validate a rendered
+ConfigMap topology, chain synchronization, persistent data, or deployment readiness.
+
+The candidate runs without network access, host mounts, or credentials. The
+validator runs `cardano-node run` with closed stdin and `--shutdown-ipc 0`, using
+the node's [graceful EOF shutdown handling](https://github.com/IntersectMBO/cardano-node/blob/11.1.3/cardano-node/src/Cardano/Node/Handlers/Shutdown.hs)
+after [configuration and tracing initialization](https://github.com/IntersectMBO/cardano-node/blob/11.1.3/cardano-node/src/Cardano/Node/Run.hs).
+Only exit status zero passes; startup errors, timeouts, and unavailable container
+engines reject the update. Each process gets 30 seconds plus five seconds to
+terminate; the outer container command is bounded to three minutes, including
+image download. Linux uses Docker and macOS uses Apple Container.
+
 The scanner reads files as text and does not decrypt Helmfile secrets. It
 reports dynamic releases, shared values files, non-semver pins, direct
 digest-pinned image references, and image references it cannot map to a
@@ -34,7 +56,8 @@ registry. Update source mappings in `cmd/release-pins/scan.go`
 after checking the upstream chart's image default. Review generated PRs for
 breaking changes and deployment ordering before merge.
 
-For a local read-only scan, install Helm and `skopeo`, check out infrastructure,
+For a local read-only scan, install Helm, `skopeo`, and the platform's container
+engine, check out infrastructure,
 then run from this repository:
 
 ```sh
