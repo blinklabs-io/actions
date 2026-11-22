@@ -25,6 +25,7 @@ import (
 // ---------------------------------------------------------------------------
 
 type Config struct {
+	GitHubFree            bool                  `yaml:"github_free"`
 	Profiles              map[string]Profile    `yaml:"profiles"`
 	Discovery             Discovery             `yaml:"discovery"`
 	Repositories          []RepoConfig          `yaml:"repositories"`
@@ -110,8 +111,9 @@ type WorkflowOverride struct {
 }
 
 type RepoConfig struct {
-	Name    string `yaml:"name"`
-	Profile string `yaml:"profile"`
+	skipPrivateBranchProtection bool
+	Name                        string `yaml:"name"`
+	Profile                     string `yaml:"profile"`
 	// Private controls creation only; an existing repository's visibility is unchanged.
 	Private *bool `yaml:"private"`
 	// ArchiveOnRemoval arms archival only after this configuration has been applied.
@@ -300,9 +302,9 @@ type pipelineData struct {
 // ---------------------------------------------------------------------------
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "verify-governance-approval" {
+	if len(os.Args) == 2 && os.Args[1] == "verify-governance-context" {
 		client := github.NewClient(nil).WithAuthToken(os.Getenv("GH_TOKEN"))
-		if err := verifyGovernanceApproval(context.Background(), client, os.Getenv("GITHUB_REPOSITORY"), os.Getenv("GITHUB_RUN_ID"), os.Getenv("GITHUB_RUN_ATTEMPT")); err != nil {
+		if err := verifyGovernanceContext(context.Background(), client, os.Getenv("GITHUB_REPOSITORY"), os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_REF"), os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_RUN_ATTEMPT")); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -342,6 +344,7 @@ func main() {
 		fmt.Println("Could not load governance lifecycle state")
 		os.Exit(1)
 	}
+	controller.trustedWriters = cfg.GitHubFree
 	if err := validateExplicitRepositories(cfg.Repositories, controller.owner); err != nil {
 		fmt.Println("Invalid configured repositories")
 		os.Exit(1)
@@ -473,7 +476,14 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 		}
 		var repoErr error
 		syncLogf(repoCtx, "Starting sync for %s/%s\n", owner, repoName)
-		protectionErr := syncBranchProtection(repoCtx, client, owner, repoName, repo.BranchProtection)
+		var protectionErr error
+		if repo.skipPrivateBranchProtection && info.GetPrivate() {
+			for _, protection := range repo.BranchProtection {
+				report.change("branch protection", protection.Branch, "", "").status = "skipped"
+			}
+		} else {
+			protectionErr = syncBranchProtection(repoCtx, client, owner, repoName, repo.BranchProtection)
+		}
 		if protectionErr != nil {
 			report.diagnostic("branch protection reconciliation failed")
 			repoErr = errors.Join(repoErr, protectionErr)
@@ -640,6 +650,7 @@ func expandProfiles(cfg *Config) error {
 		return err
 	}
 	for i := range cfg.Repositories {
+		cfg.Repositories[i].skipPrivateBranchProtection = cfg.GitHubFree
 		if err := expandRepo(cfg, &cfg.Repositories[i]); err != nil {
 			return err
 		}

@@ -273,22 +273,40 @@ Reconciliation is driven by `.github/workflows/sync.yaml`, which runs on:
   [auto-discovery](#auto-discovery-opt-in) is enabled, picks up newly-created
   marker repositories without a `repos-config.yaml` change.
 
-The sync job runs only on `main` and requires approval by the Core team through
-the `governance-sync` environment. It verifies the environment and approval
-before minting a GitHub App token or changing repositories. Start a new workflow
-run after a failure: a rerun cannot reuse a previous run's approval. The engine
-checks `main` before lifecycle writes; if its revision changes, the run fails
-and a new approved run is required.
+The sync job runs only on `main` for push, schedule, and manual events. It
+verifies that the checked-out revision is still current before minting a GitHub
+App token. Reruns are rejected; start a new run after a failure. Lifecycle writes
+check the current `main` revision again. These checks do not make an entire
+reconciliation batch atomic if `main` changes while it is running.
 
-A private controller retaining this required-reviewer environment gate needs
-GitHub Enterprise. GitHub Team supports private repository branch protection,
-but required environment reviewers on Free, Pro, and Team are available only
-for public repositories. Converting a public controller to private on Free
-causes environment protections to be ignored. The explicit approval check
-rejects an environment without the Core reviewer rule before requesting the
-App token; the lifecycle state ruleset is also mandatory. Organization-owner
-access does not override these plan restrictions. See [GitHub's environment
-availability](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+This private controller uses GitHub Free and does not require Core environment
+approval. Its committed configuration explicitly enables:
+
+```yaml
+github_free: true
+```
+
+This mode skips the controller's lifecycle-state ruleset requirement and skips
+branch-protection reconciliation for targets observed as private through the
+API. Private protection skips appear only in aggregate skipped counts; they are
+not successful protection updates. Public target protections remain enforced,
+and their API failures remain errors. Settings and team access still reconcile
+for private targets. Omitting `github_free` or setting it to `false` restores
+state-ruleset checks and private target protection reconciliation; it does not
+add an environment approval gate to the workflows.
+
+Automatic archival remains enabled for applied `archive_on_removal` markers.
+State signatures, repository identity checks, configuration-history checks, and
+compare-and-swap state updates remain in place. **Repository writers must be
+trusted:** a signature detects modified state but cannot prevent replay of a
+previously valid state record. GitHub Free cannot enforce the state ruleset in
+a private controller. Writers who can change workflows also have access to the
+repository-level App credentials through those workflows. The run-context check
+is not an independent approval or a boundary against malicious workflow changes.
+
+GitHub documents the availability of [rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
+and [environment protection](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+No paid plan is required by this configuration.
 
 The GitHub App installation must cover all repositories in the controller
 organization: new repositories do not exist when the token is minted, and an
@@ -306,10 +324,10 @@ did not increase and skips a retry when published chart contents already match.
 
 The `actions` and `docker-template` repositories use the
 `repository-standard-pinned` profile for their Conventional Commits callers.
-Their protected default branches require pull requests, so governance cannot
+Where their default branches enforce pull requests, governance cannot
 update those wrappers directly. After the reusable Conventional Commits workflow
 changes, update both wrappers to the latest workflow-changing commit through
-reviewed pull requests before approving the next sync. Otherwise the sync fails
+reviewed pull requests before starting the next sync. Otherwise the sync fails
 when it tries to update the protected files.
 
 ## Configuration
@@ -323,23 +341,22 @@ The sync engine requires these environment variables:
 | `GITHUB_SHA` | The checked-out current `main` revision, supplied by GitHub Actions. |
 | `GOVERNANCE_LIFECYCLE_STATE_KEY` | A stable, random secret of at least 32 bytes used to authenticate lifecycle state and conceal repository identities. |
 
-Configure `governance-sync` with Core as its only required reviewer, disable
-administrator bypass, and restrict deployment to the `main` branch. Set the
-following secret on that environment:
-
-| Secret | Description |
-|---|---|
-| `GOVERNANCE_LIFECYCLE_STATE_KEY` | Stable random key for the applied-state record. |
+Set `GOVERNANCE_LIFECYCLE_STATE_KEY` as a repository secret. Use a stable random
+value of at least 32 bytes. An environment secret is unavailable to these jobs;
+when migrating existing state, retain the original key. Do not rotate it merely
+to change secret scope.
 
 Governance sync, release fan-out, and the
 [infrastructure release pin updater](docs/release-pin-updater.md) use the existing repository secrets
 `GOVERNANCE_APP_CLIENT_ID` and `GOVERNANCE_APP_PRIVATE_KEY` for the governance
 GitHub App.
 
-Protect `refs/heads/governance-applied-state` with an active repository ruleset
+When `github_free` is false or omitted, protect
+`refs/heads/governance-applied-state` with an active repository ruleset
 named `governance-lifecycle-state`. Restrict creation, updates, deletion, and
 non-fast-forward updates, with only the governance GitHub App as an always-on
-bypass actor. The engine checks the ruleset before it performs lifecycle work.
+bypass actor. The engine checks this ruleset before lifecycle work unless `github_free`
+explicitly selects trusted-writer operation.
 The branch stores only authenticated revision and identity hashes, never
 repository names. Protect and retain the state key: losing or rotating it makes
 the existing state unreadable and requires deliberately re-arming archival
@@ -348,17 +365,15 @@ If a marked repository is renamed, deleted, or replaced before removal, the
 run fails without archiving it and requires operator intervention. Do not
 re-add a deleted repository unless recreating it is intended.
 
-Configure a separate `release-fanout` environment with administrator bypass
-disabled and deployment restricted to `main`; it does not require a reviewer.
-Release fan-out remains automatic on `main`. The App needs access to each target
-repository and any branch-protection bypass required to push to its default
-branch.
+Release fan-out remains automatic on `main` without an environment dependency.
+It checks the current main revision before requesting its target-scoped token.
+The App needs access to each target repository and any branch-protection bypass
+required to push to its default branch.
 
-Core approval gates the governance sync job, not every use of the App. The
-repository-level key is also available to other eligible workflows and earlier
-workflow revisions. Fan-out requests a contents-write token scoped to its
-target repository, but its private key can authenticate as the same App with the
-App's broader permissions. See GitHub's [installation token documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
+Both workflows use the existing repository-level App key. Fan-out requests a
+contents-write token scoped to its target repository, but the key can request
+the App's broader installation permissions. See GitHub's
+[installation token documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
 
 ## Managing repositories
 
@@ -488,8 +503,9 @@ private repository; see [GitHub's reusable workflow access rules](https://docs.g
 
 GitHub requires Team or Enterprise for branch protection in private organization
 repositories. A private repository can be created on Free, but applying a profile
-with branch protection can then fail; creation does not mean reconciliation
-completed. See [GitHub's protected branch availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches).
+with branch protection fails unless `github_free: true` explicitly skips
+private protection. Such skips are counted in the drift report and do not mean
+that the branch is protected. See [GitHub's protected branch availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches).
 
 Verify this controller remains private before committing confidential entries.
 Keep private repository names and configuration out of public repositories and
@@ -501,12 +517,12 @@ show counts only for private or unknown-visibility repositories.
 To archive an explicitly managed repository, first add
 `archive_on_removal: true` to its entry and allow that configuration to be
 successfully applied. Remove the entry in a later configuration change and
-approve another sync; the engine verifies the same repository identity and
+start another sync; the engine verifies the same repository identity and
 archives it. Removing the marker, or removing and re-adding the entry, cancels
 the old archival intent. Removing an unmarked entry only stops management.
 Forks, the controller repository, and repositories still managed by discovery
 are never archived by this transition. A failed operation fails the run and is
-safe to retry with a new approved workflow run.
+safe to retry with a new workflow run.
 
 If an intermediate configuration revision has invalid YAML or an invalid
 explicit repository list, the next successful sync cancels prior archival

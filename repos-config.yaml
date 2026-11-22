@@ -1,3 +1,7 @@
+# Private GitHub Free controllers trust repository writers; paid environment
+# approval and state rulesets are not enforced. Private target protection is skipped.
+github_free: true
+
 # Shared branch-protection defaults — referenced via YAML merge key below.
 branch_protection_defaults: &branch_protection_defaults
   required_status_checks: []

@@ -22,7 +22,6 @@ jobs:
   orchestrate-governance:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
-    environment: governance-sync
     steps:
       - name: Checkout controller code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -36,10 +35,11 @@ jobs:
           go-version: '1.26.x'
           check-latest: true
 
-      - name: Verify governance approval
+      # Private GitHub Free repositories cannot enforce environment reviewers.
+      - name: Verify governance run context
         env:
           GH_TOKEN: ${{ github.token }}
-        run: go run ./app verify-governance-approval
+        run: go run ./app verify-governance-context
 
       # Names for newly created and removed repositories cannot be scoped in
       # advance. The App installation must cover all organization repositories.
