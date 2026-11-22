@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
+	"sort"
 	"strings"
 
 	"github.com/google/go-github/v60/github"
@@ -25,38 +26,68 @@ func planRepoSettings(ctx context.Context, client *github.Client, owner, repo st
 		report.change("setting", "delete_branch_on_merge", "", "").status = "unmanaged"
 		return nil, nil
 	}
-	current, _, err := client.Repositories.Get(ctx, owner, repo)
-	if current == nil {
-		current = &github.Repository{}
+	if err := validateRepoSettings(settings); err != nil {
+		report.change("setting", "configuration", "", "").status = "unchecked"
+		return nil, err
 	}
-	update := &github.Repository{}
-	fields := []struct {
-		name              string
-		desired, observed *bool
-		target            **bool
-	}{
-		{"delete_branch_on_merge", settings.DeleteBranchOnMerge, current.DeleteBranchOnMerge, &update.DeleteBranchOnMerge},
-		{"allow_merge_commit", settings.AllowMergeCommit, current.AllowMergeCommit, &update.AllowMergeCommit},
-		{"allow_squash_merge", settings.AllowSquashMerge, current.AllowSquashMerge, &update.AllowSquashMerge},
-		{"allow_rebase_merge", settings.AllowRebaseMerge, current.AllowRebaseMerge, &update.AllowRebaseMerge},
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return nil, errors.New("could not encode configured repository settings")
 	}
+	var desired map[string]any
+	if err := json.Unmarshal(data, &desired); err != nil {
+		return nil, errors.New("could not decode configured repository settings")
+	}
+	path := fmt.Sprintf("repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
+	req, err := client.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, errors.New("could not prepare repository settings observation")
+	}
+	var current map[string]any
+	_, observeErr := client.Do(ctx, req, &current)
+	update := make(map[string]any)
+	fields := make([]string, 0, len(desired))
+	for name := range desired {
+		fields = append(fields, name)
+	}
+	sort.Strings(fields)
 	var entries []*driftEntry
 	var observationErr error
-	for _, field := range fields {
-		if field.desired == nil {
-			continue
+	for _, name := range fields {
+		want := desired[name]
+		observed, exists := current[name]
+		// GitHub returns null for unset metadata; absence of the key is still an error.
+		if exists && observed == nil && (name == "description" || name == "homepage") {
+			observed = ""
 		}
-		if err != nil || field.observed == nil {
-			report.change("setting", field.name, "", "").status = "unchecked"
+		valid := false
+		switch want.(type) {
+		case bool:
+			_, valid = observed.(bool)
+		case string:
+			_, valid = observed.(string)
+		}
+		if observeErr != nil || !exists || !valid {
+			report.change("setting", name, "", "").status = "unchecked"
 			observationErr = errors.New("could not observe repository settings")
 			continue
 		}
-		if *field.observed == *field.desired {
-			report.change("setting", field.name, "", "").status = "matched"
+		if observed == want {
+			report.change("setting", name, "", "").status = "matched"
 			continue
 		}
-		entries = append(entries, report.change("setting", field.name, strconv.FormatBool(*field.observed), strconv.FormatBool(*field.desired)))
-		*field.target = field.desired
+		entries = append(entries, report.change("setting", name, fmt.Sprint(observed), fmt.Sprint(want)))
+		update[name] = want
+	}
+	// GitHub requires the title field whenever a commit-message default is sent,
+	// even if the configured title already matches.
+	for message, title := range map[string]string{
+		"squash_merge_commit_message": "squash_merge_commit_title",
+		"merge_commit_message":        "merge_commit_title",
+	} {
+		if _, changed := update[message]; changed {
+			update[title] = desired[title]
+		}
 	}
 	if observationErr != nil {
 		report.diagnostic("repository settings observation failed")
@@ -77,7 +108,11 @@ func planRepoSettings(ctx context.Context, client *github.Client, owner, repo st
 				return errors.New("could not record planned setting change")
 			}
 		}
-		if _, _, err := client.Repositories.Edit(ctx, owner, repo, update); err != nil {
+		request, err := client.NewRequest(http.MethodPatch, path, update)
+		if err == nil {
+			_, err = client.Do(ctx, request, nil)
+		}
+		if err != nil {
 			report.diagnostic("repository settings update failed")
 			for _, entry := range entries {
 				entry.status = "failed"

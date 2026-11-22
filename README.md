@@ -155,9 +155,9 @@ The engine (`app/main.go`) runs as a batch job — there is no long-running
 server or webhook listener. For each repository in `repos-config.yaml` it
 performs an observe → compare → act loop:
 
-1. `reconcileRepoSettings` — reconciles repository settings (e.g. `delete_branch_on_merge`).
-2. `reconcileCollaborators` — reconciles collaborators and their permission levels.
-3. `syncBranchProtection` — reconciles branch protection rules.
+1. `syncBranchProtection` — reconciles configured branch protection rules.
+2. `reconcileRepoSettings` — reconciles repository settings, including default-branch selection.
+3. `reconcileCollaborators` — reconciles collaborators and their permission levels.
 4. `reconcileTeams` — reconciles configured team grants after repository controls succeed.
 5. `syncWorkflows` — renders standalone wrappers from `templates/workflow.tmpl`
    and grouped pipelines from `templates/pipeline.tmpl`. Configured workflows
@@ -585,7 +585,7 @@ GH_TOKEN=<token> go run ./app
 > Running `go run ./app` reconciles live repositories. Use a token scoped to a
 > test repository when experimenting.
 
-### Repository team grants and merge methods
+### Repository settings and team grants
 
 Repository entries and profiles can declare `teams` using organization team
 slugs and `pull` (read), `triage`, `push` (write), `maintain`, or `admin`
@@ -606,7 +606,40 @@ settings:
   allow_rebase_merge: false
 ```
 
-Omitted merge-method settings are left unchanged. Team grants are read before
+Supported optional `settings` fields are:
+
+| Group | Fields |
+|---|---|
+| Metadata | `description`, `homepage` |
+| Default branch | `default_branch` (selects an existing branch; does not create or rename it) |
+| Features | `has_issues`, `has_projects`, `has_wiki`, `has_discussions` |
+| Pull requests | `allow_auto_merge`, `allow_update_branch`, `delete_branch_on_merge` |
+| Merge methods | `allow_merge_commit`, `allow_squash_merge`, `allow_rebase_merge` |
+| Web commits | `web_commit_signoff_required` |
+| Commit defaults | `squash_merge_commit_title`, `squash_merge_commit_message`, `merge_commit_title`, `merge_commit_message` |
+
+Omitted settings are left unchanged. Explicit `false` disables a configured
+boolean; an empty `description` or `homepage` clears that metadata. Unsupported
+settings are rejected. Repository creation visibility remains the top-level
+`private` field; rename, archival, Actions policies, and security policies are
+not controlled by `settings`.
+
+Commit-message values follow GitHub's API enums. Configure the corresponding
+`*_commit_title` whenever setting `*_commit_message`; the title is included in
+the update even if it already matches. All three merge methods cannot be
+explicitly disabled together. GitHub validates branch existence and any
+organization or plan restrictions, and rejected updates fail the sync.
+Configured branch protections are applied before changing settings. A failed
+protection update prevents default-branch selection, and a failed settings
+update that includes `default_branch` prevents managed workflow publication.
+YAML aliases and merge keys remain supported, including anchors outside the
+settings block.
+
+Configured values are compared against an API observation before patching only
+changed fields and their required companion fields. Missing or incorrectly
+typed fields fail the observation; a documented null description or homepage
+means empty metadata.
+Team grants are read before
 updates and verified afterward; failed or incomplete observations fail the
 sync rather than being treated as missing grants. Drift reports preserve the
 existing private-repository redaction.

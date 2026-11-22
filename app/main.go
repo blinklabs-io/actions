@@ -133,15 +133,26 @@ type RepoConfig struct {
 	ReleaseFanout []FanoutTarget `yaml:"release_fanout"`
 }
 
+// RepoSettings uses pointers to distinguish omitted fields from explicit false or empty values.
 type RepoSettings struct {
-	// DeleteBranchOnMerge is a pointer so an explicit `false` in YAML is
-	// distinguishable from an unset field (nil). This lets the profile guard in
-	// expandProfiles detect an explicit override of `false`, and lets
-	// syncRepoSettings leave the setting untouched when it is not specified.
-	DeleteBranchOnMerge *bool `yaml:"delete_branch_on_merge"`
-	AllowMergeCommit    *bool `yaml:"allow_merge_commit"`
-	AllowSquashMerge    *bool `yaml:"allow_squash_merge"`
-	AllowRebaseMerge    *bool `yaml:"allow_rebase_merge"`
+	Description              *string `yaml:"description" json:"description,omitempty"`
+	Homepage                 *string `yaml:"homepage" json:"homepage,omitempty"`
+	DefaultBranch            *string `yaml:"default_branch" json:"default_branch,omitempty"`
+	HasIssues                *bool   `yaml:"has_issues" json:"has_issues,omitempty"`
+	HasProjects              *bool   `yaml:"has_projects" json:"has_projects,omitempty"`
+	HasWiki                  *bool   `yaml:"has_wiki" json:"has_wiki,omitempty"`
+	HasDiscussions           *bool   `yaml:"has_discussions" json:"has_discussions,omitempty"`
+	DeleteBranchOnMerge      *bool   `yaml:"delete_branch_on_merge" json:"delete_branch_on_merge,omitempty"`
+	AllowMergeCommit         *bool   `yaml:"allow_merge_commit" json:"allow_merge_commit,omitempty"`
+	AllowSquashMerge         *bool   `yaml:"allow_squash_merge" json:"allow_squash_merge,omitempty"`
+	AllowRebaseMerge         *bool   `yaml:"allow_rebase_merge" json:"allow_rebase_merge,omitempty"`
+	AllowAutoMerge           *bool   `yaml:"allow_auto_merge" json:"allow_auto_merge,omitempty"`
+	AllowUpdateBranch        *bool   `yaml:"allow_update_branch" json:"allow_update_branch,omitempty"`
+	WebCommitSignoffRequired *bool   `yaml:"web_commit_signoff_required" json:"web_commit_signoff_required,omitempty"`
+	SquashMergeCommitTitle   *string `yaml:"squash_merge_commit_title" json:"squash_merge_commit_title,omitempty"`
+	SquashMergeCommitMessage *string `yaml:"squash_merge_commit_message" json:"squash_merge_commit_message,omitempty"`
+	MergeCommitTitle         *string `yaml:"merge_commit_title" json:"merge_commit_title,omitempty"`
+	MergeCommitMessage       *string `yaml:"merge_commit_message" json:"merge_commit_message,omitempty"`
 }
 
 // TeamGrant manages a repository grant without changing team membership.
@@ -462,16 +473,24 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 		}
 		var repoErr error
 		syncLogf(repoCtx, "Starting sync for %s/%s\n", owner, repoName)
-		if err := reconcileRepoSettings(repoCtx, client, owner, repoName, repo.Settings, report); err != nil {
+		protectionErr := syncBranchProtection(repoCtx, client, owner, repoName, repo.BranchProtection)
+		if protectionErr != nil {
+			report.diagnostic("branch protection reconciliation failed")
+			repoErr = errors.Join(repoErr, protectionErr)
+		}
+		var settingsErr error
+		if protectionErr != nil && repo.Settings.DefaultBranch != nil {
+			report.change("setting", "default_branch", "", "").status = "skipped"
+			settingsErr = errors.New("default branch settings require successful configured protection")
+		} else {
+			settingsErr = reconcileRepoSettings(repoCtx, client, owner, repoName, repo.Settings, report)
+		}
+		if settingsErr != nil {
 			report.diagnostic("repository settings reconciliation failed")
-			repoErr = errors.Join(repoErr, err)
+			repoErr = errors.Join(repoErr, settingsErr)
 		}
 		if err := reconcileCollaborators(repoCtx, client, owner, repoName, repo.Collaborators, report); err != nil {
 			report.diagnostic("collaborator reconciliation failed")
-			repoErr = errors.Join(repoErr, err)
-		}
-		if err := syncBranchProtection(repoCtx, client, owner, repoName, repo.BranchProtection); err != nil {
-			report.diagnostic("branch protection reconciliation failed")
 			repoErr = errors.Join(repoErr, err)
 		}
 		// New team access must wait until the configured repository controls succeed.
@@ -485,7 +504,9 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 				report.change("team", fmt.Sprintf("configured team %d", i+1), "", "").status = "skipped"
 			}
 		}
-		if err := syncWorkflows(repoCtx, client, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
+		if settingsErr != nil && repo.Settings.DefaultBranch != nil {
+			report.change("managed files", "default branch selection", "", "").status = "skipped"
+		} else if err := syncWorkflows(repoCtx, client, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
 			report.diagnostic("managed file reconciliation failed")
 			repoErr = errors.Join(repoErr, err)
 		}
@@ -621,6 +642,9 @@ func expandProfiles(cfg *Config) error {
 	for i := range cfg.Repositories {
 		if err := expandRepo(cfg, &cfg.Repositories[i]); err != nil {
 			return err
+		}
+		if err := validateRepoSettings(cfg.Repositories[i].Settings); err != nil {
+			return fmt.Errorf("repository %q: %w", cfg.Repositories[i].Name, err)
 		}
 		if err := validateTeamGrants(cfg.Repositories[i].Teams); err != nil {
 			return fmt.Errorf("repository %q: %w", cfg.Repositories[i].Name, err)
