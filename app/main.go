@@ -479,7 +479,7 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 		settings := repo.Settings
 		var settingsErr error
 		prerequisites := linearHistoryPrerequisites(settings, repo.BranchProtection)
-		if prerequisites != (RepoSettings{}) && !(repo.skipPrivateBranchProtection && info.GetPrivate()) {
+		if prerequisites != (RepoSettings{}) && (!repo.skipPrivateBranchProtection || !info.GetPrivate()) {
 			settingsErr = validateRepoSettings(settings)
 			if settingsErr == nil {
 				settingsErr = reconcileRepoSettings(repoCtx, client, owner, repoName, prerequisites, report)
