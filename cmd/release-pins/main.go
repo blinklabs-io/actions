@@ -85,7 +85,7 @@ func run(args []string) error {
 			return err
 		}
 		if _, err = file.WriteString(report.String()); err != nil {
-			file.Close()
+			_ = file.Close()
 			return err
 		}
 		if err = file.Close(); err != nil {

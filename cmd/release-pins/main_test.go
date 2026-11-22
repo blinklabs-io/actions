@@ -279,7 +279,7 @@ func initGitFixture(t *testing.T, root string) {
 	mustCommand(t, root, "git", "add", "helmfile-app")
 	mustCommand(t, root, "git", "commit", "-s", "-m", "test: initial pins")
 	mustCommand(t, root, "git", "push", "origin", "main")
-	t.Cleanup(func() { command(root, "git", "worktree", "prune") })
+	t.Cleanup(func() { mustCommand(t, root, "git", "worktree", "prune") })
 }
 
 func TestPushedBranchIsReusedAfterPRCreationFails(t *testing.T) {
