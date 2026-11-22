@@ -339,12 +339,18 @@ The sync engine requires these environment variables:
 | `GH_TOKEN` | GitHub App installation token with administration, contents, and workflows write permissions, organization Members read permission, and access to all organization repositories. |
 | `GITHUB_REPOSITORY` | The controller repository, supplied by GitHub Actions. |
 | `GITHUB_SHA` | The checked-out current `main` revision, supplied by GitHub Actions. |
-| `GOVERNANCE_LIFECYCLE_STATE_KEY` | A stable, random secret of at least 32 bytes used to authenticate lifecycle state and conceal repository identities. |
+| `GOVERNANCE_LIFECYCLE_STATE_KEY` | Stable secret material used to authenticate lifecycle state and conceal repository identities. The workflow supplies the existing `GOVERNANCE_APP_PRIVATE_KEY` secret. |
 
-Set `GOVERNANCE_LIFECYCLE_STATE_KEY` as a repository secret. Use a stable random
-value of at least 32 bytes. An environment secret is unavailable to these jobs;
-when migrating existing state, retain the original key. Do not rotate it merely
-to change secret scope.
+No separate lifecycle secret is required. The workflow passes the existing
+governance App private-key secret to the engine's `GOVERNANCE_LIFECYCLE_STATE_KEY`
+environment variable. The engine uses those secret bytes for HMAC-SHA256 state
+authentication; it does not publish the private key or use the short-lived
+installation token as state-key material.
+
+State authentication depends on the exact secret bytes. Rotating the App key,
+reformatting its PEM, or switching an existing state record from another key
+requires an explicit state migration before sync can continue. A signature
+mismatch fails closed; the engine never silently resets existing state.
 
 Governance sync, release fan-out, and the
 [infrastructure release pin updater](docs/release-pin-updater.md) use the existing repository secrets

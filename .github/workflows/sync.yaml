@@ -63,5 +63,5 @@ jobs:
       - name: Run governance sync
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
-          GOVERNANCE_LIFECYCLE_STATE_KEY: ${{ secrets.GOVERNANCE_LIFECYCLE_STATE_KEY }}
+          GOVERNANCE_LIFECYCLE_STATE_KEY: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
         run: go run ./app

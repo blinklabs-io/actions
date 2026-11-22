@@ -77,6 +77,9 @@ func TestGovernanceSyncChecksContextBeforeAppToken(t *testing.T) {
 		}
 		if strings.TrimSpace(step.Run) == "go run ./app" {
 			engine = i
+			if step.Env["GOVERNANCE_LIFECYCLE_STATE_KEY"] != "${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}" {
+				t.Error("lifecycle authentication must use the existing App key, without another secret or an expiring token")
+			}
 		}
 	}
 	if verify < 0 || mint < 0 || identity < 0 || engine < 0 || verify >= mint || mint >= identity || identity >= engine {
