@@ -10,6 +10,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// linearHistoryPrerequisites enables configured merge methods before GitHub
+// accepts linear-history protection. Other settings use normal reconciliation.
+func linearHistoryPrerequisites(settings RepoSettings, protections []BranchProtection) RepoSettings {
+	var prerequisites RepoSettings
+	for _, protection := range protections {
+		if !protection.RequireLinearHistory {
+			continue
+		}
+		if settings.AllowSquashMerge != nil && *settings.AllowSquashMerge {
+			prerequisites.AllowSquashMerge = settings.AllowSquashMerge
+		}
+		if settings.AllowRebaseMerge != nil && *settings.AllowRebaseMerge {
+			prerequisites.AllowRebaseMerge = settings.AllowRebaseMerge
+		}
+	}
+	return prerequisites
+}
+
 // UnmarshalYAML rejects unsupported settings instead of silently ignoring a policy.
 func (s *RepoSettings) UnmarshalYAML(node *yaml.Node) error {
 	type plainSettings RepoSettings

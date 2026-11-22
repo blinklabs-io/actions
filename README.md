@@ -661,9 +661,13 @@ Commit-message values follow GitHub's API enums. Configure the corresponding
 the update even if it already matches. All three merge methods cannot be
 explicitly disabled together. GitHub validates branch existence and any
 organization or plan restrictions, and rejected updates fail the sync.
-Configured branch protections are applied before changing settings. A failed
-protection update prevents default-branch selection, and a failed settings
-update that includes `default_branch` prevents managed workflow publication.
+When linear-history protection is configured, explicitly enabled squash or
+rebase merge methods are applied first to satisfy GitHub's
+[linear-history prerequisite](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-linear-history).
+Those methods remain enabled if protection fails. Configured branch protections
+are then applied before default-branch selection. Failed merge-method prerequisites
+prevent protection updates; failed protection or settings updates prevent managed
+workflow publication. New team grants require successful repository controls.
 YAML aliases and merge keys remain supported, including anchors outside the
 settings block.
 

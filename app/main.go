@@ -476,11 +476,29 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 		}
 		var repoErr error
 		syncLogf(repoCtx, "Starting sync for %s/%s\n", owner, repoName)
+		settings := repo.Settings
+		var settingsErr error
+		prerequisites := linearHistoryPrerequisites(settings, repo.BranchProtection)
+		if prerequisites != (RepoSettings{}) && !(repo.skipPrivateBranchProtection && info.GetPrivate()) {
+			settingsErr = validateRepoSettings(settings)
+			if settingsErr == nil {
+				settingsErr = reconcileRepoSettings(repoCtx, client, owner, repoName, prerequisites, report)
+			}
+			if settingsErr == nil {
+				if prerequisites.AllowSquashMerge != nil {
+					settings.AllowSquashMerge = nil
+				}
+				if prerequisites.AllowRebaseMerge != nil {
+					settings.AllowRebaseMerge = nil
+				}
+			}
+		}
 		var protectionErr error
-		if repo.skipPrivateBranchProtection && info.GetPrivate() {
+		if settingsErr != nil || (repo.skipPrivateBranchProtection && info.GetPrivate()) {
 			for _, protection := range repo.BranchProtection {
 				report.change("branch protection", protection.Branch, "", "").status = "skipped"
 			}
+			protectionErr = settingsErr
 		} else {
 			protectionErr = syncBranchProtection(repoCtx, client, owner, repoName, repo.BranchProtection)
 		}
@@ -488,12 +506,11 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 			report.diagnostic("branch protection reconciliation failed")
 			repoErr = errors.Join(repoErr, protectionErr)
 		}
-		var settingsErr error
 		if protectionErr != nil && repo.Settings.DefaultBranch != nil {
 			report.change("setting", "default_branch", "", "").status = "skipped"
-			settingsErr = errors.New("default branch settings require successful configured protection")
-		} else {
-			settingsErr = reconcileRepoSettings(repoCtx, client, owner, repoName, repo.Settings, report)
+			settingsErr = errors.Join(settingsErr, errors.New("default branch settings require successful configured protection"))
+		} else if settingsErr == nil && (settings != (RepoSettings{}) || repo.Settings == (RepoSettings{})) {
+			settingsErr = reconcileRepoSettings(repoCtx, client, owner, repoName, settings, report)
 		}
 		if settingsErr != nil {
 			report.diagnostic("repository settings reconciliation failed")
@@ -514,8 +531,8 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 				report.change("team", fmt.Sprintf("configured team %d", i+1), "", "").status = "skipped"
 			}
 		}
-		if settingsErr != nil && repo.Settings.DefaultBranch != nil {
-			report.change("managed files", "default branch selection", "", "").status = "skipped"
+		if protectionErr != nil || settingsErr != nil {
+			report.change("managed files", "repository controls", "", "").status = "skipped"
 		} else if err := syncWorkflows(repoCtx, client, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
 			report.diagnostic("managed file reconciliation failed")
 			repoErr = errors.Join(repoErr, err)

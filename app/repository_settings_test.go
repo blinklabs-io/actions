@@ -227,3 +227,110 @@ func TestDefaultBranchFailureStopsManagedWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestLinearHistoryEnablesMergeMethodBeforeProtection(t *testing.T) {
+	t.Chdir("..")
+	for _, method := range []string{"allow_squash_merge", "allow_rebase_merge"} {
+		for _, failure := range []string{"", "merge method", "protection", "protection without default branch"} {
+			t.Run(method+"/"+failure, func(t *testing.T) {
+				current := map[string]any{
+					"id": 1, "node_id": "id", "full_name": "example/project", "private": false, "visibility": "public",
+					"default_branch": "develop", "allow_merge_commit": true, "allow_squash_merge": false, "allow_rebase_merge": false,
+				}
+				var events []string
+				protected := false
+				fake := &recordingGitHub{contents: map[string]string{}}
+				client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
+					r := httptest.NewRecorder()
+					r.Header().Set("Content-Type", "application/json")
+					switch {
+					case req.URL.Path == "/repos/example/project" && req.Method == http.MethodGet:
+						_ = json.NewEncoder(r).Encode(current)
+					case req.URL.Path == "/repos/example/project" && req.Method == http.MethodPatch:
+						var body map[string]any
+						if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+							t.Fatal(err)
+						}
+						if body[method] == true {
+							events = append(events, "enable merge method")
+							if len(body) != 1 {
+								t.Errorf("prerequisite patch changes unrelated settings: %v", body)
+							}
+							if failure == "merge method" {
+								r.WriteHeader(http.StatusForbidden)
+								return r.Result(), nil
+							}
+						} else {
+							events = append(events, "select default branch")
+							if !protected || body["default_branch"] != "main" {
+								t.Errorf("default branch selection before successful protection: %v", body)
+							}
+						}
+						for k, v := range body {
+							current[k] = v
+						}
+						_, _ = io.WriteString(r, `{}`)
+					case strings.HasSuffix(req.URL.Path, "/protection") && req.Method == http.MethodGet:
+						r.WriteHeader(http.StatusNotFound)
+						_, _ = io.WriteString(r, `{"message":"Branch not protected"}`)
+					case strings.HasSuffix(req.URL.Path, "/protection") && req.Method == http.MethodPut:
+						events = append(events, "protect branch")
+						var body map[string]any
+						if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+							t.Fatal(err)
+						}
+						if body["required_linear_history"] != true {
+							t.Errorf("linear-history requirement was not sent: %v", body)
+						}
+						if current["allow_squash_merge"] != true && current["allow_rebase_merge"] != true {
+							r.WriteHeader(http.StatusUnprocessableEntity)
+							return r.Result(), nil
+						}
+						if strings.HasPrefix(failure, "protection") {
+							r.WriteHeader(http.StatusForbidden)
+							return r.Result(), nil
+						}
+						protected = true
+						_, _ = io.WriteString(r, `{}`)
+					default:
+						if failure == "" && protected && current["default_branch"] == "main" && req.Method == http.MethodGet {
+							fake.handler().ServeHTTP(r, req)
+							return r.Result(), nil
+						}
+						t.Errorf("unexpected downstream operation: %s %s", req.Method, req.URL.Path)
+						r.WriteHeader(http.StatusInternalServerError)
+					}
+					return r.Result(), nil
+				})})
+				settings := RepoSettings{DefaultBranch: github.String("main")}
+				if method == "allow_squash_merge" {
+					settings.AllowSquashMerge = github.Bool(true)
+				} else {
+					settings.AllowRebaseMerge = github.Bool(true)
+				}
+				if failure == "protection without default branch" {
+					settings.DefaultBranch = nil
+				}
+				repo := RepoConfig{Name: "example/project", Settings: settings,
+					BranchProtection: []BranchProtection{{Branch: "main", RequireLinearHistory: true}}}
+				if failure != "" {
+					repo.Workflows = []WorkflowConfig{{DestinationFile: "ci.yml", ReusableWorkflow: "example/ci/.github/workflows/test.yml@main"}}
+					repo.Teams = []TeamGrant{{Slug: "core", Permission: "push"}}
+				}
+				err := reconcileRepositories(context.Background(), client, []RepoConfig{repo}, newDriftReport(io.Discard))
+				want := []string{"enable merge method", "protect branch", "select default branch"}
+				if failure == "merge method" {
+					want = want[:1]
+				} else if failure != "" {
+					want = want[:2]
+				}
+				if (err != nil) != (failure != "") || !reflect.DeepEqual(events, want) {
+					t.Fatalf("err=%v events=%v want=%v", err, events, want)
+				}
+				if failure != "merge method" && current[method] != true {
+					t.Fatal("configured merge method was not retained")
+				}
+			})
+		}
+	}
+}
