@@ -280,6 +280,16 @@ run after a failure: a rerun cannot reuse a previous run's approval. The engine
 checks `main` before lifecycle writes; if its revision changes, the run fails
 and a new approved run is required.
 
+A private controller retaining this required-reviewer environment gate needs
+GitHub Enterprise. GitHub Team supports private repository branch protection,
+but required environment reviewers on Free, Pro, and Team are available only
+for public repositories. Converting a public controller to private on Free
+causes environment protections to be ignored. The explicit approval check
+rejects an environment without the Core reviewer rule before requesting the
+App token; the lifecycle state ruleset is also mandatory. Organization-owner
+access does not override these plan restrictions. See [GitHub's environment
+availability](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+
 The GitHub App installation must cover all repositories in the controller
 organization: new repositories do not exist when the token is minted, and an
 archival target is no longer in the current configuration. The token is limited
@@ -639,9 +649,9 @@ Configured values are compared against an API observation before patching only
 changed fields and their required companion fields. Missing or incorrectly
 typed fields fail the observation; a documented null description or homepage
 means empty metadata.
-Team grants are read before
-updates and verified afterward; failed or incomplete observations fail the
-sync rather than being treated as missing grants. Drift reports preserve the
+
+Team grants are read before updates and verified afterward; failed or incomplete
+observations fail the sync rather than being treated as missing grants. Drift reports preserve the
 existing private-repository redaction.
 
 The governance App and its organization installation must grant **Members:
