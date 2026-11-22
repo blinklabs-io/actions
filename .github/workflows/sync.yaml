@@ -51,6 +51,7 @@ jobs:
           private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           permission-administration: write
+          permission-members: read
           permission-contents: write
           permission-workflows: write
 

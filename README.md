@@ -5,7 +5,7 @@ Blink Labs repositories, plus a small **Go governance engine** that keeps every
 repository aligned to a single declarative source of truth: `repos-config.yaml`.
 
 The engine reads `repos-config.yaml`, and for each listed repository it
-reconciles repository settings, collaborators, branch protection, and the
+reconciles repository settings, collaborators, team grants, branch protection, and the
 generated workflow wrapper files directly on that repository's default branch.
 
 ## Runtime requirements
@@ -158,7 +158,8 @@ performs an observe → compare → act loop:
 1. `reconcileRepoSettings` — reconciles repository settings (e.g. `delete_branch_on_merge`).
 2. `reconcileCollaborators` — reconciles collaborators and their permission levels.
 3. `syncBranchProtection` — reconciles branch protection rules.
-4. `syncWorkflows` — renders standalone wrappers from `templates/workflow.tmpl`
+4. `reconcileTeams` — reconciles configured team grants after repository controls succeed.
+5. `syncWorkflows` — renders standalone wrappers from `templates/workflow.tmpl`
    and grouped pipelines from `templates/pipeline.tmpl`. Configured workflows
    can replace old wrappers in the same commit. Files that already match are
    skipped.
@@ -169,15 +170,15 @@ open pull requests.
 The governance sync reports observed differences before applying changes, using
 `-` for the observed value and `+` for the configured value. Results appear in
 the job log and GitHub Actions job summary. Public repository file changes are
-represented by hashes rather than file contents; collaborator and bypass actor
-names are redacted. Private or unknown-visibility repositories appear only in
-aggregate counts. The report covers configured settings, collaborators, branch
+represented by hashes rather than file contents; collaborator, team, and bypass actor
+names are redacted. Team entries use their configuration ordinal. Private or unknown-visibility repositories appear only in
+aggregate counts. The report covers configured settings, collaborators, teams, branch
 protections, and managed files; it does not audit unmanaged items or identify
 who made a change.
 
 The final report distinguishes matches, unmanaged settings, corrections,
 invitations, failures, unchecked items, and skipped or pending work. A
-correction means GitHub accepted the update; collaborator permissions are also
+correction means GitHub accepted the update; collaborator and team permissions are also
 read again, while other corrections have no separate verification read. The
 collaborator comparison uses effective permissions, which can include grants from
 teams or the organization. Membership is observed from the complete collaborator
@@ -282,7 +283,8 @@ and a new approved run is required.
 The GitHub App installation must cover all repositories in the controller
 organization: new repositories do not exist when the token is minted, and an
 archival target is no longer in the current configuration. The token is limited
-to administration, contents, and workflow write permissions. Pull request
+to administration, contents, and workflow write permissions plus organization
+Members read access for configured team grants. Pull request
 checks do not run the sync.
 
 The Helm Charts profile uses `pin_to_latest_change` for its publisher call.
@@ -306,7 +308,7 @@ The sync engine requires these environment variables:
 
 | Variable | Description |
 |---|---|
-| `GH_TOKEN` | GitHub App installation token with administration, contents, and workflows write permissions and access to all organization repositories. |
+| `GH_TOKEN` | GitHub App installation token with administration, contents, and workflows write permissions, organization Members read permission, and access to all organization repositories. |
 | `GITHUB_REPOSITORY` | The controller repository, supplied by GitHub Actions. |
 | `GITHUB_SHA` | The checked-out current `main` revision, supplied by GitHub Actions. |
 | `GOVERNANCE_LIFECYCLE_STATE_KEY` | A stable, random secret of at least 32 bytes used to authenticate lifecycle state and conceal repository identities. |
@@ -582,3 +584,42 @@ GH_TOKEN=<token> go run ./app
 
 > Running `go run ./app` reconciles live repositories. Use a token scoped to a
 > test repository when experimenting.
+
+### Repository team grants and merge methods
+
+Repository entries and profiles can declare `teams` using organization team
+slugs and `pull` (read), `triage`, `push` (write), `maintain`, or `admin`
+permissions. `read` and `write` aliases are also accepted. Governance updates
+only listed grants, leaves unlisted teams alone, and never changes team
+membership. An empty or omitted list leaves all team access unmanaged.
+Profile-based repositories inherit team grants; an explicit nonempty team list
+cannot be combined with a profile.
+
+```yaml
+teams:
+  - slug: core
+    permission: push
+settings:
+  delete_branch_on_merge: true
+  allow_merge_commit: false
+  allow_squash_merge: true
+  allow_rebase_merge: false
+```
+
+Omitted merge-method settings are left unchanged. Team grants are read before
+updates and verified afterward; failed or incomplete observations fail the
+sync rather than being treated as missing grants. Drift reports preserve the
+existing private-repository redaction.
+
+The governance App and its organization installation must grant **Members:
+read**, in addition to repository **Administration: write** and **Metadata:
+read**, before running the sync with team grants. The sync token explicitly
+requests Members read; the App's existing private key remains usable after the
+permission change is accepted. See GitHub's [team repository permissions
+API](https://docs.github.com/en/rest/teams/teams#add-or-update-team-repository-permissions)
+and [repository settings API](https://docs.github.com/en/rest/repos/repos#update-a-repository).
+
+`shared-actions` is provisioned as a public repository with team grants and
+main-branch protection. Its initial configuration does not generate callers of
+private reusable workflows. Publishing the shared CI implementation and
+migrating callers are separate changes.

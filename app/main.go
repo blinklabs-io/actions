@@ -83,6 +83,7 @@ const defaultMarkerPath = ".blinklabs/profile.yml"
 type Profile struct {
 	Settings         RepoSettings       `yaml:"settings"`
 	Collaborators    []Collaborator     `yaml:"collaborators"`
+	Teams            []TeamGrant        `yaml:"teams"`
 	BranchProtection []BranchProtection `yaml:"branch_protection"`
 	Workflows        []WorkflowConfig   `yaml:"workflows"`
 	Dependabot       string             `yaml:"dependabot"`
@@ -124,6 +125,7 @@ type RepoConfig struct {
 	Overrides        map[string]WorkflowOverride `yaml:"overrides"`
 	Settings         RepoSettings                `yaml:"settings"`
 	Collaborators    []Collaborator              `yaml:"collaborators"`
+	Teams            []TeamGrant                 `yaml:"teams"`
 	BranchProtection []BranchProtection          `yaml:"branch_protection"`
 	Workflows        []WorkflowConfig            `yaml:"workflows"`
 	// ReleaseFanout lists downstream repositories that pin this repository's
@@ -137,6 +139,15 @@ type RepoSettings struct {
 	// expandProfiles detect an explicit override of `false`, and lets
 	// syncRepoSettings leave the setting untouched when it is not specified.
 	DeleteBranchOnMerge *bool `yaml:"delete_branch_on_merge"`
+	AllowMergeCommit    *bool `yaml:"allow_merge_commit"`
+	AllowSquashMerge    *bool `yaml:"allow_squash_merge"`
+	AllowRebaseMerge    *bool `yaml:"allow_rebase_merge"`
+}
+
+// TeamGrant manages a repository grant without changing team membership.
+type TeamGrant struct {
+	Slug       string `yaml:"slug"`
+	Permission string `yaml:"permission"`
 }
 
 type Collaborator struct {
@@ -463,6 +474,17 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 			report.diagnostic("branch protection reconciliation failed")
 			repoErr = errors.Join(repoErr, err)
 		}
+		// New team access must wait until the configured repository controls succeed.
+		if repoErr == nil {
+			if err := reconcileTeams(repoCtx, client, owner, repoName, repo.Teams, report); err != nil {
+				report.diagnostic("team permissions reconciliation failed")
+				repoErr = errors.Join(repoErr, err)
+			}
+		} else {
+			for i := range repo.Teams {
+				report.change("team", fmt.Sprintf("configured team %d", i+1), "", "").status = "skipped"
+			}
+		}
 		if err := syncWorkflows(repoCtx, client, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
 			report.diagnostic("managed file reconciliation failed")
 			repoErr = errors.Join(repoErr, err)
@@ -600,6 +622,9 @@ func expandProfiles(cfg *Config) error {
 		if err := expandRepo(cfg, &cfg.Repositories[i]); err != nil {
 			return err
 		}
+		if err := validateTeamGrants(cfg.Repositories[i].Teams); err != nil {
+			return fmt.Errorf("repository %q: %w", cfg.Repositories[i].Name, err)
+		}
 		if err := validateFanout(cfg.Repositories[i]); err != nil {
 			return err
 		}
@@ -638,12 +663,16 @@ func expandRepo(cfg *Config, repo *RepoConfig) error {
 	if len(repo.Collaborators) > 0 {
 		return fmt.Errorf("repository %q sets both profile %q and explicit collaborators; profile-based repos inherit collaborators from the profile", repo.Name, repo.Profile)
 	}
+	if len(repo.Teams) > 0 {
+		return fmt.Errorf("repository %q sets both profile %q and explicit teams", repo.Name, repo.Profile)
+	}
 	if len(repo.BranchProtection) > 0 {
 		return fmt.Errorf("repository %q sets both profile %q and explicit branch_protection; profile-based repos inherit branch_protection from the profile", repo.Name, repo.Profile)
 	}
 
 	repo.Settings = profile.Settings
 	repo.Collaborators = profile.Collaborators
+	repo.Teams = profile.Teams
 	repo.BranchProtection = profile.BranchProtection
 	repo.Dependabot = profile.Dependabot
 

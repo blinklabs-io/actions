@@ -21,37 +21,72 @@ func reconcileRepoSettings(ctx context.Context, client *github.Client, owner, re
 }
 
 func planRepoSettings(ctx context.Context, client *github.Client, owner, repo string, settings RepoSettings, report *driftReport) (func() error, error) {
-	const field = "delete_branch_on_merge"
-	if settings.DeleteBranchOnMerge == nil {
-		report.change("setting", field, "", "").status = "unmanaged"
+	if settings == (RepoSettings{}) {
+		report.change("setting", "delete_branch_on_merge", "", "").status = "unmanaged"
 		return nil, nil
 	}
-
 	current, _, err := client.Repositories.Get(ctx, owner, repo)
-	if err != nil || current == nil || current.DeleteBranchOnMerge == nil {
-		report.diagnostic("repository settings observation failed")
-		report.change("setting", field, "", "").status = "unchecked"
-		return nil, errors.New("could not observe repository settings")
+	if current == nil {
+		current = &github.Repository{}
 	}
-	desired := *settings.DeleteBranchOnMerge
-	if current.GetDeleteBranchOnMerge() == desired {
-		report.change("setting", field, "", "").status = "matched"
+	update := &github.Repository{}
+	fields := []struct {
+		name              string
+		desired, observed *bool
+		target            **bool
+	}{
+		{"delete_branch_on_merge", settings.DeleteBranchOnMerge, current.DeleteBranchOnMerge, &update.DeleteBranchOnMerge},
+		{"allow_merge_commit", settings.AllowMergeCommit, current.AllowMergeCommit, &update.AllowMergeCommit},
+		{"allow_squash_merge", settings.AllowSquashMerge, current.AllowSquashMerge, &update.AllowSquashMerge},
+		{"allow_rebase_merge", settings.AllowRebaseMerge, current.AllowRebaseMerge, &update.AllowRebaseMerge},
+	}
+	var entries []*driftEntry
+	var observationErr error
+	for _, field := range fields {
+		if field.desired == nil {
+			continue
+		}
+		if err != nil || field.observed == nil {
+			report.change("setting", field.name, "", "").status = "unchecked"
+			observationErr = errors.New("could not observe repository settings")
+			continue
+		}
+		if *field.observed == *field.desired {
+			report.change("setting", field.name, "", "").status = "matched"
+			continue
+		}
+		entries = append(entries, report.change("setting", field.name, strconv.FormatBool(*field.observed), strconv.FormatBool(*field.desired)))
+		*field.target = field.desired
+	}
+	if observationErr != nil {
+		report.diagnostic("repository settings observation failed")
+		for _, entry := range entries {
+			entry.status = "skipped"
+		}
+		return nil, observationErr
+	}
+	if len(entries) == 0 {
 		return nil, nil
 	}
-
-	entry := report.change("setting", field, strconv.FormatBool(current.GetDeleteBranchOnMerge()), strconv.FormatBool(desired))
 	return func() error {
-		if err := report.checkpoint(entry); err != nil {
-			entry.status = "skipped"
-			return errors.New("could not record planned setting change")
+		for _, entry := range entries {
+			if err := report.checkpoint(entry); err != nil {
+				for _, pending := range entries {
+					pending.status = "skipped"
+				}
+				return errors.New("could not record planned setting change")
+			}
 		}
-		update := &github.Repository{DeleteBranchOnMerge: github.Bool(desired)}
 		if _, _, err := client.Repositories.Edit(ctx, owner, repo, update); err != nil {
 			report.diagnostic("repository settings update failed")
-			entry.status = "failed"
+			for _, entry := range entries {
+				entry.status = "failed"
+			}
 			return errors.New("could not update repository settings")
 		}
-		entry.status = "corrected"
+		for _, entry := range entries {
+			entry.status = "corrected"
+		}
 		return nil
 	}, nil
 }
