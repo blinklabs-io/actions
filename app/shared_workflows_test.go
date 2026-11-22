@@ -191,7 +191,7 @@ func TestSharedCanaryRenderingPreservesLiveContracts(t *testing.T) {
 			continue
 		}
 		selected++
-		if repo.Name != "blinklabs-io/go-bip39" || repo.SharedActionsRef != canarySharedRef {
+		if (repo.Name != "blinklabs-io/go-bip39" && repo.Name != "blinklabs-io/adder") || repo.SharedActionsRef != canarySharedRef {
 			t.Fatalf("unexpected rollout target %s at %s", repo.Name, repo.SharedActionsRef)
 		}
 		standalone, pipelines := groupPipelines(repo.Workflows)
@@ -212,11 +212,15 @@ func TestSharedCanaryRenderingPreservesLiveContracts(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if len(outputs) != 2 {
-			t.Fatalf("canary outputs = %d, want the two current callers", len(outputs))
+		fixturePath, wantOutputs := "testdata/shared-actions-canary/", 2
+		if repo.Name == "blinklabs-io/adder" {
+			fixturePath, wantOutputs = fixturePath+"adder/", 4
+		}
+		if len(outputs) != wantOutputs {
+			t.Fatalf("canary outputs = %d, want %d current callers", len(outputs), wantOutputs)
 		}
 		for name, output := range outputs {
-			baseline, err := os.ReadFile("testdata/shared-actions-canary/" + name)
+			baseline, err := os.ReadFile(fixturePath + name)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,6 +229,9 @@ func TestSharedCanaryRenderingPreservesLiveContracts(t *testing.T) {
 				"blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main",
 				"blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3",
 				"blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main",
+				"blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main",
+				"blinklabs-io/actions/.github/workflows/reuseable-publish-desktop.yml@50f4ed21d4ead09f72ca3b696c4e607a8c2832be",
+				"blinklabs-io/actions/.github/workflows/reuseable-release-dispatch.yml@e0caeb743570431ebc4e26aeea54cdf8ab6a0a33",
 			} {
 				path := strings.Split(strings.TrimPrefix(old, "blinklabs-io/actions/"), "@")[0]
 				expected = strings.ReplaceAll(expected, old, sharedWorkflowRepository+path+"@"+canarySharedRef)
@@ -234,7 +241,7 @@ func TestSharedCanaryRenderingPreservesLiveContracts(t *testing.T) {
 			}
 		}
 	}
-	if selected != 1 {
-		t.Fatalf("rollout selects %d repositories, want one", selected)
+	if selected != 2 {
+		t.Fatalf("rollout selects %d repositories, want the two authorized canaries", selected)
 	}
 }

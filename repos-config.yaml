@@ -1226,6 +1226,7 @@ repositories:
   # checks below use the shared reusable workflows, passing adder's Fyne system
   # dependencies and CGO requirements.
   - name: blinklabs-io/adder
+    shared_actions_ref: 7328ad66dec3a12676f5a9d1948fa74946712613
     settings:
       delete_branch_on_merge: true
     collaborators: []
