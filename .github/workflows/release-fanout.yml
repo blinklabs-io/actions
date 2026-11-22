@@ -112,7 +112,6 @@ jobs:
     needs: plan
     if: github.ref == 'refs/heads/main' && needs.plan.outputs.has-targets == 'true'
     runs-on: ubuntu-latest
-    environment: release-fanout
     strategy:
       fail-fast: false
       # Leave runner capacity for other CI while updating multiple targets.
@@ -120,15 +119,15 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     name: ${{ matrix.product }} ${{ matrix.version }} -> ${{ matrix.name }} (${{ matrix.type }})
     steps:
-      - name: Verify release environment branch protection
+      # Private GitHub Free repositories cannot enforce environment branch policies.
+      - name: Verify current main revision
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/environments/release-fanout" |
-            jq -e '.name == "release-fanout" and .can_admins_bypass == false and .deployment_branch_policy.protected_branches == false and .deployment_branch_policy.custom_branch_policies == true' >/dev/null
-          gh api "repos/$GITHUB_REPOSITORY/environments/release-fanout/deployment-branch-policies" |
-            jq -e '.total_count == 1 and (.branch_policies | length) == 1 and .branch_policies[0].name == "main" and .branch_policies[0].type == "branch"' >/dev/null
+          test "$GITHUB_REF" = refs/heads/main
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          test "$current" = "$GITHUB_SHA"
 
       - name: Check out fan-out scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6

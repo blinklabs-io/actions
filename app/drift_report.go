@@ -105,7 +105,7 @@ func (r *driftReport) render() error {
 		}
 	}
 	fmt.Fprintf(&output, "Checked %d repository entries; %d private or unknown.\n\n", len(r.repos), privateRepos)
-	output.WriteString("Scope: configured repository settings, configured collaborators, branch protections, and managed files. Unmanaged items, other collaborators, and rulesets are not checked.\n\n")
+	output.WriteString("Scope: configured repository settings, configured collaborators and teams, branch protections, and managed files. Unmanaged items, unconfigured collaborators and teams, and rulesets are not checked.\n\n")
 	for _, status := range []string{"matched", "unmanaged", "corrected", "invited", "failed", "unchecked", "skipped", "pending"} {
 		fmt.Fprintf(&output, "- %s: %d\n", status, counts[status])
 	}

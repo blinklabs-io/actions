@@ -1,3 +1,7 @@
+# Private GitHub Free controllers trust repository writers; paid environment
+# approval and state rulesets are not enforced. Private target protection is skipped.
+github_free: true
+
 # Shared branch-protection defaults — referenced via YAML merge key below.
 branch_protection_defaults: &branch_protection_defaults
   required_status_checks: []
@@ -417,6 +421,39 @@ profiles:
             GOOS="$MATRIX_OS" GOARCH="$MATRIX_ARCH" go build -ldflags "-s -w -X main.Version=$RELEASE_TAG -X main.Commit=$COMMIT_HASH -X main.BuildDate=$BUILD_DATE" -o "$OUTPUT_NAME" ./cmd/buidlerfest
 
 repositories:
+  - name: blinklabs-io/shared-actions
+    private: false
+    settings:
+      description: Shared GitHub Actions and reusable workflows for Blink Labs
+      homepage: ""
+      default_branch: main
+      has_issues: true
+      has_projects: true
+      has_wiki: true
+      allow_auto_merge: false
+      allow_update_branch: false
+      web_commit_signoff_required: true
+      squash_merge_commit_title: COMMIT_OR_PR_TITLE
+      squash_merge_commit_message: COMMIT_MESSAGES
+      merge_commit_title: MERGE_MESSAGE
+      merge_commit_message: PR_TITLE
+      delete_branch_on_merge: true
+      allow_merge_commit: false
+      allow_squash_merge: true
+      allow_rebase_merge: false
+    teams:
+      - slug: core
+        permission: push
+      - slug: ops
+        permission: admin
+      - slug: pms
+        permission: maintain
+      - slug: docs
+        permission: push
+    branch_protection:
+      - branch: main
+        <<: *branch_protection_defaults
+
   - name: blinklabs-io/tx-submit-api
     settings:
       delete_branch_on_merge: true

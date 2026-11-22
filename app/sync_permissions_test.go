@@ -24,7 +24,7 @@ func TestSyncWorkflowHasReadOnlyDefaultPermissions(t *testing.T) {
 	}
 }
 
-func TestGovernanceSyncRequiresEnvironmentBeforeAppToken(t *testing.T) {
+func TestGovernanceSyncChecksContextBeforeAppToken(t *testing.T) {
 	data, err := os.ReadFile("../.github/workflows/sync.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -54,12 +54,12 @@ func TestGovernanceSyncRequiresEnvironmentBeforeAppToken(t *testing.T) {
 		t.Error("pull requests must not trigger a mutating sync")
 	}
 	job := workflow.Jobs["orchestrate-governance"]
-	if job.Environment != "governance-sync" || !strings.Contains(job.If, "refs/heads/main") {
-		t.Fatalf("sync is not restricted to the protected main environment: %+v", job)
+	if job.Environment != "" || !strings.Contains(job.If, "refs/heads/main") {
+		t.Fatalf("sync is not restricted to the main branch without a paid environment: %+v", job)
 	}
 	verify, mint, identity, engine := -1, -1, -1, -1
 	for i, step := range job.Steps {
-		if strings.Contains(step.Run, "verify-governance-approval") {
+		if strings.Contains(step.Run, "verify-governance-context") {
 			verify = i
 		}
 		if strings.Contains(step.Uses, "actions/create-github-app-token@") {
@@ -77,14 +77,17 @@ func TestGovernanceSyncRequiresEnvironmentBeforeAppToken(t *testing.T) {
 		}
 		if strings.TrimSpace(step.Run) == "go run ./app" {
 			engine = i
+			if step.Env["GOVERNANCE_LIFECYCLE_STATE_KEY"] != "${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}" {
+				t.Error("lifecycle authentication must use the existing App key, without another secret or an expiring token")
+			}
 		}
 	}
 	if verify < 0 || mint < 0 || identity < 0 || engine < 0 || verify >= mint || mint >= identity || identity >= engine {
-		t.Fatalf("approval, token, identity and execution are out of order: %d %d %d %d", verify, mint, identity, engine)
+		t.Fatalf("context, token, identity and execution are out of order: %d %d %d %d", verify, mint, identity, engine)
 	}
 }
 
-func TestReleaseFanoutUsesMainOnlyEnvironment(t *testing.T) {
+func TestReleaseFanoutUsesCurrentMainWithoutEnvironment(t *testing.T) {
 	data, err := os.ReadFile("../.github/workflows/release-fanout.yml")
 	if err != nil {
 		t.Fatal(err)
@@ -106,12 +109,12 @@ func TestReleaseFanoutUsesMainOnlyEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := workflow.Jobs["apply"]
-	if job.Environment != "release-fanout" || !strings.Contains(job.If, "refs/heads/main") {
-		t.Fatalf("fan-out apply is not restricted to the main environment: %+v", job)
+	if job.Environment != "" || !strings.Contains(job.If, "refs/heads/main") {
+		t.Fatalf("fan-out apply is not restricted to the main branch: %+v", job)
 	}
 	checked, authenticated, identity, target := -1, -1, -1, -1
 	for i, step := range job.Steps {
-		if strings.Contains(step.Run, "deployment-branch-policies") {
+		if strings.Contains(step.Run, "git/ref/heads/main") && strings.Contains(step.Run, `test "$current" = "$GITHUB_SHA"`) {
 			checked = i
 		}
 		if strings.Contains(step.Uses, "actions/create-github-app-token@") {
@@ -139,6 +142,6 @@ func TestReleaseFanoutUsesMainOnlyEnvironment(t *testing.T) {
 	}
 	if checked < 0 || authenticated < 0 || identity < 0 || target < 0 ||
 		checked >= authenticated || authenticated >= identity || identity >= target {
-		t.Fatalf("fan-out environment check, token, identity and target checkout are out of order: %d %d %d %d", checked, authenticated, identity, target)
+		t.Fatalf("fan-out revision check, token, identity and target checkout are out of order: %d %d %d %d", checked, authenticated, identity, target)
 	}
 }

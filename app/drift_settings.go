@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
+	"sort"
 	"strings"
 
 	"github.com/google/go-github/v60/github"
@@ -21,37 +22,106 @@ func reconcileRepoSettings(ctx context.Context, client *github.Client, owner, re
 }
 
 func planRepoSettings(ctx context.Context, client *github.Client, owner, repo string, settings RepoSettings, report *driftReport) (func() error, error) {
-	const field = "delete_branch_on_merge"
-	if settings.DeleteBranchOnMerge == nil {
-		report.change("setting", field, "", "").status = "unmanaged"
+	if settings == (RepoSettings{}) {
+		report.change("setting", "delete_branch_on_merge", "", "").status = "unmanaged"
 		return nil, nil
 	}
-
-	current, _, err := client.Repositories.Get(ctx, owner, repo)
-	if err != nil || current == nil || current.DeleteBranchOnMerge == nil {
-		report.diagnostic("repository settings observation failed")
-		report.change("setting", field, "", "").status = "unchecked"
-		return nil, errors.New("could not observe repository settings")
+	if err := validateRepoSettings(settings); err != nil {
+		report.change("setting", "configuration", "", "").status = "unchecked"
+		return nil, err
 	}
-	desired := *settings.DeleteBranchOnMerge
-	if current.GetDeleteBranchOnMerge() == desired {
-		report.change("setting", field, "", "").status = "matched"
-		return nil, nil
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return nil, errors.New("could not encode configured repository settings")
 	}
-
-	entry := report.change("setting", field, strconv.FormatBool(current.GetDeleteBranchOnMerge()), strconv.FormatBool(desired))
-	return func() error {
-		if err := report.checkpoint(entry); err != nil {
-			entry.status = "skipped"
-			return errors.New("could not record planned setting change")
+	var desired map[string]any
+	if err := json.Unmarshal(data, &desired); err != nil {
+		return nil, errors.New("could not decode configured repository settings")
+	}
+	path := fmt.Sprintf("repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
+	req, err := client.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, errors.New("could not prepare repository settings observation")
+	}
+	var current map[string]any
+	_, observeErr := client.Do(ctx, req, &current)
+	update := make(map[string]any)
+	fields := make([]string, 0, len(desired))
+	for name := range desired {
+		fields = append(fields, name)
+	}
+	sort.Strings(fields)
+	var entries []*driftEntry
+	var observationErr error
+	for _, name := range fields {
+		want := desired[name]
+		observed, exists := current[name]
+		// GitHub returns null for unset metadata; absence of the key is still an error.
+		if exists && observed == nil && (name == "description" || name == "homepage") {
+			observed = ""
 		}
-		update := &github.Repository{DeleteBranchOnMerge: github.Bool(desired)}
-		if _, _, err := client.Repositories.Edit(ctx, owner, repo, update); err != nil {
+		valid := false
+		switch want.(type) {
+		case bool:
+			_, valid = observed.(bool)
+		case string:
+			_, valid = observed.(string)
+		}
+		if observeErr != nil || !exists || !valid {
+			report.change("setting", name, "", "").status = "unchecked"
+			observationErr = errors.New("could not observe repository settings")
+			continue
+		}
+		if observed == want {
+			report.change("setting", name, "", "").status = "matched"
+			continue
+		}
+		entries = append(entries, report.change("setting", name, fmt.Sprint(observed), fmt.Sprint(want)))
+		update[name] = want
+	}
+	// GitHub requires the title field whenever a commit-message default is sent,
+	// even if the configured title already matches.
+	for message, title := range map[string]string{
+		"squash_merge_commit_message": "squash_merge_commit_title",
+		"merge_commit_message":        "merge_commit_title",
+	} {
+		if _, changed := update[message]; changed {
+			update[title] = desired[title]
+		}
+	}
+	if observationErr != nil {
+		report.diagnostic("repository settings observation failed")
+		for _, entry := range entries {
+			entry.status = "skipped"
+		}
+		return nil, observationErr
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	return func() error {
+		for _, entry := range entries {
+			if err := report.checkpoint(entry); err != nil {
+				for _, pending := range entries {
+					pending.status = "skipped"
+				}
+				return errors.New("could not record planned setting change")
+			}
+		}
+		request, err := client.NewRequest(http.MethodPatch, path, update)
+		if err == nil {
+			_, err = client.Do(ctx, request, nil)
+		}
+		if err != nil {
 			report.diagnostic("repository settings update failed")
-			entry.status = "failed"
+			for _, entry := range entries {
+				entry.status = "failed"
+			}
 			return errors.New("could not update repository settings")
 		}
-		entry.status = "corrected"
+		for _, entry := range entries {
+			entry.status = "corrected"
+		}
 		return nil
 	}, nil
 }

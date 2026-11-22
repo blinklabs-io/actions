@@ -38,6 +38,7 @@ type lifecycleState struct {
 }
 
 type lifecycleController struct {
+	trustedWriters                           bool
 	owner, repo, nodeID, revision, stateHead string
 	state                                    lifecycleState
 	key                                      []byte
@@ -142,9 +143,12 @@ func (c *lifecycleController) requireCurrentState(ctx context.Context, client *g
 	return nil
 }
 
-// The authenticated state must not be replayed by users with repository push
-// access. Only the governance App may create, update, delete, or rewind it.
+// Rulesets prevent writers from replaying authentic older state. Free private
+// repositories cannot enforce this boundary, so their writers must be trusted.
 func (c *lifecycleController) requireStateProtection(ctx context.Context, client *github.Client) error {
+	if c.trustedWriters {
+		return nil
+	}
 	var ruleID int64
 	for page := 1; ; page++ {
 		path := fmt.Sprintf("repos/%s/%s/rulesets?includes_parents=false&per_page=100&page=%d", c.owner, c.repo, page)

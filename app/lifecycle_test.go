@@ -167,86 +167,93 @@ func TestExistingRepositoryIgnoresCreationVisibility(t *testing.T) {
 }
 
 func TestLifecycleArchiveVerifiesIdentityAndUsesNodeID(t *testing.T) {
-	for _, tt := range []struct {
-		name         string
-		id           int
-		fork         bool
-		fullName     string
-		archived     bool
-		discovered   bool
-		wantMutation bool
-		wantErr      bool
-	}{
-		{"applied marked repository", 42, false, "org/example", false, false, true, false},
-		{"replaced repository", 43, false, "org/example", false, false, false, true},
-		{"fork", 42, true, "org/example", false, false, false, true},
-		{"redirected repository", 42, false, "org/renamed", false, false, false, true},
-		{"controller main changed", 42, false, "org/example", false, false, false, true},
-		{"applied state changed", 42, false, "org/example", false, false, false, true},
-		{"already archived", 42, false, "org/example", true, false, false, false},
-		{"now discovered", 42, false, "org/example", false, true, false, false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			writes := 0
-			client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
-				r := httptest.NewRecorder()
-				r.Header().Set("Content-Type", "application/json")
-				switch {
-				case req.Method == http.MethodGet && req.URL.Path == "/repos/org/example":
-					_, _ = fmt.Fprintf(r, `{"id":%d,"node_id":"repo-node","full_name":%q,"fork":%t,"archived":%t,"private":true}`, tt.id, tt.fullName, tt.fork, tt.archived)
-				case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/git/ref/heads/main":
-					head := testLifecycleSHA
-					if tt.name == "controller main changed" {
-						head = strings.Repeat("d", 40)
+	for _, free := range []bool{false, true} {
+		t.Run(fmt.Sprintf("free=%t", free), func(t *testing.T) {
+			for _, tt := range []struct {
+				name         string
+				id           int
+				fork         bool
+				fullName     string
+				archived     bool
+				discovered   bool
+				wantMutation bool
+				wantErr      bool
+			}{
+				{"applied marked repository", 42, false, "org/example", false, false, true, false},
+				{"replaced repository", 43, false, "org/example", false, false, false, true},
+				{"fork", 42, true, "org/example", false, false, false, true},
+				{"redirected repository", 42, false, "org/renamed", false, false, false, true},
+				{"controller main changed", 42, false, "org/example", false, false, false, true},
+				{"applied state changed", 42, false, "org/example", false, false, false, true},
+				{"already archived", 42, false, "org/example", true, false, false, false},
+				{"now discovered", 42, false, "org/example", false, true, false, false},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					writes := 0
+					client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
+						r := httptest.NewRecorder()
+						r.Header().Set("Content-Type", "application/json")
+						switch {
+						case req.Method == http.MethodGet && req.URL.Path == "/repos/org/example":
+							_, _ = fmt.Fprintf(r, `{"id":%d,"node_id":"repo-node","full_name":%q,"fork":%t,"archived":%t,"private":true}`, tt.id, tt.fullName, tt.fork, tt.archived)
+						case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/git/ref/heads/main":
+							head := testLifecycleSHA
+							if tt.name == "controller main changed" {
+								head = strings.Repeat("d", 40)
+							}
+							_, _ = fmt.Fprintf(r, `{"object":{"sha":%q}}`, head)
+						case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/git/ref/heads/"+lifecycleBranch):
+							head := testLifecycleStateSHA
+							if tt.name == "applied state changed" {
+								head = strings.Repeat("d", 40)
+							}
+							_, _ = fmt.Fprintf(r, `{"object":{"sha":%q}}`, head)
+						case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/rulesets":
+							if free {
+								t.Fatal("Free archival queried paid rulesets")
+							}
+							_, _ = io.WriteString(r, `[{"id":7,"name":"governance-lifecycle-state"}]`)
+						case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/rulesets/7":
+							_, _ = io.WriteString(r, testLifecycleRuleset)
+						case req.Method == http.MethodPost && req.URL.Path == "/graphql":
+							writes++
+							var body struct {
+								Query     string            `json:"query"`
+								Variables map[string]string `json:"variables"`
+							}
+							if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+								t.Fatal(err)
+							}
+							if body.Variables["id"] != "repo-node" || !strings.Contains(body.Query, "archiveRepository") {
+								t.Fatalf("unexpected mutation: %+v", body)
+							}
+							_, _ = io.WriteString(r, `{"data":{"archiveRepository":{"repository":{"id":"repo-node","isArchived":true}}}}`)
+						default:
+							t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+						}
+						return r.Result(), nil
+					})})
+					name := "org/example"
+					key := lifecycleNameKey(testLifecycleKey, name)
+					c := &lifecycleController{trustedWriters: free, owner: "org", repo: "actions", revision: testLifecycleSHA, stateHead: testLifecycleStateSHA, key: testLifecycleKey,
+						state: lifecycleState{Marked: map[string]string{key: lifecycleIdentity(testLifecycleKey, name, 42)}}}
+					var current []RepoConfig
+					if tt.discovered {
+						current = []RepoConfig{{Name: name}}
 					}
-					_, _ = fmt.Fprintf(r, `{"object":{"sha":%q}}`, head)
-				case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/git/ref/heads/"+lifecycleBranch):
-					head := testLifecycleStateSHA
-					if tt.name == "applied state changed" {
-						head = strings.Repeat("d", 40)
+					var output strings.Builder
+					report := newDriftReport(&output)
+					err := c.archiveRemoved(context.Background(), client, map[string]RepoConfig{key: {Name: name}}, current, report)
+					if (err != nil) != tt.wantErr || (writes == 1) != tt.wantMutation {
+						t.Fatalf("writes=%d err=%v", writes, err)
 					}
-					_, _ = fmt.Fprintf(r, `{"object":{"sha":%q}}`, head)
-				case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/rulesets":
-					_, _ = io.WriteString(r, `[{"id":7,"name":"governance-lifecycle-state"}]`)
-				case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/rulesets/7":
-					_, _ = io.WriteString(r, testLifecycleRuleset)
-				case req.Method == http.MethodPost && req.URL.Path == "/graphql":
-					writes++
-					var body struct {
-						Query     string            `json:"query"`
-						Variables map[string]string `json:"variables"`
-					}
-					if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+					if err := report.render(); err != nil {
 						t.Fatal(err)
 					}
-					if body.Variables["id"] != "repo-node" || !strings.Contains(body.Query, "archiveRepository") {
-						t.Fatalf("unexpected mutation: %+v", body)
+					if strings.Contains(output.String(), name) || strings.Contains(output.String(), "repo-node") {
+						t.Fatal("private repository leaked in report")
 					}
-					_, _ = io.WriteString(r, `{"data":{"archiveRepository":{"repository":{"id":"repo-node","isArchived":true}}}}`)
-				default:
-					t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
-				}
-				return r.Result(), nil
-			})})
-			name := "org/example"
-			key := lifecycleNameKey(testLifecycleKey, name)
-			c := &lifecycleController{owner: "org", repo: "actions", revision: testLifecycleSHA, stateHead: testLifecycleStateSHA, key: testLifecycleKey,
-				state: lifecycleState{Marked: map[string]string{key: lifecycleIdentity(testLifecycleKey, name, 42)}}}
-			var current []RepoConfig
-			if tt.discovered {
-				current = []RepoConfig{{Name: name}}
-			}
-			var output strings.Builder
-			report := newDriftReport(&output)
-			err := c.archiveRemoved(context.Background(), client, map[string]RepoConfig{key: {Name: name}}, current, report)
-			if (err != nil) != tt.wantErr || (writes == 1) != tt.wantMutation {
-				t.Fatalf("writes=%d err=%v", writes, err)
-			}
-			if err := report.render(); err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains(output.String(), name) || strings.Contains(output.String(), "repo-node") {
-				t.Fatal("private repository leaked in report")
+				})
 			}
 		})
 	}
@@ -305,101 +312,110 @@ func TestLifecycleStateRequiresAppOnlyBranchProtection(t *testing.T) {
 }
 
 func TestLifecycleStatePersistsAndRejectsTampering(t *testing.T) {
-	var stored string
-	var stateHead string
-	mainHead := testLifecycleSHA
-	commits := 0
-	client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
-		r := httptest.NewRecorder()
-		r.Header().Set("Content-Type", "application/json")
-		switch {
-		case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions":
-			_, _ = io.WriteString(r, `{"full_name":"org/actions","node_id":"controller-node"}`)
-		case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/rulesets":
-			_, _ = io.WriteString(r, `[{"id":7,"name":"governance-lifecycle-state"}]`)
-		case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/rulesets/7":
-			_, _ = io.WriteString(r, testLifecycleRuleset)
-		case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/git/ref/heads/main":
-			_, _ = fmt.Fprintf(r, `{"object":{"sha":%q}}`, mainHead)
-		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/git/ref/heads/"+lifecycleBranch):
-			if stateHead == "" {
-				r.WriteHeader(http.StatusNotFound)
-				_, _ = io.WriteString(r, `{"message":"Not Found"}`)
-			} else {
-				_, _ = fmt.Fprintf(r, `{"object":{"sha":%q}}`, stateHead)
+	for _, free := range []bool{false, true} {
+		t.Run(fmt.Sprintf("free=%t", free), func(t *testing.T) {
+			var stored string
+			var stateHead string
+			mainHead := testLifecycleSHA
+			commits := 0
+			client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
+				r := httptest.NewRecorder()
+				r.Header().Set("Content-Type", "application/json")
+				switch {
+				case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions":
+					_, _ = io.WriteString(r, `{"full_name":"org/actions","node_id":"controller-node"}`)
+				case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/rulesets":
+					if free {
+						t.Fatal("Free mode queried paid state rulesets")
+					}
+					_, _ = io.WriteString(r, `[{"id":7,"name":"governance-lifecycle-state"}]`)
+				case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/rulesets/7":
+					_, _ = io.WriteString(r, testLifecycleRuleset)
+				case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/git/ref/heads/main":
+					_, _ = fmt.Fprintf(r, `{"object":{"sha":%q}}`, mainHead)
+				case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/git/ref/heads/"+lifecycleBranch):
+					if stateHead == "" {
+						r.WriteHeader(http.StatusNotFound)
+						_, _ = io.WriteString(r, `{"message":"Not Found"}`)
+					} else {
+						_, _ = fmt.Fprintf(r, `{"object":{"sha":%q}}`, stateHead)
+					}
+				case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/contents/"+lifecyclePath:
+					_, _ = fmt.Fprintf(r, `{"type":"file","encoding":"base64","content":%q}`, base64.StdEncoding.EncodeToString([]byte(stored)))
+				case req.Method == http.MethodPost && req.URL.Path == "/repos/org/actions/git/trees":
+					var body struct {
+						Tree []struct{ Path, Content string } `json:"tree"`
+					}
+					if err := json.NewDecoder(req.Body).Decode(&body); err != nil || len(body.Tree) != 1 || body.Tree[0].Path != lifecyclePath {
+						t.Fatalf("invalid state tree: %+v %v", body, err)
+					}
+					stored = body.Tree[0].Content
+					_, _ = fmt.Fprintf(r, `{"sha":%q}`, strings.Repeat("c", 40))
+				case req.Method == http.MethodPost && req.URL.Path == "/repos/org/actions/git/commits":
+					commits++
+					_, _ = fmt.Fprintf(r, `{"sha":%q}`, strings.Repeat(strconv.Itoa(commits), 40))
+				case req.Method == http.MethodPost && req.URL.Path == "/repos/org/actions/git/refs":
+					var body struct{ Ref, SHA string }
+					if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body.Ref != "refs/heads/"+lifecycleBranch {
+						t.Fatalf("invalid state ref: %+v %v", body, err)
+					}
+					stateHead = body.SHA
+					_, _ = io.WriteString(r, `{}`)
+				case req.Method == http.MethodPost && req.URL.Path == "/graphql":
+					var body struct {
+						Variables struct {
+							Input struct {
+								RefUpdates []struct {
+									BeforeOID string `json:"beforeOid"`
+									AfterOID  string `json:"afterOid"`
+								} `json:"refUpdates"`
+							} `json:"input"`
+						} `json:"variables"`
+					}
+					if err := json.NewDecoder(req.Body).Decode(&body); err != nil || len(body.Variables.Input.RefUpdates) != 1 {
+						t.Fatalf("invalid update refs: %+v %v", body, err)
+					}
+					update := body.Variables.Input.RefUpdates[0]
+					if update.BeforeOID != stateHead {
+						t.Fatalf("state update did not compare observed head: %+v", update)
+					}
+					stateHead = update.AfterOID
+					_, _ = io.WriteString(r, `{"data":{"updateRefs":{"__typename":"UpdateRefsPayload"}}}`)
+				default:
+					t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+				}
+				return r.Result(), nil
+			})})
+			c, err := loadLifecycle(context.Background(), client, "org/actions", mainHead, testLifecycleKey)
+			if err != nil {
+				t.Fatal(err)
 			}
-		case req.Method == http.MethodGet && req.URL.Path == "/repos/org/actions/contents/"+lifecyclePath:
-			_, _ = fmt.Fprintf(r, `{"type":"file","encoding":"base64","content":%q}`, base64.StdEncoding.EncodeToString([]byte(stored)))
-		case req.Method == http.MethodPost && req.URL.Path == "/repos/org/actions/git/trees":
-			var body struct {
-				Tree []struct{ Path, Content string } `json:"tree"`
+			c.trustedWriters = free
+			state := lifecycleState{Version: 1, Revision: mainHead, Marked: map[string]string{}}
+			state.Signature = c.stateSignature(state)
+			if err := c.saveApplied(context.Background(), client, state); err != nil {
+				t.Fatal(err)
 			}
-			if err := json.NewDecoder(req.Body).Decode(&body); err != nil || len(body.Tree) != 1 || body.Tree[0].Path != lifecyclePath {
-				t.Fatalf("invalid state tree: %+v %v", body, err)
+			loaded, err := loadLifecycle(context.Background(), client, "org/actions", mainHead, testLifecycleKey)
+			if err != nil || loaded.state.Revision != mainHead {
+				t.Fatalf("could not reload state: %v", err)
 			}
-			stored = body.Tree[0].Content
-			_, _ = fmt.Fprintf(r, `{"sha":%q}`, strings.Repeat("c", 40))
-		case req.Method == http.MethodPost && req.URL.Path == "/repos/org/actions/git/commits":
-			commits++
-			_, _ = fmt.Fprintf(r, `{"sha":%q}`, strings.Repeat(strconv.Itoa(commits), 40))
-		case req.Method == http.MethodPost && req.URL.Path == "/repos/org/actions/git/refs":
-			var body struct{ Ref, SHA string }
-			if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body.Ref != "refs/heads/"+lifecycleBranch {
-				t.Fatalf("invalid state ref: %+v %v", body, err)
+			loaded.trustedWriters = free
+			if err := loaded.saveApplied(context.Background(), client, loaded.state); err != nil || commits != 1 {
+				t.Fatalf("unchanged state created a commit: %d %v", commits, err)
 			}
-			stateHead = body.SHA
-			_, _ = io.WriteString(r, `{}`)
-		case req.Method == http.MethodPost && req.URL.Path == "/graphql":
-			var body struct {
-				Variables struct {
-					Input struct {
-						RefUpdates []struct {
-							BeforeOID string `json:"beforeOid"`
-							AfterOID  string `json:"afterOid"`
-						} `json:"refUpdates"`
-					} `json:"input"`
-				} `json:"variables"`
+			mainHead = testLifecycleStateSHA
+			loaded.revision = mainHead
+			state.Revision = mainHead
+			state.Signature = loaded.stateSignature(state)
+			if err := loaded.saveApplied(context.Background(), client, state); err != nil || commits != 2 {
+				t.Fatalf("updated state was not recorded: %d %v", commits, err)
 			}
-			if err := json.NewDecoder(req.Body).Decode(&body); err != nil || len(body.Variables.Input.RefUpdates) != 1 {
-				t.Fatalf("invalid update refs: %+v %v", body, err)
+			stored = strings.Replace(stored, mainHead, testLifecycleSHA, 1)
+			if _, err := loadLifecycle(context.Background(), client, "org/actions", mainHead, testLifecycleKey); err == nil {
+				t.Fatal("tampered state was accepted")
 			}
-			update := body.Variables.Input.RefUpdates[0]
-			if update.BeforeOID != stateHead {
-				t.Fatalf("state update did not compare observed head: %+v", update)
-			}
-			stateHead = update.AfterOID
-			_, _ = io.WriteString(r, `{"data":{"updateRefs":{"__typename":"UpdateRefsPayload"}}}`)
-		default:
-			t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
-		}
-		return r.Result(), nil
-	})})
-	c, err := loadLifecycle(context.Background(), client, "org/actions", mainHead, testLifecycleKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := lifecycleState{Version: 1, Revision: mainHead, Marked: map[string]string{}}
-	state.Signature = c.stateSignature(state)
-	if err := c.saveApplied(context.Background(), client, state); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := loadLifecycle(context.Background(), client, "org/actions", mainHead, testLifecycleKey)
-	if err != nil || loaded.state.Revision != mainHead {
-		t.Fatalf("could not reload state: %v", err)
-	}
-	if err := loaded.saveApplied(context.Background(), client, loaded.state); err != nil || commits != 1 {
-		t.Fatalf("unchanged state created a commit: %d %v", commits, err)
-	}
-	mainHead = testLifecycleStateSHA
-	loaded.revision = mainHead
-	state.Revision = mainHead
-	state.Signature = loaded.stateSignature(state)
-	if err := loaded.saveApplied(context.Background(), client, state); err != nil || commits != 2 {
-		t.Fatalf("updated state was not recorded: %d %v", commits, err)
-	}
-	stored = strings.Replace(stored, mainHead, testLifecycleSHA, 1)
-	if _, err := loadLifecycle(context.Background(), client, "org/actions", mainHead, testLifecycleKey); err == nil {
-		t.Fatal("tampered state was accepted")
+		})
 	}
 }
 
