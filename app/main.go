@@ -114,6 +114,8 @@ type RepoConfig struct {
 	skipPrivateBranchProtection bool
 	Name                        string `yaml:"name"`
 	Profile                     string `yaml:"profile"`
+	// SharedActionsRef opts this repository into public reusable workflows at one immutable revision.
+	SharedActionsRef string `yaml:"shared_actions_ref"`
 	// Private controls creation only; an existing repository's visibility is unchanged.
 	Private *bool `yaml:"private"`
 	// ArchiveOnRemoval arms archival only after this configuration has been applied.
@@ -396,6 +398,13 @@ func main() {
 
 	if err := expandProfiles(&cfg); err != nil {
 		fmt.Println("Failed to expand governance profiles")
+		os.Exit(1)
+	}
+	publicClient := github.NewClient(nil)
+	if err := resolveSharedWorkflowRefs(&cfg, func(ref, path string) ([]byte, error) {
+		return fetchSharedWorkflow(ctx, publicClient, ref, path)
+	}); err != nil {
+		fmt.Println("Invalid public workflow configuration")
 		os.Exit(1)
 	}
 	if err := resolvePinnedWorkflowRefs(&cfg, latestWorkflowChange); err != nil {

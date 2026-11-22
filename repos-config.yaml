@@ -2021,6 +2021,7 @@ repositories:
           id-token: write
           attestations: write
   - name: blinklabs-io/go-bip39
+    shared_actions_ref: 7328ad66dec3a12676f5a9d1948fa74946712613
     settings:
       delete_branch_on_merge: true
     collaborators: []
@@ -2051,7 +2052,6 @@ repositories:
 
         params:
           run-golangci-lint: "true"
-          check-format: "true"
           run-nilaway: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/go-bip39"
       - destination_file: publish.yml

@@ -332,6 +332,34 @@ when it tries to update the protected files.
 
 ## Configuration
 
+### Public reusable workflow sources
+
+Set `shared_actions_ref` on an individual repository to pin its governed calls
+to a reviewed full commit SHA in `blinklabs-io/shared-actions`:
+
+```yaml
+repositories:
+  - name: blinklabs-io/go-bip39
+    shared_actions_ref: 7328ad66dec3a12676f5a9d1948fa74946712613
+    # Keep this repository's existing workflows or profile declaration.
+```
+
+After profile expansion and release-fanout injection, the controller validates
+each selected public workflow at that revision and requires `workflow_call`.
+It then replaces actions/shared-actions implementation references, including
+`pin_to_latest_change` calls, with the verified public SHA. Other external
+workflow sources and unselected repositories retain their configured references.
+Fanout still targets the governance receiver in actions with its existing token
+mapping; the public implementation does not move that receiver.
+
+This option selects workflow sources, not reconciliation scope. The sync still
+reconciles every configured repository, including settings and lifecycle state.
+Review generated-file drift before applying configuration changes. Existing
+caller commits, branches, tags, and reruns retain their old references until
+their supported execution paths are explicitly migrated or retained publicly.
+
+### Controller environment
+
 The sync engine requires these environment variables:
 
 | Variable | Description |
