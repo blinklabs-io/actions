@@ -277,3 +277,51 @@ func TestWorkflowRenderInputsIncludesRenamedOriginalPaths(t *testing.T) {
 		t.Fatal("renamed rendering inputs did not retain full reconciliation")
 	}
 }
+
+func TestProfileWorkflowSourcesUseEffectiveContracts(t *testing.T) {
+	const fixture = `profiles:
+  service:
+    workflows:
+      - destination_file: check.yml
+        reusable_workflow: blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main
+        params:
+          run-build: "true"
+        permissions:
+          contents: read
+repositories:
+  - name: o/first
+    profile: service
+  - name: o/second
+    profile: service
+  - name: o/unrelated
+    workflows:
+      - destination_file: check.yml
+        reusable_workflow: other/ci/.github/workflows/check.yml@main
+`
+	next := strings.Replace(fixture, "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main", sharedWorkflowRepository+".github/workflows/reuseable-go-test.yml@"+canarySharedRef, 1)
+	for _, tc := range []struct {
+		name, before, after string
+		scoped              bool
+		targets             []string
+	}{
+		{"profile sources", fixture, next, true, []string{"o/first", "o/second"}},
+		{"profile settings", fixture, strings.Replace(next, "    workflows:", "    settings:\n      delete_branch_on_merge: true\n    workflows:", 1), false, nil},
+		{"profile permissions", fixture, strings.Replace(next, "contents: read", "contents: write", 1), false, nil},
+		{"profile inputs", fixture, strings.Replace(next, "run-build: \"true\"", "run-build: \"false\"", 1), false, nil},
+		{"discovered profile users", "discovery:\n  enabled: true\n" + fixture, "discovery:\n  enabled: true\n" + next, false, nil},
+		{"unused profile", strings.Replace(fixture, "    profile: service", "    workflows: []", 2), strings.Replace(next, "    profile: service", "    workflows: []", 2), true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			names, scoped, err := workflowSourceChanges([]byte(tc.before), []byte(tc.after))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scoped != tc.scoped {
+				t.Fatalf("profile workflow-only=%v, want %v", scoped, tc.scoped)
+			}
+			if scoped && !reflect.DeepEqual(names, tc.targets) {
+				t.Fatalf("profile targets=%v, want %v", names, tc.targets)
+			}
+		})
+	}
+}

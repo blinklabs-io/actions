@@ -85,6 +85,24 @@ func workflowSourceChanges(previous, current []byte) ([]string, bool, error) {
 			changed = append(changed, next.Name)
 		}
 	}
+	profileSourcesChanged := false
+	for name, old := range before.Profiles {
+		next, ok := after.Profiles[name]
+		if !ok || len(old.Workflows) != len(next.Workflows) {
+			continue
+		}
+		for j := range old.Workflows {
+			profileSourcesChanged = profileSourcesChanged || old.Workflows[j].ReusableWorkflow != next.Workflows[j].ReusableWorkflow
+			old.Workflows[j].ReusableWorkflow = ""
+			next.Workflows[j].ReusableWorkflow = ""
+		}
+		before.Profiles[name] = old
+		after.Profiles[name] = next
+	}
+	if profileSourcesChanged && (before.Discovery.Enabled || after.Discovery.Enabled) {
+		// Marker repositories may use any profile and are absent from this comparison.
+		return nil, false, nil
+	}
 	oldJSON, err := json.Marshal(before)
 	if err != nil {
 		return nil, false, err
@@ -93,7 +111,7 @@ func workflowSourceChanges(previous, current []byte) ([]string, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	return changed, len(changed) > 0 && bytes.Equal(oldJSON, nextJSON), nil
+	return changed, (len(changed) > 0 || profileSourcesChanged) && bytes.Equal(oldJSON, nextJSON), nil
 }
 
 func workflowSyncScope(event, target, previous, revision string, current []byte, readPrevious func(string) ([]byte, error)) ([]string, bool, error) {

@@ -352,6 +352,10 @@ workflow files in the affected repositories. The expanded triggers, inputs,
 secrets and permissions must otherwise match the previous revision. Changes to
 the Helm publisher or rendering templates retain full reconciliation. This path
 does not change settings, discovery, archival or applied lifecycle state.
+Profile references are compared using the expanded repository contracts. A
+profile change with discovery enabled retains full governance so marker-managed
+repositories are included. An unused profile reference change with discovery
+disabled requires no repository writes.
 Scheduled runs and manual runs without a target retain full governance.
 
 For a manual workflow-only sync, supply the optional `repository` input on the

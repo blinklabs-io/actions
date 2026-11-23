@@ -395,9 +395,12 @@ func main() {
 			os.Exit(1)
 		}
 		publicClient := github.NewClient(nil)
-		result := syncSelectedWorkflows(ctx, client, cfg, targets, func(ref, path string) ([]byte, error) {
-			return fetchSharedWorkflow(ctx, publicClient, ref, path)
-		}, func() error { return controller.requireCurrentMain(ctx, client) }, report)
+		var result error
+		if len(targets) > 0 {
+			result = syncSelectedWorkflows(ctx, client, cfg, targets, func(ref, path string) ([]byte, error) {
+				return fetchSharedWorkflow(ctx, publicClient, ref, path)
+			}, func() error { return controller.requireCurrentMain(ctx, client) }, report)
+		}
 		reportErr := report.render()
 		var closeErr error
 		if summary != nil {
