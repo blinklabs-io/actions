@@ -31,9 +31,9 @@ type Config struct {
 	Repositories          []RepoConfig          `yaml:"repositories"`
 	ExternalReleaseFanout []ReleaseFanoutSource `yaml:"external_release_fanout"`
 
-	// ReleaseFanoutDispatchRef is the commit SHA of the actions repository
-	// that generated release-fanout.yml wrappers pin the dispatch workflow to.
-	// Empty disables wrapper generation.
+	// ReleaseFanoutDispatchRef pins automatically injected dispatch wrappers
+	// to an actions commit. Empty disables injection, not workflow entries
+	// configured directly or through a profile.
 	ReleaseFanoutDispatchRef string `yaml:"release_fanout_dispatch_ref"`
 }
 

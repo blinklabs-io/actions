@@ -194,9 +194,10 @@ A repository can declare downstream repositories that pin its released version
 under `release_fanout` in `repos-config.yaml`. The central `release-fanout.yml`
 workflow pushes a release's version straight to each target's default branch
 with a GitHub App token; there are no pull requests. It runs from a
-manual `workflow_dispatch`, from the product's generated wrapper (run when its `publish` workflow completes, because releases created with `GITHUB_TOKEN` fire no `release` event) once
-`release_fanout_dispatch_ref` is set (see below), and from a daily backstop, so
-until that key is set a release reaches its targets within about a day. A
+manual `workflow_dispatch`, from a product's configured or injected wrapper
+when its publishing workflow completes, and from a daily backstop. The wrapper
+follows workflow completion because releases created with `GITHUB_TOKEN` fire
+no `release` event. Products without a wrapper still use the daily backstop. A
 manual or dispatched version must be an existing published release: the
 workflow rejects a tag that does not exist or is a draft or prerelease.
 Upstream repositories that Actions does not manage can be declared under
@@ -245,12 +246,17 @@ rule matches any ``<Product> `X.Y.Z` ``, so `refs` globs must not include files
 whose prose gives a minimum version ("0.68.0 or newer"). A target whose `refs`
 are all unmatched fails the run instead of doing nothing.
 
-The engine generates `release-fanout.yml` in each repository that declares
-`release_fanout` once the top-level `release_fanout_dispatch_ref` is set to a
-full lowercase commit SHA of this repository that contains
-`reuseable-release-dispatch.yml` (the wrapper passes a secret, so it is pinned
-by commit). While the key is unset no wrapper is generated, and wrappers appear
-after the ref is set in a follow-up change.
+For a repository declaring `release_fanout`, the engine injects
+`release-fanout.yml` only when no explicit workflow or profile already declares
+that file. The top-level `release_fanout_dispatch_ref` pins these injected
+wrappers to a full lowercase commit SHA of `actions` containing
+`reuseable-release-dispatch.yml`. An empty ref disables automatic injection.
+
+Workflows configured directly or through a profile retain their own
+`reusable_workflow` reference and are rendered even when the dispatch ref is
+empty. The Docker fanout profiles use the public `shared-actions` workflow;
+the dispatch ref does not change their source or pin. Every wrapper passes a
+secret, so its reusable workflow reference must use a full commit SHA.
 
 The wrapper sends a `repository_dispatch` using `ORG_PROJECT_PAT`, which needs
 only Contents read/write on `blinklabs-io/actions`. The central
