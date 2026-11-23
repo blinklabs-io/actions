@@ -308,8 +308,9 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 
 func TestMigratedWorkflowsUseReviewedPublicRevision(t *testing.T) {
 	const (
-		workflowPrefix = "blinklabs-io/shared-actions/.github/workflows/"
-		workflowSHA    = "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+		workflowPrefix        = "blinklabs-io/shared-actions/.github/workflows/"
+		workflowSHA           = "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+		flutterAPKWorkflowSHA = "f0bde4fe4b4d229840d0dcd9bae60da0ecd90074"
 	)
 	wantCalls := map[string]map[string]string{
 		"blinklabs-io/tx-submit-api": {
@@ -538,7 +539,32 @@ func TestMigratedWorkflowsUseReviewedPublicRevision(t *testing.T) {
 		delete(wantCalls, repo.Name)
 		for _, wf := range repo.Workflows {
 			file, expected := calls[wf.DestinationFile]
-			want := workflowPrefix + file + "@" + workflowSHA
+			revision := workflowSHA
+			if repo.Name == "blinklabs-io/adder-mobile" && wf.DestinationFile == "publish.yml" {
+				revision = flutterAPKWorkflowSHA
+				tmpl, err := newWorkflowTemplate(t)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := renderWorkflow(tmpl, wf)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var rendered struct {
+					Jobs map[string]struct {
+						With map[string]interface{} `yaml:"with"`
+					} `yaml:"jobs"`
+				}
+				if err := yaml.Unmarshal(body, &rendered); err != nil {
+					t.Fatal(err)
+				}
+				inputs := rendered.Jobs["orchestrate"].With
+				version, ok := inputs["java-version"].(string)
+				if !ok || version != "17" || inputs["build-apk"] != true || inputs["flutter-version"] != "3.22.0" {
+					t.Errorf("Adder Mobile APK must select Java 17 as a string and retain its Flutter SDK and APK build: %v", inputs)
+				}
+			}
+			want := workflowPrefix + file + "@" + revision
 			if !expected || wf.ReusableWorkflow != want || wf.PinToLatestChange {
 				t.Errorf("%s %s must use the reviewed public workflow %q, got %q", repo.Name, wf.DestinationFile, want, wf.ReusableWorkflow)
 			}

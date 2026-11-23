@@ -1447,13 +1447,14 @@ repositories:
 
       - destination_file: publish.yml
         workflow_name: "Build Flutter APK"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-flutter.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-flutter.yml@f0bde4fe4b4d229840d0dcd9bae60da0ecd90074"
         triggers:
           push:
             branches: [main]
         secrets:
           GOOGLE_SERVICES_JSON: GOOGLE_SERVICES_JSON
         params:
+          java-version: "'17'"
           flutter-version: "3.22.0"
           channel: "stable"
           run-analyze: "false"
