@@ -389,6 +389,44 @@ func TestConfiguredPipelinesSupersedeTheirWrappers(t *testing.T) {
 	}
 }
 
+func TestStandardProfileConventionalCommitsRevision(t *testing.T) {
+	const want = "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+	data, err := os.ReadFile("../repos-config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source Config
+	if err := yaml.Unmarshal(data, &source); err != nil {
+		t.Fatal(err)
+	}
+	pending := make(map[string]bool)
+	for _, repo := range source.Repositories {
+		if repo.Profile == "repository-standard" {
+			pending[repo.Name] = true
+		}
+	}
+	if len(pending) == 0 {
+		t.Fatal("no standard profile repositories found")
+	}
+	for _, repo := range loadRealConfig(t).Repositories {
+		if !pending[repo.Name] {
+			continue
+		}
+		for _, workflow := range repo.Workflows {
+			if workflow.DestinationFile != "conventional-commits.yml" {
+				continue
+			}
+			if workflow.ReusableWorkflow != want || workflow.PinToLatestChange {
+				t.Errorf("%s must use the reviewed standard profile workflow %q without dynamic pinning, got %q (pin_to_latest_change: %t)", repo.Name, want, workflow.ReusableWorkflow, workflow.PinToLatestChange)
+			}
+			delete(pending, repo.Name)
+		}
+	}
+	for name := range pending {
+		t.Errorf("%s has no standard profile Conventional Commits caller", name)
+	}
+}
+
 func TestConfiguredConventionalCommitsPermissions(t *testing.T) {
 	cfg := loadRealConfig(t)
 	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
