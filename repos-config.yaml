@@ -123,7 +123,7 @@ profiles:
           packages: write
           id-token: write
           attestations: write
-          # The reusable's multi-arch-manifest job declares
+          # The reusable's scan-images job declares
           # security-events: write (for the Trivy SARIF upload, which is now
           # enabled by default). Reusable-workflow permissions cannot be
           # elevated by the caller, so every docker-standard publisher must
