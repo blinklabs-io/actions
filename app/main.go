@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -372,21 +371,39 @@ func main() {
 			if err := exec.Command("git", "merge-base", "--is-ancestor", previous, revision).Run(); err != nil {
 				return nil, err
 			}
-			return exec.Command("git", "show", previous+":repos-config.yaml").Output()
+			paths, err := exec.Command("git", "diff", "--name-only", previous, revision).Output()
+			if err != nil {
+				return nil, err
+			}
+			if workflowRenderInputsChanged(strings.Split(strings.TrimSpace(string(paths)), "\n")) {
+				return nil, errWorkflowInputsChanged
+			}
+			data, err := exec.Command("git", "show", previous+":repos-config.yaml").Output()
+			if err != nil {
+				return nil, errPreviousConfigUnavailable
+			}
+			return data, nil
 		})
 	if err != nil {
 		fmt.Println("Could not determine governance workflow scope")
 		os.Exit(1)
 	}
 	if workflowOnly {
-		report := newDriftReport(os.Stdout)
-		report.configRevision = revision
+		report, summary, err := newGovernanceReport(revision)
+		if err != nil {
+			fmt.Println("Unable to open drift report output")
+			os.Exit(1)
+		}
 		publicClient := github.NewClient(nil)
 		result := syncSelectedWorkflows(ctx, client, cfg, targets, func(ref, path string) ([]byte, error) {
 			return fetchSharedWorkflow(ctx, publicClient, ref, path)
 		}, func() error { return controller.requireCurrentMain(ctx, client) }, report)
 		reportErr := report.render()
-		if result != nil || reportErr != nil {
+		var closeErr error
+		if summary != nil {
+			closeErr = summary.Close()
+		}
+		if result != nil || reportErr != nil || closeErr != nil {
 			fmt.Println("Targeted workflow reconciliation failed")
 			os.Exit(1)
 		}
@@ -439,18 +456,11 @@ func main() {
 		fmt.Println("Invalid Dependabot configuration")
 		os.Exit(1)
 	}
-	var reportOutput io.Writer = os.Stdout
-	var summary *os.File
-	if path := os.Getenv("GITHUB_STEP_SUMMARY"); path != "" {
-		summary, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
-		if err != nil {
-			fmt.Println("Unable to open drift report output")
-			os.Exit(1)
-		}
-		reportOutput = io.MultiWriter(os.Stdout, summary)
+	report, summary, err := newGovernanceReport(revision)
+	if err != nil {
+		fmt.Println("Unable to open drift report output")
+		os.Exit(1)
 	}
-	report := newDriftReport(reportOutput)
-	report.configRevision = revision
 	var result error
 	var identities map[string]int64
 	var nextState lifecycleState
@@ -2392,6 +2402,11 @@ func flushBatch(
 	repositoryID := batch.repositoryID
 	if repositoryID == "" {
 		repositoryID = latestRepo.GetNodeID()
+	}
+	if guard, ok := ctx.Value(managedRefGuardKey{}).(func() error); ok {
+		if err := guard(); err != nil {
+			return errors.New("controller main changed before managed file publication")
+		}
 	}
 	if err := updateManagedRef(ctx, client, repositoryID, defaultBranch, baseCommitSHA, newCommit.GetSHA()); err != nil {
 		if report := reportFromContext(ctx); report != nil {

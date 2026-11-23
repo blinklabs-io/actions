@@ -349,7 +349,8 @@ without one retain the existing generated dispatch source.
 
 A configuration push that changes only reusable workflow references syncs only
 workflow files in the affected repositories. The expanded triggers, inputs,
-secrets and permissions must otherwise match the previous revision. This path
+secrets and permissions must otherwise match the previous revision. Changes to
+the Helm publisher or rendering templates retain full reconciliation. This path
 does not change settings, discovery, archival or applied lifecycle state.
 Scheduled runs and manual runs without a target retain full governance.
 

@@ -5,11 +5,41 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/google/go-github/v60/github"
 	"gopkg.in/yaml.v3"
 )
+
+var errWorkflowInputsChanged = errors.New("workflow rendering inputs changed")
+var errPreviousConfigUnavailable = errors.New("previous configuration is unavailable")
+
+func workflowRenderInputsChanged(paths []string) bool {
+	for _, path := range paths {
+		if path == ".github/workflows/reuseable-helm-publish.yml" || strings.HasPrefix(path, "templates/") {
+			return true
+		}
+	}
+	return false
+}
+
+func newGovernanceReport(revision string) (*driftReport, *os.File, error) {
+	var output io.Writer = os.Stdout
+	var summary *os.File
+	if path := os.Getenv("GITHUB_STEP_SUMMARY"); path != "" {
+		var err error
+		summary, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			return nil, nil, err
+		}
+		output = io.MultiWriter(os.Stdout, summary)
+	}
+	report := newDriftReport(output)
+	report.configRevision = revision
+	return report, summary, nil
+}
 
 // workflowSourceChanges compares expanded contracts, including injected fanout.
 // Only a change confined to reusable source references can narrow an automatic sync.
@@ -67,15 +97,26 @@ func workflowSyncScope(event, target, previous, revision string, current []byte,
 	if event != "push" {
 		return nil, false, nil
 	}
-	if !commitSHAPattern.MatchString(previous) || previous == strings.Repeat("0", 40) ||
+	if previous == strings.Repeat("0", 40) {
+		return nil, false, nil
+	}
+	if !commitSHAPattern.MatchString(previous) ||
 		!commitSHAPattern.MatchString(revision) || readPrevious == nil {
 		return nil, false, errors.New("workflow sync requires a valid previous push revision")
 	}
 	old, err := readPrevious(previous)
+	if errors.Is(err, errWorkflowInputsChanged) || errors.Is(err, errPreviousConfigUnavailable) {
+		return nil, false, nil
+	}
 	if err != nil {
 		return nil, false, errors.New("could not read previous governance configuration")
 	}
-	return workflowSourceChanges(old, current)
+	names, scoped, err := workflowSourceChanges(old, current)
+	if err != nil {
+		// Full governance retains its existing configuration-recovery and history checks.
+		return nil, false, nil
+	}
+	return names, scoped, nil
 }
 
 // syncSelectedWorkflows does not reconcile settings, discovery or lifecycle state.
@@ -128,6 +169,7 @@ func syncSelectedWorkflows(ctx context.Context, client *github.Client, cfg Confi
 			return errors.New("could not verify existing workflow target")
 		}
 		repoCtx := context.WithValue(ctx, driftContextKey{}, report)
+		repoCtx = context.WithValue(repoCtx, managedRefGuardKey{}, checkCurrent)
 		if err := syncWorkflows(repoCtx, client, owner, name, repo.Workflows); err != nil {
 			return err
 		}

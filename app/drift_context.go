@@ -6,6 +6,7 @@ import (
 )
 
 type driftContextKey struct{}
+type managedRefGuardKey struct{}
 
 func reportFromContext(ctx context.Context) *driftReport {
 	report, _ := ctx.Value(driftContextKey{}).(*driftReport)
