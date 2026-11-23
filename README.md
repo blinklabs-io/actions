@@ -347,8 +347,17 @@ verifies anonymously that each referenced regular file exists and declares
 `release-fanout.yml` entry can select the public dispatch workflow; repositories
 without one retain the existing generated dispatch source.
 
-Changing a workflow source does not limit governance reconciliation to that
-repository. The normal sync still processes the full configuration.
+A configuration push that changes only reusable workflow references syncs only
+workflow files in the affected repositories. The expanded triggers, inputs,
+secrets and permissions must otherwise match the previous revision. This path
+does not change settings, discovery, archival or applied lifecycle state.
+Scheduled runs and manual runs without a target retain full governance.
+
+For a manual workflow-only sync, supply the optional `repository` input on the
+Central Governance Sync Engine workflow, using a configured `owner/repository`.
+The current-main, committed-configuration and authenticated-state checks still
+apply. Governance commits generated files directly to the target's default
+branch; ordinary repository CI and publishing triggers then run as configured.
 
 ### Controller environment
 

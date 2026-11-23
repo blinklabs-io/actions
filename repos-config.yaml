@@ -2041,7 +2041,7 @@ repositories:
     workflows:
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
         triggers:
           pull_request:
         permissions:
@@ -2052,7 +2052,7 @@ repositories:
         pipeline_name: ci
         job_id: go-test
         workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"
         supersedes: [golangci-lint.yml, nilaway.yml]
         triggers:
           pull_request:
@@ -2062,6 +2062,7 @@ repositories:
 
         params:
           run-golangci-lint: "true"
+          check-format: "true"
           run-nilaway: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/go-bip39"
       - destination_file: publish.yml
@@ -2069,7 +2070,7 @@ repositories:
         pipeline: ci.yml
         if: github.event_name == 'push' && github.ref_type == 'tag'
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-library-release.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
+        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-go-library-release.yml@e3dee08bef03cc5e245e18069f48644a6084a4f3"
         triggers:
           push:
             tags: ['v*.*.*']

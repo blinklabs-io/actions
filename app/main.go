@@ -366,6 +366,32 @@ func main() {
 		fmt.Println("Governance lifecycle state is not protected")
 		os.Exit(1)
 	}
+	targets, workflowOnly, err := workflowSyncScope(os.Getenv("GITHUB_EVENT_NAME"),
+		os.Getenv("GOVERNANCE_TARGET_REPOSITORY"), os.Getenv("GOVERNANCE_PREVIOUS_REVISION"), revision,
+		configFile, func(previous string) ([]byte, error) {
+			if err := exec.Command("git", "merge-base", "--is-ancestor", previous, revision).Run(); err != nil {
+				return nil, err
+			}
+			return exec.Command("git", "show", previous+":repos-config.yaml").Output()
+		})
+	if err != nil {
+		fmt.Println("Could not determine governance workflow scope")
+		os.Exit(1)
+	}
+	if workflowOnly {
+		report := newDriftReport(os.Stdout)
+		report.configRevision = revision
+		publicClient := github.NewClient(nil)
+		result := syncSelectedWorkflows(ctx, client, cfg, targets, func(ref, path string) ([]byte, error) {
+			return fetchSharedWorkflow(ctx, publicClient, ref, path)
+		}, func() error { return controller.requireCurrentMain(ctx, client) }, report)
+		reportErr := report.render()
+		if result != nil || reportErr != nil {
+			fmt.Println("Targeted workflow reconciliation failed")
+			os.Exit(1)
+		}
+		return
+	}
 	explicit := append([]RepoConfig(nil), cfg.Repositories...)
 	candidates := map[string]RepoConfig{}
 	if controller.state.Revision != "" {

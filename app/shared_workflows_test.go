@@ -179,7 +179,7 @@ func TestSharedCanaryRenderingPreservesLiveContracts(t *testing.T) {
 	}
 	selected := 0
 	for _, repo := range cfg.Repositories {
-		isCanary := repo.Name == "blinklabs-io/go-bip39" || repo.Name == "blinklabs-io/adder"
+		isCanary := repo.Name == "blinklabs-io/adder"
 		publicCalls := 0
 		for _, wf := range repo.Workflows {
 			if strings.HasPrefix(wf.ReusableWorkflow, sharedWorkflowRepository) {
@@ -194,10 +194,7 @@ func TestSharedCanaryRenderingPreservesLiveContracts(t *testing.T) {
 		if !isCanary {
 			continue
 		}
-		wantCalls := 3
-		if repo.Name == "blinklabs-io/adder" {
-			wantCalls = 5
-		}
+		const wantCalls = 5
 		if publicCalls != wantCalls {
 			t.Fatalf("%s has %d public calls, want %d", repo.Name, publicCalls, wantCalls)
 		}
@@ -220,10 +217,7 @@ func TestSharedCanaryRenderingPreservesLiveContracts(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		fixturePath, wantOutputs := "testdata/shared-actions-canary/", 2
-		if repo.Name == "blinklabs-io/adder" {
-			fixturePath, wantOutputs = fixturePath+"adder/", 4
-		}
+		const fixturePath, wantOutputs = "testdata/shared-actions-canary/adder/", 4
 		if len(outputs) != wantOutputs {
 			t.Fatalf("canary outputs = %d, want %d current callers", len(outputs), wantOutputs)
 		}
@@ -249,7 +243,7 @@ func TestSharedCanaryRenderingPreservesLiveContracts(t *testing.T) {
 			}
 		}
 	}
-	if selected != 2 {
-		t.Fatalf("rollout selects %d repositories, want the two authorized canaries", selected)
+	if selected != 1 {
+		t.Fatalf("rollout selects %d repositories, want the Adder canary", selected)
 	}
 }

@@ -11,6 +11,11 @@ on:
       - 'repos-config.yaml'
       - '.github/workflows/reuseable-helm-publish.yml'
   workflow_dispatch:
+    inputs:
+      repository:
+        description: 'Sync only workflows for one configured owner/repository; empty runs normal governance'
+        required: false
+        type: string
   schedule:
     - cron: '0 6 * * *'
 
@@ -64,4 +69,6 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
           GOVERNANCE_LIFECYCLE_STATE_KEY: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+          GOVERNANCE_PREVIOUS_REVISION: ${{ github.event.before }}
+          GOVERNANCE_TARGET_REPOSITORY: ${{ inputs.repository }}
         run: go run ./app
