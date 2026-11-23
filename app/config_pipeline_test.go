@@ -165,6 +165,7 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 	const (
 		actionsPrefix = "blinklabs-io/actions/.github/workflows/"
 		sharedPrefix  = "blinklabs-io/shared-actions/.github/workflows/"
+		dockerSHA     = "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
 	)
 	adderCalls := map[string]string{
 		"conventional-commits.yml": "reuseable-conventional-commits.yml",
@@ -172,6 +173,40 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 		"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
 		"publish.yml":              "reuseable-publish-desktop.yml",
 		"release-fanout.yml":       "reuseable-release-dispatch.yml",
+	}
+	data, err := os.ReadFile("../repos-config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source Config
+	if err := yaml.Unmarshal(data, &source); err != nil {
+		t.Fatal(err)
+	}
+	fanoutProfiles := map[string]bool{
+		"docker-standard-fanout":     true,
+		"docker-actions-only-fanout": true,
+	}
+	dockerRepos := make(map[string]bool)
+	for _, repo := range source.Repositories {
+		if !strings.HasPrefix(repo.Profile, "docker-") {
+			continue
+		}
+		dockerRepos[repo.Name] = true
+		if len(repo.ReleaseFanout) == 0 {
+			continue
+		}
+		declared := false
+		for _, wf := range source.Profiles[repo.Profile].Workflows {
+			if wf.DestinationFile == "release-fanout.yml" {
+				declared = true
+			}
+		}
+		if !fanoutProfiles[repo.Profile] || !declared {
+			t.Errorf("%s must declare release-fanout.yml in a Docker fanout profile", repo.Name)
+		}
+	}
+	if len(dockerRepos) == 0 {
+		t.Fatal("no Docker profile repositories found")
 	}
 	cfg := loadRealConfig(t)
 	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
@@ -183,7 +218,26 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 	}
 	found := 0
 	for _, repo := range cfg.Repositories {
+		var dockerCalls map[string]string
+		if dockerRepos[repo.Name] {
+			dockerCalls = map[string]string{
+				"conventional-commits.yml": "reuseable-conventional-commits.yml",
+				"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+				"publish.yml":              "reuseable-publish-docker-multiarch.yml",
+			}
+			if len(repo.ReleaseFanout) > 0 {
+				dockerCalls["release-fanout.yml"] = "reuseable-release-dispatch.yml"
+			}
+		}
 		for _, wf := range repo.Workflows {
+			if dockerCalls != nil {
+				file, expected := dockerCalls[wf.DestinationFile]
+				want := sharedPrefix + file + "@" + dockerSHA
+				if !expected || wf.ReusableWorkflow != want {
+					t.Errorf("%s %s must use the reviewed public Docker workflow %q, got %q", repo.Name, wf.DestinationFile, want, wf.ReusableWorkflow)
+				}
+				delete(dockerCalls, wf.DestinationFile)
+			}
 			if repo.Name == "blinklabs-io/adder" {
 				file, expected := adderCalls[wf.DestinationFile]
 				want := sharedPrefix + file + "@" + wantDesktopReusableSHA
@@ -223,6 +277,9 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 					wf.ReusableWorkflow,
 				)
 			}
+		}
+		if len(dockerCalls) != 0 {
+			t.Errorf("%s is missing expected public Docker workflow calls: %v", repo.Name, dockerCalls)
 		}
 	}
 	if len(adderCalls) != 0 {
