@@ -17,100 +17,102 @@ import (
 
 const canarySharedRef = "7328ad66dec3a12676f5a9d1948fa74946712613"
 
-func TestSharedWorkflowRefsRecognizeSourceBoundaries(t *testing.T) {
-	for _, source := range []string{"blinklabs-io/actions/", sharedWorkflowRepository, "other/repo/.github/workflows/check.yml@main"} {
-		cfg := Config{Repositories: []RepoConfig{{SharedActionsRef: canarySharedRef,
-			Workflows: []WorkflowConfig{{ReusableWorkflow: source}}}}}
-		err := resolveSharedWorkflowRefs(&cfg, nil)
-		if strings.HasPrefix(source, "other/") {
-			if err != nil || cfg.Repositories[0].Workflows[0].ReusableWorkflow != source {
-				t.Fatalf("foreign workflow changed: %v", err)
-			}
-		} else if err == nil {
-			t.Fatal("empty path in recognized source accepted")
+func TestSharedWorkflowRefsPreserveConfiguredSources(t *testing.T) {
+	public := sharedWorkflowRepository + ".github/workflows/reuseable-go-test.yml@" + canarySharedRef
+	cfg := Config{Repositories: []RepoConfig{{Workflows: []WorkflowConfig{
+		{ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main"},
+		{ReusableWorkflow: public}, {ReusableWorkflow: public},
+		{ReusableWorkflow: "other/repo/.github/workflows/check.yml@main"},
+	}}}}
+	before, _ := json.Marshal(cfg)
+	calls := 0
+	if err := validateSharedWorkflowRefs(&cfg, func(ref, path string) ([]byte, error) {
+		calls++
+		if ref != canarySharedRef || path != ".github/workflows/reuseable-go-test.yml" {
+			t.Fatalf("unexpected source %s %s", ref, path)
 		}
+		return []byte(callableWorkflowYAML), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("public source reads = %d, want one cached read", calls)
+	}
+	after, _ := json.Marshal(cfg)
+	if string(before) != string(after) {
+		t.Fatal("source validation changed configuration")
 	}
 }
 
 func TestSharedWorkflowRefsAfterProfileAndFanout(t *testing.T) {
 	cfg := Config{
 		ReleaseFanoutDispatchRef: strings.Repeat("b", 40),
-		Profiles: map[string]Profile{"base": {Workflows: []WorkflowConfig{{
-			DestinationFile: "check.yml", ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main",
-			PinToLatestChange: true, Params: map[string]string{"run-build": "true"},
+		Profiles: map[string]Profile{"public": {Workflows: []WorkflowConfig{{
+			DestinationFile: "check.yml", ReusableWorkflow: sharedWorkflowRepository + ".github/workflows/reuseable-go-test.yml@" + canarySharedRef,
+			Params: map[string]string{"run-build": "true"},
 		}}}},
-		Repositories: []RepoConfig{
-			{Name: "org/canary", Profile: "base", SharedActionsRef: canarySharedRef,
-				ReleaseFanout: []FanoutTarget{{Repo: "org/consumer", Type: "version-refs", Refs: []string{"version.txt"}}}},
-			{Name: "org/unchanged", Profile: "base"},
-		},
+		Repositories: []RepoConfig{{Name: "org/canary", Profile: "public",
+			ReleaseFanout: []FanoutTarget{{Repo: "org/consumer", Type: "version-refs", Refs: []string{"version.txt"}}}}},
 	}
 	if err := expandProfiles(&cfg); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := json.Marshal(cfg.Repositories[1])
-	calls := map[string]int{}
-	if err := resolveSharedWorkflowRefs(&cfg, func(ref, path string) ([]byte, error) {
-		if ref != canarySharedRef {
-			t.Fatalf("read source at %q, want immutable canary revision", ref)
-		}
-		calls[path]++
+	var paths []string
+	if err := validateSharedWorkflowRefs(&cfg, func(_, path string) ([]byte, error) {
+		paths = append(paths, path)
 		return []byte(callableWorkflowYAML), nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, workflow := range cfg.Repositories[0].Workflows {
-		if !strings.HasPrefix(workflow.ReusableWorkflow, sharedWorkflowRepository) ||
-			!strings.HasSuffix(workflow.ReusableWorkflow, "@"+canarySharedRef) || workflow.PinToLatestChange {
-			t.Fatalf("workflow not pinned to verified public source: %+v", workflow)
-		}
-		if workflow.DestinationFile == fanoutWorkflowFile && workflow.Secrets["token"] != "ORG_PROJECT_PAT" {
-			t.Fatal("dispatch token mapping changed")
-		}
+	if len(paths) != 1 || paths[0] != ".github/workflows/reuseable-go-test.yml" {
+		t.Fatalf("unexpected public sources: %v", paths)
 	}
-	if len(calls) != 2 || calls[".github/workflows/reuseable-release-dispatch.yml"] != 1 {
-		t.Fatalf("injected fanout was not verified: %v", calls)
-	}
-	after, _ := json.Marshal(cfg.Repositories[1])
-	if string(before) != string(after) {
-		t.Fatal("unselected repository changed")
+	for _, wf := range cfg.Repositories[0].Workflows {
+		if wf.DestinationFile == fanoutWorkflowFile && wf.ReusableWorkflow != "blinklabs-io/actions/.github/workflows/reuseable-release-dispatch.yml@"+cfg.ReleaseFanoutDispatchRef {
+			t.Fatal("explicit public source changed default fanout source")
+		}
 	}
 }
 
-func TestSharedWorkflowRefsFailBeforeChangingConfig(t *testing.T) {
+func TestSharedWorkflowRefsRejectInvalidSources(t *testing.T) {
 	for _, test := range []struct {
-		name, ref, second, content string
-		readError                  bool
+		name, source, content string
+		pin, readError        bool
 	}{
-		{name: "mutable ref", ref: "main"},
-		{name: "uppercase ref", ref: strings.Repeat("A", 40)},
-		{name: "missing ref", ref: canarySharedRef, second: "reuseable-other.yml"},
-		{name: "escaping path", ref: canarySharedRef, second: "../reuseable-other.yml@main"},
-		{name: "missing source", ref: canarySharedRef, second: "reuseable-other.yml@main", readError: true},
-		{name: "not callable", ref: canarySharedRef, second: "reuseable-other.yml@main", content: "on: push\n"},
-		{name: "invalid YAML", ref: canarySharedRef, second: "reuseable-other.yml@main", content: "on: [\n"},
+		{name: "empty source", source: sharedWorkflowRepository},
+		{name: "mutable ref", source: sharedWorkflowRepository + ".github/workflows/check.yml@main"},
+		{name: "uppercase ref", source: sharedWorkflowRepository + ".github/workflows/check.yml@" + strings.Repeat("A", 40)},
+		{name: "missing ref", source: sharedWorkflowRepository + ".github/workflows/check.yml"},
+		{name: "escaping path", source: sharedWorkflowRepository + ".github/workflows/../check.yml@" + canarySharedRef},
+		{name: "missing source", readError: true},
+		{name: "not callable", content: "on: push\n"},
+		{name: "invalid YAML", content: "on: [\n"},
+		{name: "local pin resolution", pin: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg := Config{Repositories: []RepoConfig{{SharedActionsRef: test.ref, Workflows: []WorkflowConfig{
-				{ReusableWorkflow: "blinklabs-io/actions/.github/workflows/reuseable-go-test.yml@main", PinToLatestChange: true},
-				{ReusableWorkflow: "blinklabs-io/actions/.github/workflows/" + test.second},
+			if test.source == "" {
+				test.source = sharedWorkflowRepository + ".github/workflows/check.yml@" + canarySharedRef
+			}
+			cfg := Config{Repositories: []RepoConfig{{Workflows: []WorkflowConfig{
+				{ReusableWorkflow: sharedWorkflowRepository + ".github/workflows/reuseable-go-test.yml@" + canarySharedRef},
+				{ReusableWorkflow: test.source, PinToLatestChange: test.pin},
 			}}}}
 			before, _ := json.Marshal(cfg)
-			err := resolveSharedWorkflowRefs(&cfg, func(_ string, path string) ([]byte, error) {
-				if path != ".github/workflows/reuseable-go-test.yml" {
-					if test.readError {
-						return nil, errors.New("source not found")
-					}
-					return []byte(test.content), nil
+			err := validateSharedWorkflowRefs(&cfg, func(_ string, path string) ([]byte, error) {
+				if path == ".github/workflows/reuseable-go-test.yml" {
+					return []byte(callableWorkflowYAML), nil
 				}
-				return []byte(callableWorkflowYAML), nil
+				if test.readError {
+					return nil, errors.New("source not found")
+				}
+				return []byte(test.content), nil
 			})
 			if err == nil {
-				t.Fatal("invalid public workflow source accepted")
+				t.Fatal("invalid public source accepted")
 			}
 			after, _ := json.Marshal(cfg)
 			if string(before) != string(after) {
-				t.Fatal("invalid source left partial configuration changes")
+				t.Fatal("invalid source changed configuration")
 			}
 		})
 	}
@@ -165,35 +167,36 @@ func TestFetchSharedWorkflowUsesImmutablePublicSource(t *testing.T) {
 
 func TestSharedCanaryRenderingPreservesLiveContracts(t *testing.T) {
 	cfg := loadRealConfig(t)
-	before := make([]string, len(cfg.Repositories))
-	for i, repo := range cfg.Repositories {
-		data, err := json.Marshal(repo)
-		if err != nil {
-			t.Fatal(err)
-		}
-		before[i] = string(data)
-	}
-	if err := resolveSharedWorkflowRefs(&cfg, func(string, string) ([]byte, error) {
+	if err := validateSharedWorkflowRefs(&cfg, func(string, string) ([]byte, error) {
 		return []byte(callableWorkflowYAML), nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	selected := 0
-	for i, repo := range cfg.Repositories {
-		if repo.SharedActionsRef == "" {
-			after, err := json.Marshal(repo)
-			if err != nil {
-				t.Fatal(err)
+	for _, repo := range cfg.Repositories {
+		isCanary := repo.Name == "blinklabs-io/go-bip39" || repo.Name == "blinklabs-io/adder"
+		publicCalls := 0
+		for _, wf := range repo.Workflows {
+			if strings.HasPrefix(wf.ReusableWorkflow, sharedWorkflowRepository) {
+				publicCalls++
+				if !isCanary || !strings.HasSuffix(wf.ReusableWorkflow, "@"+canarySharedRef) {
+					t.Fatalf("unexpected public source for %s: %s", repo.Name, wf.ReusableWorkflow)
+				}
+			} else if isCanary {
+				t.Fatalf("canary %s still uses %s", repo.Name, wf.ReusableWorkflow)
 			}
-			if string(after) != before[i] {
-				t.Fatalf("non-canary repository %s changed", repo.Name)
-			}
+		}
+		if !isCanary {
 			continue
 		}
-		selected++
-		if (repo.Name != "blinklabs-io/go-bip39" && repo.Name != "blinklabs-io/adder") || repo.SharedActionsRef != canarySharedRef {
-			t.Fatalf("unexpected rollout target %s at %s", repo.Name, repo.SharedActionsRef)
+		wantCalls := 3
+		if repo.Name == "blinklabs-io/adder" {
+			wantCalls = 5
 		}
+		if publicCalls != wantCalls {
+			t.Fatalf("%s has %d public calls, want %d", repo.Name, publicCalls, wantCalls)
+		}
+		selected++
 		standalone, pipelines := groupPipelines(repo.Workflows)
 		outputs := map[string][]byte{}
 		wrapper, err := newWorkflowTemplate(t)

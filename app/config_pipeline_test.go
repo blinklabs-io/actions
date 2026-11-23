@@ -315,8 +315,8 @@ func TestConfiguredConventionalCommitsPermissions(t *testing.T) {
 
 	check := func(repo string, workflow WorkflowConfig, workflows []WorkflowConfig) {
 		t.Helper()
-		const prefix = "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@"
-		if !strings.HasPrefix(workflow.ReusableWorkflow, prefix) || len(workflow.ReusableWorkflow) == len(prefix) {
+		path, ref, ok := strings.Cut(workflow.ReusableWorkflow, "@")
+		if !ok || ref == "" || (path != "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml" && path != "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml") {
 			t.Errorf("%s: unexpected conventional commits workflow %q", repo, workflow.ReusableWorkflow)
 			return
 		}

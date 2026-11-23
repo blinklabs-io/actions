@@ -15,47 +15,28 @@ const sharedWorkflowRepository = "blinklabs-io/shared-actions/"
 
 var reusableWorkflowPath = regexp.MustCompile(`^\.github/workflows/[A-Za-z0-9_-]+\.ya?ml$`)
 
-// resolveSharedWorkflowRefs runs after profile expansion and fanout injection.
-// All public sources are verified before changing any in-memory workflow refs.
-func resolveSharedWorkflowRefs(cfg *Config, read func(ref, path string) ([]byte, error)) error {
-	type replacement struct {
-		repository, workflow int
-		ref                  string
-	}
-	var replacements []replacement
+// validateSharedWorkflowRefs verifies explicitly configured public sources
+// before reconciliation. Rendering preserves each configured source verbatim.
+func validateSharedWorkflowRefs(cfg *Config, read func(ref, path string) ([]byte, error)) error {
 	verified := make(map[string]bool)
-	for i := range cfg.Repositories {
-		repo := &cfg.Repositories[i]
-		if repo.SharedActionsRef == "" {
-			continue
-		}
-		if !commitSHAPattern.MatchString(repo.SharedActionsRef) {
-			return errors.New("shared_actions_ref must be a full lowercase commit SHA")
-		}
-		for j := range repo.Workflows {
-			workflow := &repo.Workflows[j]
-			var source string
-			matched := false
-			for _, prefix := range []string{"blinklabs-io/actions/", sharedWorkflowRepository} {
-				if strings.HasPrefix(workflow.ReusableWorkflow, prefix) {
-					source = strings.TrimPrefix(workflow.ReusableWorkflow, prefix)
-					matched = true
-					break
-				}
-			}
-			if !matched {
+	for _, repo := range cfg.Repositories {
+		for _, workflow := range repo.Workflows {
+			if !strings.HasPrefix(workflow.ReusableWorkflow, sharedWorkflowRepository) {
 				continue
 			}
-			path, oldRef, ok := strings.Cut(source, "@")
-			if !ok || oldRef == "" || strings.Contains(oldRef, "@") || !reusableWorkflowPath.MatchString(path) {
+			path, ref, ok := strings.Cut(strings.TrimPrefix(workflow.ReusableWorkflow, sharedWorkflowRepository), "@")
+			if !ok || !commitSHAPattern.MatchString(ref) || !reusableWorkflowPath.MatchString(path) {
 				return errors.New("invalid reusable workflow path or reference")
 			}
-			key := repo.SharedActionsRef + ":" + path
+			if workflow.PinToLatestChange {
+				return errors.New("public workflow sources require explicit immutable references")
+			}
+			key := ref + ":" + path
 			if !verified[key] {
 				if read == nil {
 					return errors.New("public workflow source reader required")
 				}
-				contents, err := read(repo.SharedActionsRef, path)
+				contents, err := read(ref, path)
 				if err != nil {
 					return fmt.Errorf("read public workflow source: %w", err)
 				}
@@ -70,14 +51,7 @@ func resolveSharedWorkflowRefs(cfg *Config, read func(ref, path string) ([]byte,
 				}
 				verified[key] = true
 			}
-			replacements = append(replacements, replacement{i, j, sharedWorkflowRepository + path + "@" + repo.SharedActionsRef})
 		}
-	}
-	for _, update := range replacements {
-		workflow := &cfg.Repositories[update.repository].Workflows[update.workflow]
-		workflow.ReusableWorkflow = update.ref
-		// The public revision was checked directly; local actions history cannot resolve it.
-		workflow.PinToLatestChange = false
 	}
 	return nil
 }

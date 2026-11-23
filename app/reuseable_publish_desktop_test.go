@@ -138,18 +138,8 @@ func TestAdderPublishUsesDesktopReusable(t *testing.T) {
 // commitSHARef matches a full 40-hex-character git commit SHA.
 var commitSHARef = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// wantDesktopReusableSHA is the reviewed commit adder's publish call must pin
-// to. It is advanced deliberately (in the same commit that bumps the caller)
-// whenever the reusable's release behavior changes, so the pin cannot silently
-// lag behind a security-relevant fix. This SHA also resolves the latest Go
-// patch release instead of accepting an older cached toolchain.
-//
-// It MUST be a commit reachable on main (the squash/merge commit from the PR
-// that introduced this reusable), NOT a feature-branch commit: this repo
-// squash-merges, so a branch commit is unreachable once the branch is deleted
-// and GitHub Actions then fails to resolve the reusable ("cannot find
-// workflow") before any job is created.
-const wantDesktopReusableSHA = "50f4ed21d4ead09f72ca3b696c4e607a8c2832be"
+// wantDesktopReusableSHA pins the public publisher to a reviewed default-branch commit.
+const wantDesktopReusableSHA = "7328ad66dec3a12676f5a9d1948fa74946712613"
 
 // TestAdderPublishPinnedToImmutableRef enforces the repository policy that a
 // secret-bearing release call must reference a frozen commit SHA, not a mutable

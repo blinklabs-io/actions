@@ -334,29 +334,21 @@ when it tries to update the protected files.
 
 ### Public reusable workflow sources
 
-Set `shared_actions_ref` on an individual repository to pin its governed calls
-to a reviewed full commit SHA in `blinklabs-io/shared-actions`:
+Set each workflow's existing `reusable_workflow` to its intended source. For
+example, a repository can call the public implementation directly:
 
 ```yaml
-repositories:
-  - name: blinklabs-io/go-bip39
-    shared_actions_ref: 7328ad66dec3a12676f5a9d1948fa74946712613
-    # Keep this repository's existing workflows or profile declaration.
+reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
 ```
 
-After profile expansion and release-fanout injection, the controller validates
-each selected public workflow at that revision and requires `workflow_call`.
-It then replaces actions/shared-actions implementation references, including
-`pin_to_latest_change` calls, with the verified public SHA. Other external
-workflow sources and unselected repositories retain their configured references.
-Fanout still targets the governance receiver in actions with its existing token
-mapping; the public implementation does not move that receiver.
+Public calls require a full commit SHA. Before reconciliation, the controller
+verifies anonymously that each referenced regular file exists and declares
+`workflow_call`. Other workflow sources remain as configured. An explicit
+`release-fanout.yml` entry can select the public dispatch workflow; repositories
+without one retain the existing generated dispatch source.
 
-This option selects workflow sources, not reconciliation scope. The sync still
-reconciles every configured repository, including settings and lifecycle state.
-Review generated-file drift before applying configuration changes. Existing
-caller commits, branches, tags, and reruns retain their old references until
-their supported execution paths are explicitly migrated or retained publicly.
+Changing a workflow source does not limit governance reconciliation to that
+repository. The normal sync still processes the full configuration.
 
 ### Controller environment
 
