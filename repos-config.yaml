@@ -91,7 +91,7 @@ profiles:
       - &docker-conventional-commits
         destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           pull_request:
         permissions:
@@ -100,7 +100,7 @@ profiles:
       - &docker-ci
         destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           pull_request:
             branches: [main]
@@ -113,7 +113,7 @@ profiles:
       - &docker-publish
         destination_file: publish.yml
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish-docker-multiarch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           push:
             branches: [main]
@@ -175,7 +175,7 @@ profiles:
       - *docker-publish
       - destination_file: release-fanout.yml
         workflow_name: "release-fanout"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-release-dispatch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-release-dispatch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           workflow_run:
             workflows: [publish]
