@@ -88,17 +88,19 @@ profiles:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
+      - &docker-conventional-commits
+        destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@main"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
         triggers:
           pull_request:
         permissions:
           contents: read
 
-      - destination_file: ci-docker.yml
+      - &docker-ci
+        destination_file: ci-docker.yml
         workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-ci-docker-multiarch.yml@main"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
         triggers:
           pull_request:
             branches: [main]
@@ -108,9 +110,10 @@ profiles:
         params:
           image-name: "blinklabs-io/${image}"
 
-      - destination_file: publish.yml
+      - &docker-publish
+        destination_file: publish.yml
         workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-publish-docker-multiarch.yml@d3aa875070b18acdcb31256100558d44c16b512f"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish-docker-multiarch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
         triggers:
           push:
             branches: [main]
@@ -136,7 +139,7 @@ profiles:
           ghcr-image: "blinklabs-io/${image}"
           description: "${description}"
 
-  docker-actions-only:
+  docker-actions-only: &docker-actions-only
     <<: *docker-standard
     dependabot: |
       version: 2
@@ -163,6 +166,28 @@ profiles:
             interval: weekly
           commit-message:
             prefix: "chore(deps):"
+
+  docker-standard-fanout:
+    <<: *docker-standard
+    workflows: &docker-fanout-workflows
+      - *docker-conventional-commits
+      - *docker-ci
+      - *docker-publish
+      - destination_file: release-fanout.yml
+        workflow_name: "release-fanout"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-release-dispatch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
+        triggers:
+          workflow_run:
+            workflows: [publish]
+            types: [completed]
+        permissions:
+          contents: read
+        secrets:
+          token: ORG_PROJECT_PAT
+
+  docker-actions-only-fanout:
+    <<: *docker-actions-only
+    workflows: *docker-fanout-workflows
 
   # repository-standard: baseline governance for repositories whose CI and
   # release workflows are still maintained locally. Release workflows are
@@ -878,7 +903,7 @@ repositories:
           go-version: "1.26.x"
           binary-target-matrix: '[{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"}]'
   - name: blinklabs-io/docker-cardano-configs
-    profile: docker-actions-only
+    profile: docker-actions-only-fanout
     vars:
       image: cardano-configs
       description: Configuration files for named Cardano blockchain networks
@@ -939,7 +964,7 @@ repositories:
         params:
           enable-trivy-scan: 'true'
   - name: blinklabs-io/docker-cardano-cli
-    profile: docker-standard
+    profile: docker-standard-fanout
     vars:
       image: cardano-cli
       description: Cardano CLI built from source on Debian
@@ -958,7 +983,7 @@ repositories:
         type: cardano-up-package
         package: cardano-cli
   - name: blinklabs-io/docker-cardano-node
-    profile: docker-standard
+    profile: docker-standard-fanout
     vars:
       image: cardano-node
       description: Cardano Node built from source on Debian
@@ -1015,7 +1040,7 @@ repositories:
             - config/**
             - .github/workflows/ci-docker.yml
   - name: blinklabs-io/docker-cardano-db-sync
-    profile: docker-standard
+    profile: docker-standard-fanout
     vars:
       image: cardano-db-sync
       description: Cardano DB-sync built from source on Debian
@@ -1155,7 +1180,7 @@ repositories:
       image: mithril-signer
       description: Mithril signer built from source on Debian
   - name: blinklabs-io/docker-mithril-client
-    profile: docker-standard
+    profile: docker-standard-fanout
     vars:
       image: mithril-client
       description: Mithril client built from source on Debian
