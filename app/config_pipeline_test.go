@@ -206,12 +206,6 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 		for _, wf := range source.Profiles[repo.Profile].Workflows {
 			if wf.DestinationFile == "release-fanout.yml" {
 				declared = true
-				if wf.Secrets["token"] != "ORG_PROJECT_PAT" {
-					t.Errorf("%s release-fanout.yml must map token to ORG_PROJECT_PAT", repo.Name)
-				}
-				if !reflect.DeepEqual(wf.Triggers, fanoutTriggers) {
-					t.Errorf("%s release-fanout.yml must run when publish completes", repo.Name)
-				}
 			}
 		}
 		if !fanoutProfiles[repo.Profile] || !declared {
@@ -244,6 +238,14 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 		}
 		for _, wf := range repo.Workflows {
 			if dockerCalls != nil {
+				if wf.DestinationFile == "release-fanout.yml" {
+					if wf.Secrets["token"] != "ORG_PROJECT_PAT" {
+						t.Errorf("%s release-fanout.yml must map token to ORG_PROJECT_PAT", repo.Name)
+					}
+					if !reflect.DeepEqual(wf.Triggers, fanoutTriggers) {
+						t.Errorf("%s release-fanout.yml must run when publish completes", repo.Name)
+					}
+				}
 				file, expected := dockerCalls[wf.DestinationFile]
 				want := sharedPrefix + file + "@" + dockerSHA
 				if !expected || wf.ReusableWorkflow != want {
