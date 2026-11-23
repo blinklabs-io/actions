@@ -1548,8 +1548,7 @@ repositories:
   #     upstream-config drift report) are repo-specific and have no shared
   #     equivalent.
   #   - release_fanout lists the repositories that get the new version pushed
-  #     on a published release; this entry has no explicit wrapper, so the
-  #     engine injects release-fanout.yml when release_fanout_dispatch_ref is set.
+  #     on a published release through the explicit public dispatch wrapper.
   #     dingo itself is not a target: its own files hold no version string
   #     the refs rules rewrite.
   - name: blinklabs-io/dingo
@@ -1563,11 +1562,22 @@ repositories:
       - destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
         # Dingo requires every reusable workflow reference to be immutable.
-        reusable_workflow: "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml@2b1bfffc6d04dad1fd40ca753e8d01a410de054f"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           pull_request:
         permissions:
           contents: read
+      - destination_file: release-fanout.yml
+        workflow_name: "release-fanout"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-release-dispatch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        triggers:
+          workflow_run:
+            types: [completed]
+            workflows: [publish]
+        permissions:
+          contents: read
+        secrets:
+          token: ORG_PROJECT_PAT
     release_fanout:
       - repo: blinklabs-io/ansible-cardano
         type: ansible-role

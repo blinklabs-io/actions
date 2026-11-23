@@ -458,6 +458,10 @@ func TestMigratedWorkflowsUseReviewedPublicRevision(t *testing.T) {
 			"publish.yml":              "reuseable-publish.yml",
 			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
 		},
+		"blinklabs-io/dingo": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"release-fanout.yml":       "reuseable-release-dispatch.yml",
+		},
 		"blinklabs-io/dingoctl": {
 			"conventional-commits.yml": "reuseable-conventional-commits.yml",
 			"go-test.yml":              "reuseable-go-test.yml",
@@ -620,6 +624,10 @@ func TestExplicitReleaseDispatchersUseReviewedContract(t *testing.T) {
 		}
 		delete(declared, repo.Name)
 		publishers := map[string]bool{}
+		if repo.Name == "blinklabs-io/dingo" {
+			// Dingo maintains publish.yml outside the generated configuration.
+			publishers["publish"] = true
+		}
 		addPublisher := func(body []byte, err error) {
 			t.Helper()
 			if err != nil {

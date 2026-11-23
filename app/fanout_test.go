@@ -87,7 +87,7 @@ func TestExpandProfilesRejectsInvalidFanoutRef(t *testing.T) {
 	}
 }
 
-func TestRealConfigWrapperIsPinnedOnceRefIsSet(t *testing.T) {
+func TestRealConfigExplicitWrapperPreservesPin(t *testing.T) {
 	const otherRef = "fedcba9876543210fedcba9876543210fedcba98"
 	for name, fileRef := range map[string]string{"unset": "", "preset": otherRef} {
 		t.Run(name, func(t *testing.T) {
@@ -99,8 +99,20 @@ func TestRealConfigWrapperIsPinnedOnceRefIsSet(t *testing.T) {
 			if err := yaml.Unmarshal(raw, &cfg); err != nil {
 				t.Fatal(err)
 			}
+			var expected WorkflowConfig
+			for _, repo := range cfg.Repositories {
+				if repo.Name == "blinklabs-io/dingo" {
+					for _, wf := range repo.Workflows {
+						if wf.DestinationFile == fanoutWorkflowFile {
+							expected = wf
+						}
+					}
+				}
+			}
+			if expected.ReusableWorkflow == "" {
+				t.Fatal("Dingo must declare its public release dispatcher")
+			}
 			cfg.ReleaseFanoutDispatchRef = fileRef
-			cfg.ReleaseFanoutDispatchRef = testFanoutRef
 			if err := expandProfiles(&cfg); err != nil {
 				t.Fatal(err)
 			}
@@ -117,8 +129,8 @@ func TestRealConfigWrapperIsPinnedOnceRefIsSet(t *testing.T) {
 				if len(wrappers) != 1 {
 					t.Fatalf("want exactly one %s, got %d", fanoutWorkflowFile, len(wrappers))
 				}
-				if !strings.HasSuffix(wrappers[0].ReusableWorkflow, "@"+testFanoutRef) || len(wrappers[0].Secrets) == 0 {
-					t.Fatalf("unexpected wrapper: %+v", wrappers[0])
+				if !reflect.DeepEqual(wrappers[0], expected) {
+					t.Fatalf("explicit wrapper changed with global ref %q: %+v", fileRef, wrappers[0])
 				}
 				return
 			}
