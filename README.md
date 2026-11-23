@@ -321,20 +321,16 @@ to administration, contents, and workflow write permissions plus organization
 Members read access for configured team grants. Pull request
 checks do not run the sync.
 
-The Helm Charts profile uses `pin_to_latest_change` for its publisher call.
-Governance renders the last `actions/main` commit that changed the reusable
-publisher as a full SHA in the generated caller. Merging a publisher change
-updates Helm Charts without a separate pin change, and unrelated Actions commits
-leave the caller unchanged. The publisher rejects changed charts whose versions
-did not increase and skips a retry when published chart contents already match.
+The Helm Charts and `repository-standard-pinned` profiles use reviewed,
+immutable workflow revisions from the public `blinklabs-io/shared-actions`
+repository. Update their sources in `repos-config.yaml`; governance generates
+the caller wrappers. Where default-branch rules require pull requests, merge
+downstream caller changes through reviewed pull requests before the
+corresponding configuration change. Include this repository's generated
+Conventional Commits wrapper in the same pull request as its configuration.
 
-The `actions` and `docker-template` repositories use the
-`repository-standard-pinned` profile for their Conventional Commits callers.
-Where their default branches enforce pull requests, governance cannot
-update those wrappers directly. After the reusable Conventional Commits workflow
-changes, update both wrappers to the latest workflow-changing commit through
-reviewed pull requests before starting the next sync. Otherwise the sync fails
-when it tries to update the protected files.
+The Helm publisher rejects changed charts whose versions did not increase and
+skips a retry when published chart contents already match.
 
 ## Configuration
 

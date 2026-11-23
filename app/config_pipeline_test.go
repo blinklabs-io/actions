@@ -306,7 +306,7 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 	}
 }
 
-func TestMigratedGoWorkflowsUseReviewedPublicRevision(t *testing.T) {
+func TestMigratedWorkflowsUseReviewedPublicRevision(t *testing.T) {
 	const (
 		workflowPrefix = "blinklabs-io/shared-actions/.github/workflows/"
 		workflowSHA    = "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
@@ -394,6 +394,94 @@ func TestMigratedGoWorkflowsUseReviewedPublicRevision(t *testing.T) {
 			"conventional-commits.yml": "reuseable-conventional-commits.yml",
 			"go-test.yml":              "reuseable-go-test.yml",
 		},
+		"blinklabs-io/docker-wireguard": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"go.yml":                   "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/adder-mobile": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"pr.yml":                   "reuseable-flutter.yml",
+			"publish.yml":              "reuseable-flutter.yml",
+		},
+		"blinklabs-io/bursa": {
+			"go-test.yml":              "reuseable-go-test.yml",
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+		},
+		"blinklabs-io/cardano-compose-stacks": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"check-versions.yml":       "reuseable-check-versions.yml",
+			"antithesis-go-test.yml":   "reuseable-go-test.yml",
+			"archive-demo-go-test.yml": "reuseable-go-test.yml",
+		},
+		"blinklabs-io/cardano-up": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+			"release-fanout.yml":       "reuseable-release-dispatch.yml",
+		},
+		"blinklabs-io/cardano-up-packages": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"package-validate.yml":     "reuseable-package-validate.yml",
+			"check-versions.yml":       "reuseable-check-versions-packages.yml",
+		},
+		"blinklabs-io/go-bip39": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/cdnsd": {
+			"go-test.yml":              "reuseable-go-test.yml",
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"govulncheck.yml":          "reuseable-govulncheck.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+			"release-fanout.yml":       "reuseable-release-dispatch.yml",
+		},
+		"blinklabs-io/bluefin": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+		},
+		"blinklabs-io/nview": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/vpn-indexer": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-publish.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+		},
+		"blinklabs-io/dingoctl": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"govulncheck.yml":          "reuseable-govulncheck.yml",
+		},
+		"blinklabs-io/helm-charts": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"publish-helm-charts.yml":  "reuseable-helm-publish.yml",
+		},
+		"blinklabs-io/buidler-fest-2026-signup": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/actions": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+		},
+		"blinklabs-io/docker-template": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+		},
+		"blinklabs-io/dingo-operator": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
 	}
 	data, err := os.ReadFile("../repos-config.yaml")
 	if err != nil {
@@ -403,20 +491,41 @@ func TestMigratedGoWorkflowsUseReviewedPublicRevision(t *testing.T) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	profileCalls := map[string]string{
-		"conventional-commits.yml": "reuseable-conventional-commits.yml",
-		"go-test.yml":              "reuseable-go-test.yml",
+	profileCalls := map[string]map[string]string{
+		"go-ci-standard": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+		},
+		"helm-charts-standard": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"publish-helm-charts.yml":  "reuseable-helm-publish.yml",
+		},
+		"go-ci-verified": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"repository-standard-pinned": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+		},
+		"go-ci-race-nilaway": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
 	}
-	for _, wf := range cfg.Profiles["go-ci-standard"].Workflows {
-		file, expected := profileCalls[wf.DestinationFile]
-		want := workflowPrefix + file + "@" + workflowSHA
-		if !expected || wf.ReusableWorkflow != want || wf.PinToLatestChange {
-			t.Errorf("go-ci-standard %s must use the reviewed public workflow %q, got %q", wf.DestinationFile, want, wf.ReusableWorkflow)
+	for name, calls := range profileCalls {
+		for _, wf := range cfg.Profiles[name].Workflows {
+			file, expected := calls[wf.DestinationFile]
+			want := workflowPrefix + file + "@" + workflowSHA
+			if !expected || wf.ReusableWorkflow != want || wf.PinToLatestChange {
+				t.Errorf("%s %s must use the reviewed public workflow %q, got %q", name, wf.DestinationFile, want, wf.ReusableWorkflow)
+			}
+			delete(calls, wf.DestinationFile)
 		}
-		delete(profileCalls, wf.DestinationFile)
-	}
-	if len(profileCalls) != 0 {
-		t.Errorf("go-ci-standard is missing public workflow calls: %v", profileCalls)
+		if len(calls) != 0 {
+			t.Errorf("%s is missing public workflow calls: %v", name, calls)
+		}
 	}
 	if err := expandProfiles(&cfg); err != nil {
 		t.Fatal(err)
@@ -469,7 +578,7 @@ func TestExplicitReleaseDispatchersUseReviewedContract(t *testing.T) {
 	if len(declared) == 0 {
 		t.Fatal("no explicit release dispatchers configured")
 	}
-	for _, name := range []string{"blinklabs-io/tx-submit-api", "blinklabs-io/tx-submit-api-mirror"} {
+	for _, name := range []string{"blinklabs-io/tx-submit-api", "blinklabs-io/tx-submit-api-mirror", "blinklabs-io/cardano-up", "blinklabs-io/cdnsd"} {
 		if !declared[name] {
 			t.Errorf("%s must declare its release dispatcher explicitly", name)
 		}
