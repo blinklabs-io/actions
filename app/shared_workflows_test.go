@@ -82,6 +82,8 @@ func TestSharedWorkflowRefsRejectInvalidSources(t *testing.T) {
 		{name: "empty source", source: sharedWorkflowRepository},
 		{name: "mutable ref", source: sharedWorkflowRepository + ".github/workflows/check.yml@main"},
 		{name: "uppercase ref", source: sharedWorkflowRepository + ".github/workflows/check.yml@" + strings.Repeat("A", 40)},
+		{name: "uppercase owner", source: "BlinkLabs-IO/shared-actions/.github/workflows/check.yml@main"},
+		{name: "uppercase repository", source: "blinklabs-io/Shared-Actions/.github/workflows/check.yml@" + canarySharedRef},
 		{name: "missing ref", source: sharedWorkflowRepository + ".github/workflows/check.yml"},
 		{name: "escaping path", source: sharedWorkflowRepository + ".github/workflows/../check.yml@" + canarySharedRef},
 		{name: "missing source", readError: true},
@@ -104,6 +106,9 @@ func TestSharedWorkflowRefsRejectInvalidSources(t *testing.T) {
 				}
 				if test.readError {
 					return nil, errors.New("source not found")
+				}
+				if test.content == "" {
+					return []byte(callableWorkflowYAML), nil
 				}
 				return []byte(test.content), nil
 			})

@@ -21,8 +21,11 @@ func validateSharedWorkflowRefs(cfg *Config, read func(ref, path string) ([]byte
 	verified := make(map[string]bool)
 	for _, repo := range cfg.Repositories {
 		for _, workflow := range repo.Workflows {
-			if !strings.HasPrefix(workflow.ReusableWorkflow, sharedWorkflowRepository) {
+			if !strings.HasPrefix(strings.ToLower(workflow.ReusableWorkflow), sharedWorkflowRepository) {
 				continue
+			}
+			if !strings.HasPrefix(workflow.ReusableWorkflow, sharedWorkflowRepository) {
+				return errors.New("public workflow source must use the canonical repository name")
 			}
 			path, ref, ok := strings.Cut(strings.TrimPrefix(workflow.ReusableWorkflow, sharedWorkflowRepository), "@")
 			if !ok || !commitSHAPattern.MatchString(ref) || !reusableWorkflowPath.MatchString(path) {
