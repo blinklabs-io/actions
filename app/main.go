@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -365,53 +366,6 @@ func main() {
 		fmt.Println("Governance lifecycle state is not protected")
 		os.Exit(1)
 	}
-	targets, workflowOnly, err := workflowSyncScope(os.Getenv("GITHUB_EVENT_NAME"),
-		os.Getenv("GOVERNANCE_TARGET_REPOSITORY"), os.Getenv("GOVERNANCE_PREVIOUS_REVISION"), revision,
-		configFile, func(previous string) ([]byte, error) {
-			if err := exec.Command("git", "merge-base", "--is-ancestor", previous, revision).Run(); err != nil {
-				return nil, err
-			}
-			changed, err := changedWorkflowRenderInputs(previous, revision)
-			if err != nil {
-				return nil, err
-			}
-			if changed {
-				return nil, errWorkflowInputsChanged
-			}
-			data, err := exec.Command("git", "show", previous+":repos-config.yaml").Output()
-			if err != nil {
-				return nil, errPreviousConfigUnavailable
-			}
-			return data, nil
-		})
-	if err != nil {
-		fmt.Println("Could not determine governance workflow scope")
-		os.Exit(1)
-	}
-	if workflowOnly {
-		report, summary, err := newGovernanceReport(revision)
-		if err != nil {
-			fmt.Println("Unable to open drift report output")
-			os.Exit(1)
-		}
-		publicClient := github.NewClient(nil)
-		var result error
-		if len(targets) > 0 {
-			result = syncSelectedWorkflows(ctx, client, cfg, targets, func(ref, path string) ([]byte, error) {
-				return fetchSharedWorkflow(ctx, publicClient, ref, path)
-			}, func() error { return controller.requireCurrentMain(ctx, client) }, report)
-		}
-		reportErr := report.render()
-		var closeErr error
-		if summary != nil {
-			closeErr = summary.Close()
-		}
-		if result != nil || reportErr != nil || closeErr != nil {
-			fmt.Println("Targeted workflow reconciliation failed")
-			os.Exit(1)
-		}
-		return
-	}
 	explicit := append([]RepoConfig(nil), cfg.Repositories...)
 	candidates := map[string]RepoConfig{}
 	if controller.state.Revision != "" {
@@ -444,13 +398,6 @@ func main() {
 		fmt.Println("Failed to expand governance profiles")
 		os.Exit(1)
 	}
-	publicClient := github.NewClient(nil)
-	if err := validateSharedWorkflowRefs(&cfg, func(ref, path string) ([]byte, error) {
-		return fetchSharedWorkflow(ctx, publicClient, ref, path)
-	}); err != nil {
-		fmt.Println("Invalid public workflow configuration")
-		os.Exit(1)
-	}
 	if err := resolvePinnedWorkflowRefs(&cfg, latestWorkflowChange); err != nil {
 		fmt.Println("Invalid pinned workflow configuration")
 		os.Exit(1)
@@ -459,11 +406,18 @@ func main() {
 		fmt.Println("Invalid Dependabot configuration")
 		os.Exit(1)
 	}
-	report, summary, err := newGovernanceReport(revision)
-	if err != nil {
-		fmt.Println("Unable to open drift report output")
-		os.Exit(1)
+	var reportOutput io.Writer = os.Stdout
+	var summary *os.File
+	if path := os.Getenv("GITHUB_STEP_SUMMARY"); path != "" {
+		summary, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			fmt.Println("Unable to open drift report output")
+			os.Exit(1)
+		}
+		reportOutput = io.MultiWriter(os.Stdout, summary)
 	}
+	report := newDriftReport(reportOutput)
+	report.configRevision = revision
 	var result error
 	var identities map[string]int64
 	var nextState lifecycleState
@@ -2405,11 +2359,6 @@ func flushBatch(
 	repositoryID := batch.repositoryID
 	if repositoryID == "" {
 		repositoryID = latestRepo.GetNodeID()
-	}
-	if guard, ok := ctx.Value(managedRefGuardKey{}).(func() error); ok {
-		if err := guard(); err != nil {
-			return errors.New("controller main changed before managed file publication")
-		}
 	}
 	if err := updateManagedRef(ctx, client, repositoryID, defaultBranch, baseCommitSHA, newCommit.GetSHA()); err != nil {
 		if report := reportFromContext(ctx); report != nil {

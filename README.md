@@ -332,41 +332,6 @@ when it tries to update the protected files.
 
 ## Configuration
 
-### Public reusable workflow sources
-
-Set each workflow's existing `reusable_workflow` to its intended source. For
-example, a repository can call the public implementation directly:
-
-```yaml
-reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
-```
-
-Public calls require a full commit SHA. Before reconciliation, the controller
-verifies anonymously that each referenced regular file exists and declares
-`workflow_call`. Other workflow sources remain as configured. An explicit
-`release-fanout.yml` entry can select the public dispatch workflow; repositories
-without one retain the existing generated dispatch source.
-
-A configuration push that changes only reusable workflow references syncs only
-workflow files in the affected repositories. The expanded triggers, inputs,
-secrets and permissions must otherwise match the previous revision. Changes to
-the Helm publisher or rendering templates retain full reconciliation. This path
-does not change settings, discovery, archival or applied lifecycle state.
-Profile references are compared using the expanded repository contracts. A
-profile change with discovery enabled retains full governance so marker-managed
-repositories are included. An unused profile reference change with discovery
-disabled requires no repository writes.
-Scheduled runs and manual runs without a target retain full governance.
-
-For a manual workflow-only sync, supply the optional `repository` input on the
-Central Governance Sync Engine workflow, using a configured `owner/repository`.
-The current-main, committed-configuration and authenticated-state checks still
-apply. Governance commits generated files directly to the target's default
-branch; ordinary repository CI and publishing triggers then run as configured.
-See GitHub's [manual workflow input reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch).
-
-### Controller environment
-
 The sync engine requires these environment variables:
 
 | Variable | Description |
