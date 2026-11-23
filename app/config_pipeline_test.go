@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -305,40 +306,263 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 	}
 }
 
-func TestTxpumpReusableWorkflowsUseSafeRefs(t *testing.T) {
+func TestMigratedGoWorkflowsUseReviewedPublicRevision(t *testing.T) {
 	const (
-		repoName       = "blinklabs-io/cardano-txpump"
-		workflowPrefix = "blinklabs-io/actions/.github/workflows/"
-		wantWorkflows  = 4
+		workflowPrefix = "blinklabs-io/shared-actions/.github/workflows/"
+		workflowSHA    = "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
 	)
-	cfg := loadRealConfig(t)
-	foundRepo := false
-	foundWorkflows := 0
+	wantCalls := map[string]map[string]string{
+		"blinklabs-io/tx-submit-api": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+			"release-fanout.yml":       "reuseable-release-dispatch.yml",
+		},
+		"blinklabs-io/tx-submit-api-mirror": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+			"release-fanout.yml":       "reuseable-release-dispatch.yml",
+		},
+		"blinklabs-io/txtop": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/cardano-txpump": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/shai": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/plutigo": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/gouroboros": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/ouroboros-mock": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"golangci-lint.yml":        "reuseable-golangci-lint.yml",
+			"nilaway.yml":              "reuseable-nilaway.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/bark": {
+			"go-test.yml":              "reuseable-go-test.yml",
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"govulncheck.yml":          "reuseable-govulncheck.yml",
+		},
+		"blinklabs-io/cardano-models": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/merkle-patricia-forestry": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/dmq-lib": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-module-release.yml",
+		},
+		"blinklabs-io/go-scls": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"go-test-cmd-scls.yml":     "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/dns-cli": {
+			"go-test.yml":              "reuseable-go-test.yml",
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+		},
+		"blinklabs-io/buidler-fest-2024-workshop": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+		},
+	}
+	data, err := os.ReadFile("../repos-config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	profileCalls := map[string]string{
+		"conventional-commits.yml": "reuseable-conventional-commits.yml",
+		"go-test.yml":              "reuseable-go-test.yml",
+	}
+	for _, wf := range cfg.Profiles["go-ci-standard"].Workflows {
+		file, expected := profileCalls[wf.DestinationFile]
+		want := workflowPrefix + file + "@" + workflowSHA
+		if !expected || wf.ReusableWorkflow != want || wf.PinToLatestChange {
+			t.Errorf("go-ci-standard %s must use the reviewed public workflow %q, got %q", wf.DestinationFile, want, wf.ReusableWorkflow)
+		}
+		delete(profileCalls, wf.DestinationFile)
+	}
+	if len(profileCalls) != 0 {
+		t.Errorf("go-ci-standard is missing public workflow calls: %v", profileCalls)
+	}
+	if err := expandProfiles(&cfg); err != nil {
+		t.Fatal(err)
+	}
 	for _, repo := range cfg.Repositories {
-		if repo.Name != repoName {
+		calls, migrated := wantCalls[repo.Name]
+		if !migrated {
 			continue
 		}
-		foundRepo = true
+		delete(wantCalls, repo.Name)
 		for _, wf := range repo.Workflows {
-			if !strings.HasPrefix(wf.ReusableWorkflow, workflowPrefix) {
-				continue
+			file, expected := calls[wf.DestinationFile]
+			want := workflowPrefix + file + "@" + workflowSHA
+			if !expected || wf.ReusableWorkflow != want || wf.PinToLatestChange {
+				t.Errorf("%s %s must use the reviewed public workflow %q, got %q", repo.Name, wf.DestinationFile, want, wf.ReusableWorkflow)
 			}
-			foundWorkflows++
-			_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
-			_, shaErr := hex.DecodeString(ref)
-			fullSHA := len(ref) == 40 && shaErr == nil && strings.ToLower(ref) == ref
-			publishWorkflow := strings.Contains(wf.ReusableWorkflow, "/reuseable-publish.yml@")
-			if !ok || (publishWorkflow && !fullSHA) || (!publishWorkflow && ref != "main") {
-				want := "@main for CI workflows and a full commit SHA for publish"
-				t.Errorf("%s %s uses reusable workflow ref %q, want %s", repo.Name, wf.DestinationFile, wf.ReusableWorkflow, want)
+			delete(calls, wf.DestinationFile)
+		}
+		if len(calls) != 0 {
+			t.Errorf("%s is missing expected public workflow calls: %v", repo.Name, calls)
+		}
+	}
+	if len(wantCalls) != 0 {
+		t.Errorf("migrated repositories missing from config: %v", wantCalls)
+	}
+}
+
+func TestExplicitReleaseDispatchersUseReviewedContract(t *testing.T) {
+	data, err := os.ReadFile("../repos-config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source Config
+	if err := yaml.Unmarshal(data, &source); err != nil {
+		t.Fatal(err)
+	}
+	isDispatcher := func(wf WorkflowConfig) bool {
+		return wf.DestinationFile == fanoutWorkflowFile || strings.Contains(wf.ReusableWorkflow, "/reuseable-release-dispatch.yml@")
+	}
+	declared := map[string]bool{}
+	for _, repo := range source.Repositories {
+		for _, workflows := range [][]WorkflowConfig{repo.Workflows, source.Profiles[repo.Profile].Workflows} {
+			for _, wf := range workflows {
+				if isDispatcher(wf) {
+					declared[repo.Name] = true
+				}
 			}
 		}
 	}
-	if !foundRepo {
-		t.Fatalf("repository %s not found in config", repoName)
+	if len(declared) == 0 {
+		t.Fatal("no explicit release dispatchers configured")
 	}
-	if foundWorkflows != wantWorkflows {
-		t.Errorf("txpump has %d actions reusable workflows, want %d", foundWorkflows, wantWorkflows)
+	for _, name := range []string{"blinklabs-io/tx-submit-api", "blinklabs-io/tx-submit-api-mirror"} {
+		if !declared[name] {
+			t.Errorf("%s must declare its release dispatcher explicitly", name)
+		}
+	}
+	wt, err := newWorkflowTemplate(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pt := newPipelineTemplate(t)
+	for _, repo := range loadRealConfig(t).Repositories {
+		if !declared[repo.Name] {
+			continue
+		}
+		delete(declared, repo.Name)
+		publishers := map[string]bool{}
+		addPublisher := func(body []byte, err error) {
+			t.Helper()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rendered struct {
+				Name string `yaml:"name"`
+			}
+			if err := yaml.Unmarshal(body, &rendered); err != nil {
+				t.Fatal(err)
+			}
+			if rendered.Name == "" {
+				t.Fatal("rendered publisher has no workflow name")
+			}
+			publishers[rendered.Name] = true
+		}
+		standalone, pipelines := groupPipelines(repo.Workflows)
+		for _, wf := range standalone {
+			if strings.Contains(wf.ReusableWorkflow, "/reuseable-publish") {
+				addPublisher(renderWorkflow(wt, wf))
+			}
+		}
+		for _, members := range pipelines {
+			for _, wf := range members {
+				if strings.Contains(wf.ReusableWorkflow, "/reuseable-publish") {
+					addPublisher(renderPipeline(pt, members))
+					break
+				}
+			}
+		}
+		if len(publishers) == 0 {
+			t.Fatalf("%s explicit dispatcher has no rendered publisher", repo.Name)
+		}
+		var names []string
+		for name := range publishers {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		var workflowNames []interface{}
+		for _, name := range names {
+			workflowNames = append(workflowNames, name)
+		}
+		wantTriggers := map[string]interface{}{
+			"workflow_run": map[string]interface{}{
+				"workflows": workflowNames,
+				"types":     []interface{}{"completed"},
+			},
+		}
+		found := false
+		for _, wf := range repo.Workflows {
+			if !isDispatcher(wf) {
+				continue
+			}
+			found = true
+			sha := "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+			if repo.Name == "blinklabs-io/adder" {
+				sha = wantDesktopReusableSHA
+			}
+			want := "blinklabs-io/shared-actions/.github/workflows/reuseable-release-dispatch.yml@" + sha
+			if wf.ReusableWorkflow != want || wf.PinToLatestChange {
+				t.Errorf("%s %s must use the reviewed public dispatcher %q, got %q", repo.Name, wf.DestinationFile, want, wf.ReusableWorkflow)
+			}
+			if !reflect.DeepEqual(wf.Secrets, map[string]string{"token": "ORG_PROJECT_PAT"}) {
+				t.Errorf("%s %s must map only token to ORG_PROJECT_PAT", repo.Name, wf.DestinationFile)
+			}
+			if !reflect.DeepEqual(wf.Permissions, map[string]string{"contents": "read"}) {
+				t.Errorf("%s %s must grant only contents: read", repo.Name, wf.DestinationFile)
+			}
+			if !reflect.DeepEqual(wf.Triggers, wantTriggers) {
+				t.Errorf("%s %s must run on workflow_run completed for rendered publishers %v", repo.Name, wf.DestinationFile, names)
+			}
+		}
+		if !found {
+			t.Errorf("%s is missing its explicit release dispatcher", repo.Name)
+		}
+	}
+	if len(declared) != 0 {
+		t.Errorf("explicit dispatcher repositories missing from expanded config: %v", declared)
 	}
 }
 
