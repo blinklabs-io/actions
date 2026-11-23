@@ -311,22 +311,89 @@ func TestMigratedGoWorkflowsUseReviewedPublicRevision(t *testing.T) {
 		workflowPrefix = "blinklabs-io/shared-actions/.github/workflows/"
 		workflowSHA    = "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
 	)
-	wantCounts := map[string]int{
-		"blinklabs-io/tx-submit-api":              5,
-		"blinklabs-io/tx-submit-api-mirror":       5,
-		"blinklabs-io/txtop":                      4,
-		"blinklabs-io/cardano-txpump":             4,
-		"blinklabs-io/shai":                       4,
-		"blinklabs-io/plutigo":                    3,
-		"blinklabs-io/gouroboros":                 3,
-		"blinklabs-io/ouroboros-mock":             4,
-		"blinklabs-io/bark":                       3,
-		"blinklabs-io/cardano-models":             3,
-		"blinklabs-io/merkle-patricia-forestry":   3,
-		"blinklabs-io/dmq-lib":                    3,
-		"blinklabs-io/go-scls":                    4,
-		"blinklabs-io/dns-cli":                    2,
-		"blinklabs-io/buidler-fest-2024-workshop": 2,
+	wantCalls := map[string]map[string]string{
+		"blinklabs-io/tx-submit-api": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+			"release-fanout.yml":       "reuseable-release-dispatch.yml",
+		},
+		"blinklabs-io/tx-submit-api-mirror": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+			"release-fanout.yml":       "reuseable-release-dispatch.yml",
+		},
+		"blinklabs-io/txtop": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/cardano-txpump": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/shai": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/plutigo": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/gouroboros": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/ouroboros-mock": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"golangci-lint.yml":        "reuseable-golangci-lint.yml",
+			"nilaway.yml":              "reuseable-nilaway.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/bark": {
+			"go-test.yml":              "reuseable-go-test.yml",
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"govulncheck.yml":          "reuseable-govulncheck.yml",
+		},
+		"blinklabs-io/cardano-models": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/merkle-patricia-forestry": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-library-release.yml",
+		},
+		"blinklabs-io/dmq-lib": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-go-module-release.yml",
+		},
+		"blinklabs-io/go-scls": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+			"go-test-cmd-scls.yml":     "reuseable-go-test.yml",
+			"publish.yml":              "reuseable-publish.yml",
+		},
+		"blinklabs-io/dns-cli": {
+			"go-test.yml":              "reuseable-go-test.yml",
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+		},
+		"blinklabs-io/buidler-fest-2024-workshop": {
+			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
+		},
 	}
 	data, err := os.ReadFile("../repos-config.yaml")
 	if err != nil {
@@ -355,23 +422,25 @@ func TestMigratedGoWorkflowsUseReviewedPublicRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, repo := range cfg.Repositories {
-		want, migrated := wantCounts[repo.Name]
+		calls, migrated := wantCalls[repo.Name]
 		if !migrated {
 			continue
 		}
-		delete(wantCounts, repo.Name)
-		if len(repo.Workflows) != want {
-			t.Errorf("%s has %d workflows, want %d", repo.Name, len(repo.Workflows), want)
-		}
+		delete(wantCalls, repo.Name)
 		for _, wf := range repo.Workflows {
-			path, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
-			if !ok || !strings.HasPrefix(path, workflowPrefix) || ref != workflowSHA || wf.PinToLatestChange {
-				t.Errorf("%s %s must use %s at reviewed revision %s, got %q", repo.Name, wf.DestinationFile, workflowPrefix, workflowSHA, wf.ReusableWorkflow)
+			file, expected := calls[wf.DestinationFile]
+			want := workflowPrefix + file + "@" + workflowSHA
+			if !expected || wf.ReusableWorkflow != want || wf.PinToLatestChange {
+				t.Errorf("%s %s must use the reviewed public workflow %q, got %q", repo.Name, wf.DestinationFile, want, wf.ReusableWorkflow)
 			}
+			delete(calls, wf.DestinationFile)
+		}
+		if len(calls) != 0 {
+			t.Errorf("%s is missing expected public workflow calls: %v", repo.Name, calls)
 		}
 	}
-	if len(wantCounts) != 0 {
-		t.Errorf("migrated repositories missing from config: %v", wantCounts)
+	if len(wantCalls) != 0 {
+		t.Errorf("migrated repositories missing from config: %v", wantCalls)
 	}
 }
 
