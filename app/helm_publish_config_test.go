@@ -14,9 +14,6 @@ import (
 const callableWorkflowYAML = "on:\n  workflow_call:\n"
 
 func TestHelmPublisherMigrationIsAtomic(t *testing.T) {
-	const actionsSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
-	t.Setenv("GITHUB_REF", "refs/heads/main")
 	legacyPublishers := strings.Fields(`
 publish-adder-helm-chart.yml
 publish-balius-helm-chart.yml
@@ -57,15 +54,6 @@ publish-vpn-indexer-helm-chart.yml
 publish-wireguard-helm-chart.yml
 `)
 	cfg := loadRealConfig(t)
-	if err := resolvePinnedWorkflowRefs(&cfg, func(path string) (string, []byte, error) {
-		if path != ".github/workflows/reuseable-helm-publish.yml" &&
-			path != ".github/workflows/reuseable-conventional-commits.yml" {
-			t.Fatalf("unexpected workflow path %q", path)
-		}
-		return actionsSHA, []byte(callableWorkflowYAML), nil
-	}); err != nil {
-		t.Fatal(err)
-	}
 	var workflows []WorkflowConfig
 	for _, repo := range cfg.Repositories {
 		if repo.Name == "blinklabs-io/helm-charts" {
@@ -151,38 +139,6 @@ publish-wireguard-helm-chart.yml
 			}
 		})
 	}
-}
-
-func TestHelmPublisherPinsLatestChange(t *testing.T) {
-	const actionsSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
-	t.Setenv("GITHUB_REF", "refs/heads/main")
-	cfg := loadRealConfig(t)
-	if err := resolvePinnedWorkflowRefs(&cfg, func(path string) (string, []byte, error) {
-		if path != ".github/workflows/reuseable-helm-publish.yml" &&
-			path != ".github/workflows/reuseable-conventional-commits.yml" {
-			t.Fatalf("unexpected workflow path %q", path)
-		}
-		return actionsSHA, []byte(callableWorkflowYAML), nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	for _, repo := range cfg.Repositories {
-		if repo.Name != "blinklabs-io/helm-charts" {
-			continue
-		}
-		for _, wf := range repo.Workflows {
-			if wf.DestinationFile != "publish-helm-charts.yml" {
-				continue
-			}
-			want := "blinklabs-io/actions/.github/workflows/reuseable-helm-publish.yml@" + actionsSHA
-			if wf.ReusableWorkflow != want {
-				t.Fatalf("publisher ref = %q, want %q", wf.ReusableWorkflow, want)
-			}
-			return
-		}
-	}
-	t.Fatal("Helm publisher workflow not configured")
 }
 
 func TestLatestWorkflowChangeIgnoresUnrelatedCommits(t *testing.T) {
