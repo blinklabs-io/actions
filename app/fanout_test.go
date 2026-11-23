@@ -99,8 +99,12 @@ func TestRealConfigExplicitWrapperPreservesPin(t *testing.T) {
 			if err := yaml.Unmarshal(raw, &cfg); err != nil {
 				t.Fatal(err)
 			}
+			var expectedConfig Config
+			if err := yaml.Unmarshal(raw, &expectedConfig); err != nil {
+				t.Fatal(err)
+			}
 			var expected WorkflowConfig
-			for _, repo := range cfg.Repositories {
+			for _, repo := range expectedConfig.Repositories {
 				if repo.Name == "blinklabs-io/dingo" {
 					for _, wf := range repo.Workflows {
 						if wf.DestinationFile == fanoutWorkflowFile {
