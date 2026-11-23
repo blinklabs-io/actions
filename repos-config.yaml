@@ -21,10 +21,10 @@ branch_protection_defaults: &branch_protection_defaults
   allow_deletions: false
   lock_branch: false
 
-# Commit SHA of actions main that generated release-fanout.yml wrappers pin
-# the dispatch workflow to; it must contain reuseable-release-dispatch.yml.
-# While unset no wrapper is generated; the central release-fanout workflow
-# runs through workflow_dispatch and its daily backstop.
+# Actions commit for automatically injected release-fanout.yml wrappers;
+# it must contain reuseable-release-dispatch.yml. Empty skips injection.
+# Explicit workflow and profile entries use their own reusable_workflow
+# references and remain enabled when this ref is empty.
 release_fanout_dispatch_ref: e0caeb743570431ebc4e26aeea54cdf8ab6a0a33
 
 # Upstream releases that update Blink Labs roles without managing upstream repos.
@@ -1525,8 +1525,8 @@ repositories:
   #     upstream-config drift report) are repo-specific and have no shared
   #     equivalent.
   #   - release_fanout lists the repositories that get the new version pushed
-  #     on a published release; the release-fanout.yml wrapper is generated
-  #     once release_fanout_dispatch_ref is set.
+  #     on a published release; this entry has no explicit wrapper, so the
+  #     engine injects release-fanout.yml when release_fanout_dispatch_ref is set.
   #     dingo itself is not a target: its own files hold no version string
   #     the refs rules rewrite.
   - name: blinklabs-io/dingo

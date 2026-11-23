@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/hex"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -186,6 +187,12 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 		"docker-standard-fanout":     true,
 		"docker-actions-only-fanout": true,
 	}
+	fanoutTriggers := map[string]interface{}{
+		"workflow_run": map[string]interface{}{
+			"workflows": []interface{}{"publish"},
+			"types":     []interface{}{"completed"},
+		},
+	}
 	dockerRepos := make(map[string]bool)
 	for _, repo := range source.Repositories {
 		if !strings.HasPrefix(repo.Profile, "docker-") {
@@ -199,6 +206,12 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 		for _, wf := range source.Profiles[repo.Profile].Workflows {
 			if wf.DestinationFile == "release-fanout.yml" {
 				declared = true
+				if wf.Secrets["token"] != "ORG_PROJECT_PAT" {
+					t.Errorf("%s release-fanout.yml must map token to ORG_PROJECT_PAT", repo.Name)
+				}
+				if !reflect.DeepEqual(wf.Triggers, fanoutTriggers) {
+					t.Errorf("%s release-fanout.yml must run when publish completes", repo.Name)
+				}
 			}
 		}
 		if !fanoutProfiles[repo.Profile] || !declared {
