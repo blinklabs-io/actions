@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/google/go-github/v60/github"
@@ -15,6 +16,14 @@ import (
 
 var errWorkflowInputsChanged = errors.New("workflow rendering inputs changed")
 var errPreviousConfigUnavailable = errors.New("previous configuration is unavailable")
+
+func changedWorkflowRenderInputs(previous, revision string) (bool, error) {
+	paths, err := exec.Command("git", "diff", "--no-renames", "--name-only", "-z", previous, revision, "--").Output()
+	if err != nil {
+		return false, err
+	}
+	return workflowRenderInputsChanged(strings.Split(string(paths), "\x00")), nil
+}
 
 func workflowRenderInputsChanged(paths []string) bool {
 	for _, path := range paths {

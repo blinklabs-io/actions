@@ -359,6 +359,7 @@ Central Governance Sync Engine workflow, using a configured `owner/repository`.
 The current-main, committed-configuration and authenticated-state checks still
 apply. Governance commits generated files directly to the target's default
 branch; ordinary repository CI and publishing triggers then run as configured.
+See GitHub's [manual workflow input reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch).
 
 ### Controller environment
 

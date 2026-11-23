@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -229,5 +230,50 @@ func TestSelectedWorkflowSyncStopsWhenControllerMainMoves(t *testing.T) {
 	}
 	if g.saw(http.MethodPost, "/graphql") {
 		t.Fatal("target main updated after controller main moved")
+	}
+}
+
+func TestWorkflowRenderInputsIncludesRenamedOriginalPaths(t *testing.T) {
+	t.Chdir(t.TempDir())
+	git := func(args ...string) string {
+		t.Helper()
+		prefix := []string{"-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}
+		out, err := exec.Command("git", append(prefix, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git fixture: %v: %s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	paths := []string{".github/workflows/reuseable-helm-publish.yml", "templates/source name.tmpl"}
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(path+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", ".")
+	git("commit", "-s", "-qm", "test: establish rendering inputs")
+	before := git("rev-parse", "HEAD")
+	if err := os.Mkdir("moved", 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i, path := range paths {
+		next := []string{"moved/helm.yml", "moved/template.tmpl"}[i]
+		if err := os.Rename(path, next); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", "-A")
+	git("commit", "-s", "-qm", "test: move rendering inputs")
+	after := git("rev-parse", "HEAD")
+	changed, err := changedWorkflowRenderInputs(before, after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("renamed rendering inputs did not retain full reconciliation")
 	}
 }

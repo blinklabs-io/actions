@@ -371,11 +371,11 @@ func main() {
 			if err := exec.Command("git", "merge-base", "--is-ancestor", previous, revision).Run(); err != nil {
 				return nil, err
 			}
-			paths, err := exec.Command("git", "diff", "--name-only", previous, revision).Output()
+			changed, err := changedWorkflowRenderInputs(previous, revision)
 			if err != nil {
 				return nil, err
 			}
-			if workflowRenderInputsChanged(strings.Split(strings.TrimSpace(string(paths)), "\n")) {
+			if changed {
 				return nil, errWorkflowInputsChanged
 			}
 			data, err := exec.Command("git", "show", previous+":repos-config.yaml").Output()
