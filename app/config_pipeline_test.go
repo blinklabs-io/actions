@@ -308,7 +308,8 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 func TestTxpumpReusableWorkflowsUseSafeRefs(t *testing.T) {
 	const (
 		repoName       = "blinklabs-io/cardano-txpump"
-		workflowPrefix = "blinklabs-io/actions/.github/workflows/"
+		workflowPrefix = "blinklabs-io/shared-actions/.github/workflows/"
+		workflowSHA    = "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
 		wantWorkflows  = 4
 	)
 	cfg := loadRealConfig(t)
@@ -325,12 +326,8 @@ func TestTxpumpReusableWorkflowsUseSafeRefs(t *testing.T) {
 			}
 			foundWorkflows++
 			_, ref, ok := strings.Cut(wf.ReusableWorkflow, "@")
-			_, shaErr := hex.DecodeString(ref)
-			fullSHA := len(ref) == 40 && shaErr == nil && strings.ToLower(ref) == ref
-			publishWorkflow := strings.Contains(wf.ReusableWorkflow, "/reuseable-publish.yml@")
-			if !ok || (publishWorkflow && !fullSHA) || (!publishWorkflow && ref != "main") {
-				want := "@main for CI workflows and a full commit SHA for publish"
-				t.Errorf("%s %s uses reusable workflow ref %q, want %s", repo.Name, wf.DestinationFile, wf.ReusableWorkflow, want)
+			if !ok || ref != workflowSHA {
+				t.Errorf("%s %s uses reusable workflow ref %q, want %s", repo.Name, wf.DestinationFile, ref, workflowSHA)
 			}
 		}
 	}
