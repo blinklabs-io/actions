@@ -162,6 +162,17 @@ func TestConfiguredPipelinePathFiltersMatch(t *testing.T) {
 }
 
 func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
+	const (
+		actionsPrefix = "blinklabs-io/actions/.github/workflows/"
+		sharedPrefix  = "blinklabs-io/shared-actions/.github/workflows/"
+	)
+	adderCalls := map[string]string{
+		"conventional-commits.yml": "reuseable-conventional-commits.yml",
+		"go-test.yml":              "reuseable-go-test.yml",
+		"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
+		"publish.yml":              "reuseable-publish-desktop.yml",
+		"release-fanout.yml":       "reuseable-release-dispatch.yml",
+	}
 	cfg := loadRealConfig(t)
 	t.Setenv("GITHUB_REPOSITORY", "blinklabs-io/actions")
 	t.Setenv("GITHUB_REF", "refs/heads/main")
@@ -173,10 +184,15 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 	found := 0
 	for _, repo := range cfg.Repositories {
 		for _, wf := range repo.Workflows {
-			if !strings.HasPrefix(
-				wf.ReusableWorkflow,
-				"blinklabs-io/actions/.github/workflows/",
-			) {
+			if repo.Name == "blinklabs-io/adder" {
+				file, expected := adderCalls[wf.DestinationFile]
+				want := sharedPrefix + file + "@" + wantDesktopReusableSHA
+				if !expected || wf.ReusableWorkflow != want {
+					t.Errorf("Adder %s must use the reviewed public workflow %q, got %q", wf.DestinationFile, want, wf.ReusableWorkflow)
+				}
+				delete(adderCalls, wf.DestinationFile)
+			}
+			if !strings.HasPrefix(wf.ReusableWorkflow, actionsPrefix) && !strings.HasPrefix(wf.ReusableWorkflow, sharedPrefix) {
 				continue
 			}
 			found++
@@ -208,6 +224,9 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 				)
 			}
 		}
+	}
+	if len(adderCalls) != 0 {
+		t.Errorf("Adder is missing expected public workflow calls: %v", adderCalls)
 	}
 	if found == 0 {
 		t.Fatal("no Actions reusable workflows found in config")
