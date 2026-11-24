@@ -316,16 +316,17 @@ profiles:
           nilaway-version: "latest"
           nilaway-include-pkgs: "github.com/blinklabs-io/dingo-operator"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
+      - <<: &go-service-publish
+          destination_file: publish.yml
+          pipeline: ci.yml
+          needs: [go-test]
+          if: github.event_name == 'push'
+          workflow_name: "publish"
+          reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         pipeline_name: CI
         job_id: publish
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers: *dingo-operator-ci-triggers
-        permissions:
+        permissions: &go-service-publish-permissions
           actions: write
           attestations: write
           checks: write
@@ -2350,45 +2351,23 @@ repositories:
   # version never actually built the arm64 platform (the `platforms:` line
   # was commented out with a `TODO: test multiple platforms` note).
   - name: blinklabs-io/nview
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: CI
         job_id: go-test
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
+          <<: *go-test-standard-params
           go-versions: '["1.26.x","1.27.x"]'
-          run-golangci-lint: "true"
           golangci-go-version: "1.26.x"
           check-format: "true"
-          run-nilaway: "true"
           nilaway-go-version: "1.26.x"
           nilaway-include-pkgs: "github.com/blinklabs-io/nview"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
@@ -2400,26 +2379,14 @@ repositories:
         params:
           image-name: "blinklabs-io/nview"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
+      - <<: *go-service-publish
         pipeline_name: ci
         job_id: publish
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: publish
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           push:
             branches: [main]
             tags: ['v*.*.*']
-        permissions:
-          actions: write
-          attestations: write
-          checks: write
-          contents: write
-          id-token: write
-          packages: write
-          statuses: write
+        permissions: *go-service-publish-permissions
         secrets:
           docker-password: DOCKER_PASSWORD
           maxmind-api-credentials: MAXMIND_API_CREDENTIALS
