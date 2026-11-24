@@ -20,6 +20,9 @@ const (
 )
 
 type dingoPRFixture struct {
+	ancestor                                string
+	ancestorBlobs                           map[string]string
+	mainBlobs                               map[string]string
 	branch, head, base                      string
 	number                                  int
 	proposed                                map[string]string
@@ -82,7 +85,26 @@ func (f *dingoPRFixture) client(t *testing.T) *github.Client {
 			if f.unrelated {
 				files = append(files, map[string]string{"filename": "go.mod", "status": "added"})
 			}
-			write(map[string]any{"merge_base_commit": map[string]string{"sha": f.base}, "files": files})
+			ancestor := f.ancestor
+			if ancestor == "" {
+				ancestor = f.base
+			}
+			write(map[string]any{"merge_base_commit": map[string]string{"sha": ancestor}, "files": files})
+		case req.Method == "GET" && strings.HasPrefix(path, "/contents/"):
+			blobs := f.mainBlobs
+			switch req.URL.Query().Get("ref") {
+			case f.base:
+			case f.ancestor:
+				blobs = f.ancestorBlobs
+			default:
+				t.Fatalf("unexpected content ref %s", req.URL)
+			}
+			sha, ok := blobs[strings.TrimPrefix(path, "/contents/")]
+			if !ok {
+				res.WriteHeader(404)
+				break
+			}
+			write(map[string]string{"type": "file", "sha": sha})
 		case req.Method == "GET" && strings.HasPrefix(path, "/git/blobs/"):
 			_, _ = io.WriteString(res, f.proposed[".github/workflows/"+strings.TrimPrefix(path, "/git/blobs/")])
 		case req.Method == "GET" && path == "/git/commits/"+f.base:
@@ -219,6 +241,22 @@ func TestDingoWorkflowPRLifecycle(t *testing.T) {
 	out, err = reconcileDingoTestBatch(t, f)
 	if err != nil || !strings.Contains(out, "- pending: 0") || f.opened != 1 || f.refs != 2 {
 		t.Fatal("matching main started another proposal")
+	}
+}
+
+func TestDingoWorkflowPRPartialConvergence(t *testing.T) {
+	f := &dingoPRFixture{base: "main-tip", branch: dingoInitialBranch, head: "reviewed", number: 6713,
+		proposed: map[string]string{testConventional: "cc", testFanout: "fanout"},
+		ancestor: "branch-point", ancestorBlobs: map[string]string{testConventional: "old-cc", testFanout: "old-fanout"},
+		mainBlobs: map[string]string{testConventional: "conventional-commits.yml", testFanout: "old-fanout"}}
+	op := fileOp{path: testFanout, content: []byte("fanout")}
+	out, err := reconcileDingoTestBatch(t, f, op)
+	if err != nil || f.head != "reviewed" || f.refs != 0 || !strings.Contains(out, "- pending: 1") {
+		t.Fatalf("partial convergence invalidated review: %v, %s", err, out)
+	}
+	f.mainBlobs[testConventional] = "another-blob"
+	if _, err := reconcileDingoTestBatch(t, f, op); err != nil || f.refs != 1 {
+		t.Fatalf("proposal would overwrite a different file on main: %v", err)
 	}
 }
 

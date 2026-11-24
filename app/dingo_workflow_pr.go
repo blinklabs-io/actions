@@ -71,15 +71,25 @@ func dingoBranchMatches(ctx context.Context, client *github.Client, base, head s
 	for _, op := range ops {
 		desired[op.path] = string(op.content)
 	}
-	matches := len(comparison.Files) == len(ops)
+	matches := true
 	for _, file := range comparison.Files {
 		path := file.GetFilename()
 		if !dingoWorkflowPath(path) || (file.GetPreviousFilename() != "" && !dingoWorkflowPath(file.GetPreviousFilename())) {
 			return false, errors.New("dingo workflow branch contains unrelated changes")
 		}
 		want, ok := desired[path]
-		if !ok || file.GetStatus() == "removed" || file.GetStatus() == "renamed" {
+		delete(desired, path)
+		if file.GetStatus() == "removed" || file.GetStatus() == "renamed" {
 			matches = false
+			continue
+		}
+		if !ok {
+			// A proposed file may have landed independently on main.
+			mainBlob, err := dingoFileSHA(ctx, client, base, path)
+			if err != nil {
+				return false, err
+			}
+			matches = matches && mainBlob != "" && mainBlob == file.GetSHA()
 			continue
 		}
 		data, _, err := client.Git.GetBlobRaw(ctx, dingoOwner, dingoRepo, file.GetSHA())
@@ -88,6 +98,7 @@ func dingoBranchMatches(ctx context.Context, client *github.Client, base, head s
 		}
 		matches = matches && string(data) == want
 	}
+	matches = matches && len(desired) == 0
 	// The same blob can still conflict if main changed that path since the
 	// branch forked. Refresh the PR from main only for such overlapping edits.
 	ancestor := comparison.GetMergeBaseCommit().GetSHA()
