@@ -1626,22 +1626,22 @@ repositories:
           nilaway-include-pkgs: "github.com/blinklabs-io/plutigo"
           nilaway-exclude-file-docstrings: "<nilaway skip stack-machine>"
 
-      - &go-library-tag-publish
-        destination_file: publish.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'push' && github.ref_type == 'tag'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-library-release.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          push:
-            tags: ['v*.*.*']
+      - <<: &go-library-tag-publish
+          destination_file: publish.yml
+          pipeline: ci.yml
+          needs: [go-test]
+          if: github.event_name == 'push' && github.ref_type == 'tag'
+          workflow_name: "publish"
+          reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-library-release.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+          triggers:
+            push:
+              tags: ['v*.*.*']
         # reuseable-go-library-release's publish-examples job statically
         # declares id-token/attestations write. GitHub validates a called
         # workflow's permission requirements at load time regardless of the
         # job's runtime if: gate, so the caller must grant the full set even
         # though plutigo leaves build-examples unset and never runs that job.
-        permissions:
+        permissions: &go-library-release-permissions
           contents: write
           id-token: write
           attestations: write
@@ -1805,7 +1805,8 @@ repositories:
         params:
           <<: *go-test-standard-params
           nilaway-include-pkgs: "github.com/blinklabs-io/cardano-models"
-      - *go-library-tag-publish
+      - <<: *go-library-tag-publish
+        permissions: *go-library-release-permissions
   - name: blinklabs-io/go-bip39
     <<: *repository-standard
     workflows:
@@ -1819,7 +1820,8 @@ repositories:
           <<: *go-test-standard-params
           check-format: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/go-bip39"
-      - *go-library-tag-publish
+      - <<: *go-library-tag-publish
+        permissions: *go-library-release-permissions
   - name: blinklabs-io/merkle-patricia-forestry
     settings:
       delete_branch_on_merge: true

@@ -241,6 +241,33 @@ func TestDingoOperatorGoCI(t *testing.T) {
 	t.Fatal("dingo-operator is missing from repos-config.yaml")
 }
 
+func TestTagOnlyLibraryPublishers(t *testing.T) {
+	libraries := map[string]bool{"blinklabs-io/cardano-models": true, "blinklabs-io/go-bip39": true}
+	for _, repo := range loadRealConfig(t).Repositories {
+		if !libraries[repo.Name] {
+			continue
+		}
+		delete(libraries, repo.Name)
+		wf := findWorkflow(t, repo.Workflows, "publish.yml")
+		t.Run(repo.Name, func(t *testing.T) {
+			if wf.If != "github.event_name == 'push' && github.ref_type == 'tag'" ||
+				!reflect.DeepEqual(wf.Needs, []string{"go-test"}) {
+				t.Errorf("publish gate: if = %q, needs = %v", wf.If, wf.Needs)
+			}
+			if len(wf.Secrets) != 0 || len(wf.Params) != 0 {
+				t.Errorf("unexpected publish secrets or inputs: %v, %v", wf.Secrets, wf.Params)
+			}
+			want := map[string]string{"contents": "write", "id-token": "write", "attestations": "write"}
+			if !reflect.DeepEqual(wf.Permissions, want) {
+				t.Errorf("publish permissions = %v, want %v", wf.Permissions, want)
+			}
+		})
+	}
+	for name := range libraries {
+		t.Errorf("%s missing from repos-config.yaml", name)
+	}
+}
+
 // TestConfiguredPipelinesGate checks that every configured pipeline actually
 // stages something. Grouping workflows without a needs edge changes nothing
 // that matters: GitHub's concurrency limit counts jobs, not workflow runs, so
