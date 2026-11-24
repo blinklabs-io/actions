@@ -260,6 +260,23 @@ func TestDingoWorkflowPRPartialConvergence(t *testing.T) {
 	}
 }
 
+func TestDingoWorkflowPRRefreshesOverlappingMainEdit(t *testing.T) {
+	f := &dingoPRFixture{
+		branch: dingoInitialBranch, number: 6713, head: "reviewed",
+		ancestor: "branch-point", ancestorBlobs: map[string]string{testFanout: "original-fanout"},
+		base: "main-tip", mainBlobs: map[string]string{testFanout: "edited-fanout"},
+		proposed: map[string]string{testFanout: "desired caller"},
+	}
+	op := fileOp{path: testFanout, content: []byte("desired caller")}
+	if _, err := reconcileDingoTestBatch(t, f, op); err != nil {
+		t.Fatal(err)
+	}
+	if f.head == "reviewed" || f.refs != 1 || f.opened != 0 || f.proposed[testFanout] != string(op.content) {
+		t.Fatalf("overlapping main edit must refresh the existing proposal: head=%q, ref updates=%d, new PRs=%d, caller=%q",
+			f.head, f.refs, f.opened, f.proposed[testFanout])
+	}
+}
+
 func TestDingoWorkflowPRClosedDuringSync(t *testing.T) {
 	f := &dingoPRFixture{base: "main-tip", branch: dingoInitialBranch, head: "existing", number: 6713,
 		proposed: map[string]string{testConventional: "cc"}, closedDuringSync: true}
