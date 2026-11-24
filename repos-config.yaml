@@ -284,7 +284,7 @@ profiles:
         destination_file: go-test.yml
         supersedes: [golangci-lint.yml, nilaway.yml]
         workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        reusable_workflow: &go-test-caller "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers: &go-ci-check-triggers
           pull_request:
           push:
@@ -1532,20 +1532,9 @@ repositories:
   # reusable CI workflows scoped to their paths. Its weekly image-version
   # checker uses the shared reusable workflow and the built-in github.token.
   - name: blinklabs-io/cardano-compose-stacks
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: check-versions.yml
         workflow_name: "check-versions"
@@ -1560,7 +1549,7 @@ repositories:
 
       - destination_file: antithesis-go-test.yml
         workflow_name: "Antithesis Go tests"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        reusable_workflow: *go-test-caller
         triggers:
           pull_request:
             paths:
@@ -1570,15 +1559,14 @@ repositories:
             paths:
               - antithesis/dingo-praos/**
         params:
+          <<: *go-test-standard-params
           working-directory: "antithesis/dingo-praos"
           test-flags: "-race"
-          run-golangci-lint: "true"
-          run-nilaway: "true"
           nilaway-version: "latest"
 
       - destination_file: archive-demo-go-test.yml
         workflow_name: "Archive demo Go checks"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        reusable_workflow: *go-test-caller
         triggers:
           pull_request:
             paths:
@@ -1588,11 +1576,10 @@ repositories:
             paths:
               - dingo-archive-demo/**
         params:
+          <<: *go-test-standard-params
           working-directory: "dingo-archive-demo"
           # Compile the Docker-backed suite without starting its local devnet.
           test-flags: "-race -tags=archive_demo -run=^$"
-          run-golangci-lint: "true"
-          run-nilaway: "true"
           nilaway-version: "latest"
 
   # cardano-up is a Go command line utility for managing Cardano services for
