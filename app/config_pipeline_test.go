@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"reflect"
 	"sort"
@@ -133,10 +134,42 @@ func TestBursaPullRequestGoChecks(t *testing.T) {
 			"extra-test-packages":           "./internal/signer/...",
 			"extra-test-flags":              "-tags pkcs11 -race",
 			"additional-module-directories": "openapi",
+			"test-env":                      "BURSA_TEST_POSTGRES_DSN=postgres://postgres:postgres@127.0.0.1:5432/bursa_test?sslmode=disable",
 		} {
 			if got := workflow.Params[key]; got != want {
 				t.Errorf("go-test.yml %s = %q, want %q", key, got, want)
 			}
+		}
+
+		var services map[string]struct {
+			Image   string
+			Env     map[string]string
+			Ports   []string
+			Options string
+		}
+		if err := json.Unmarshal([]byte(workflow.Params["services"]), &services); err != nil {
+			t.Fatalf("go-test.yml services: %v", err)
+		}
+		pg := services["postgres"]
+		if pg.Image != "postgres:16" || pg.Env["POSTGRES_DB"] != "bursa_test" ||
+			pg.Env["POSTGRES_USER"] != "postgres" || pg.Env["POSTGRES_PASSWORD"] != "postgres" ||
+			!reflect.DeepEqual(pg.Ports, []string{"5432:5432"}) ||
+			!strings.Contains(pg.Options, `--health-cmd "pg_isready -U postgres -d bursa_test"`) {
+			t.Error("go-test.yml postgres service must provide postgres:16 with the bursa_test database, test credentials, port 5432 and readiness check")
+		}
+
+		var targets []struct{ OS, Arch string }
+		if err := json.Unmarshal([]byte(workflow.Params["cross-build-targets"]), &targets); err != nil {
+			t.Fatalf("go-test.yml cross-build-targets: %v", err)
+		}
+		var platforms []string
+		for _, target := range targets {
+			platforms = append(platforms, target.OS+"/"+target.Arch)
+		}
+		sort.Strings(platforms)
+		wantPlatforms := []string{"darwin/arm64", "freebsd/amd64", "freebsd/arm64", "linux/amd64", "linux/arm64", "windows/amd64", "windows/arm64"}
+		if !reflect.DeepEqual(platforms, wantPlatforms) {
+			t.Errorf("go-test.yml cross-build-targets = %v, want %v", platforms, wantPlatforms)
 		}
 		return
 	}
