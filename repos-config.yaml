@@ -219,13 +219,8 @@ profiles:
   helm-charts-standard:
     <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
+      - <<: *conventional-commits
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
       - destination_file: publish-helm-charts.yml
         workflow_name: "Publish Helm Charts"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-helm-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
