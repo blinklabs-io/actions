@@ -1906,6 +1906,7 @@ repositories:
           contents: write
           id-token: write
           attestations: write
+  # Benchmarks, fuzzing and cardano-node integration use repository-specific workflows.
   - name: blinklabs-io/gouroboros
     profile: go-library-release
     overrides:
