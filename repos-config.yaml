@@ -88,7 +88,7 @@ profiles:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - &docker-conventional-commits
+      - &conventional-commits
         destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
@@ -170,7 +170,7 @@ profiles:
   docker-standard-fanout:
     <<: *docker-standard
     workflows: &docker-fanout-workflows
-      - *docker-conventional-commits
+      - *conventional-commits
       - *docker-ci
       - *docker-publish
       - destination_file: release-fanout.yml
@@ -200,13 +200,7 @@ profiles:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
   # Repositories requiring reviewed workflow changes pin this reusable call.
   repository-standard-pinned:
@@ -279,6 +273,43 @@ profiles:
         permissions:
           contents: read
           packages: write
+
+  go-library-release:
+    <<: *repository-standard
+    workflows:
+      - *conventional-commits
+
+      - destination_file: go-test.yml
+        pipeline: ci.yml
+        supersedes: [golangci-lint.yml, nilaway.yml]
+        workflow_name: "go-test"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        # No push to main: it re-ran the suite the pull request had just
+        # passed. A tag still runs it, because publish needs it and the tagged
+        # commit is otherwise never tested as itself.
+        triggers:
+          pull_request:
+          push:
+            tags: ['v*']
+        permissions:
+          contents: read
+        params:
+          run-golangci-lint: "true"
+          run-nilaway: "true"
+
+      - destination_file: publish.yml
+        pipeline: ci.yml
+        needs: [go-test]
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        workflow_name: "publish"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-library-release.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        triggers:
+          push:
+            tags: ['v*.*.*']
+        permissions:
+          contents: write
+          id-token: write
+          attestations: write
 
   go-ci-standard:
     settings:
@@ -1875,63 +1906,18 @@ repositories:
           contents: write
           id-token: write
           attestations: write
-  # gouroboros is a Go library (the Ouroboros protocol). go-test.yml runs a
-  # custom GOARCH matrix (amd64/386) with git submodules. benchmark.yml and
-  # fuzz.yml remain repository-specific; the other checks map to the shared
-  # reusable workflows.
   - name: blinklabs-io/gouroboros
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
-
-      - destination_file: go-test.yml
-        pipeline: ci.yml
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        # No push to main: it re-ran the suite the pull request had just
-        # passed. A tag still runs it, because publish needs it and the tagged
-        # commit is otherwise never tested as itself.
-        triggers:
-          pull_request:
-          push:
-            tags: ['v*']
+    profile: go-library-release
+    overrides:
+      go-test.yml:
         concurrency:
           group: '${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}'
           cancel_in_progress: "true"
-        permissions:
-          contents: read
         params:
           go-arches: '["amd64","386"]'
           submodules: "true"
-          run-golangci-lint: "true"
-          run-nilaway: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/gouroboros"
-
-      - destination_file: publish.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'push' && github.ref_type == 'tag'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-library-release.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          push:
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          id-token: write
-          attestations: write
+      publish.yml:
         params:
           submodules: "true"
   # ouroboros-mock is a Go library. go-test.yml (git submodules plus a separate
