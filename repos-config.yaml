@@ -88,7 +88,7 @@ profiles:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - &docker-conventional-commits
+      - &conventional-commits
         destination_file: conventional-commits.yml
         workflow_name: "Conventional Commits"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
@@ -170,7 +170,7 @@ profiles:
   docker-standard-fanout:
     <<: *docker-standard
     workflows: &docker-fanout-workflows
-      - *docker-conventional-commits
+      - *conventional-commits
       - *docker-ci
       - *docker-publish
       - destination_file: release-fanout.yml
@@ -288,15 +288,10 @@ profiles:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - &go-test-standard
+        destination_file: go-test.yml
         supersedes: [golangci-lint.yml, nilaway.yml]
         workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
@@ -305,7 +300,7 @@ profiles:
           push:
             branches: [main]
             tags: ['v*']
-        params:
+        params: &go-test-standard-params
           run-golangci-lint: "true"
           run-nilaway: "true"
 
@@ -1804,27 +1799,13 @@ repositories:
   # coverage; nilaway skips a stack-machine docstring. benchmark.yml is repository-specific
   # and remains hand-maintained.
   - name: blinklabs-io/plutigo
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           workflow_dispatch:
           pull_request:
@@ -1832,10 +1813,9 @@ repositories:
             branches: [main]
             tags: ['v*']
         params:
+          <<: *go-test-standard-params
           submodules: "true"
           test-flags: "-race"
-          run-golangci-lint: "true"
-          run-nilaway: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/plutigo"
           nilaway-exclude-file-docstrings: "<nilaway skip stack-machine>"
 

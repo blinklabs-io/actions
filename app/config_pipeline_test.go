@@ -143,6 +143,37 @@ func TestBursaPullRequestGoChecks(t *testing.T) {
 	t.Fatal("bursa is missing from repos-config.yaml")
 }
 
+func TestPlutigoGoWorkflowInputs(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/plutigo" {
+			continue
+		}
+		workflow := findWorkflow(t, repo.Workflows, "go-test.yml")
+		wantTriggers := map[string]interface{}{
+			"workflow_dispatch": nil,
+			"pull_request":      nil,
+			"push":              map[string]interface{}{"branches": []interface{}{"main"}, "tags": []interface{}{"v*"}},
+		}
+		if !reflect.DeepEqual(workflow.Triggers, wantTriggers) {
+			t.Errorf("go-test.yml triggers = %v, want %v", workflow.Triggers, wantTriggers)
+		}
+		for key, want := range map[string]string{
+			"run-golangci-lint":               "true",
+			"run-nilaway":                     "true",
+			"submodules":                      "true",
+			"test-flags":                      "-race",
+			"nilaway-include-pkgs":            "github.com/blinklabs-io/plutigo",
+			"nilaway-exclude-file-docstrings": "<nilaway skip stack-machine>",
+		} {
+			if got := workflow.Params[key]; got != want {
+				t.Errorf("go-test.yml %s = %q, want %q", key, got, want)
+			}
+		}
+		return
+	}
+	t.Fatal("plutigo is missing from repos-config.yaml")
+}
+
 // TestConfiguredPipelinesGate checks that every configured pipeline actually
 // stages something. Grouping workflows without a needs edge changes nothing
 // that matters: GitHub's concurrency limit counts jobs, not workflow runs, so
