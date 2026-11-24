@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"reflect"
 	"sort"
@@ -28,6 +29,32 @@ func loadRealConfig(t *testing.T) Config {
 		t.Fatalf("expandProfiles: %v", err)
 	}
 	return cfg
+}
+
+func TestGouroborosGoWorkflowInputs(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/gouroboros" {
+			continue
+		}
+		testParams := findWorkflow(t, repo.Workflows, "go-test.yml").Params
+		var arches []string
+		if err := json.Unmarshal([]byte(testParams["go-arches"]), &arches); err != nil {
+			t.Fatalf("go-test.yml go-arches: %v", err)
+		}
+		if want := []string{"amd64", "386"}; !reflect.DeepEqual(arches, want) {
+			t.Errorf("go-test.yml go-arches = %v, want %v", arches, want)
+		}
+		if got := testParams["nilaway-include-pkgs"]; got != "github.com/blinklabs-io/gouroboros" {
+			t.Errorf("go-test.yml nilaway-include-pkgs = %q, want github.com/blinklabs-io/gouroboros", got)
+		}
+		for _, file := range []string{"go-test.yml", "publish.yml"} {
+			if got := findWorkflow(t, repo.Workflows, file).Params["submodules"]; got != "true" {
+				t.Errorf("%s submodules = %q, want true", file, got)
+			}
+		}
+		return
+	}
+	t.Fatal("gouroboros is missing from repos-config.yaml")
 }
 
 func TestConfiguredDependabotManifestsValidate(t *testing.T) {
