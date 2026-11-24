@@ -120,6 +120,29 @@ func TestGoTestSkipsPushToMain(t *testing.T) {
 	}
 }
 
+func TestBursaPullRequestGoChecks(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/bursa" {
+			continue
+		}
+		workflow := findWorkflow(t, repo.Workflows, "go-test.yml")
+		if _, ok := workflow.Triggers["pull_request"]; !ok || len(workflow.Triggers) != 1 {
+			t.Errorf("go-test.yml triggers = %v, want pull_request only", workflow.Triggers)
+		}
+		for key, want := range map[string]string{
+			"extra-test-packages":           "./internal/signer/...",
+			"extra-test-flags":              "-tags pkcs11 -race",
+			"additional-module-directories": "openapi",
+		} {
+			if got := workflow.Params[key]; got != want {
+				t.Errorf("go-test.yml %s = %q, want %q", key, got, want)
+			}
+		}
+		return
+	}
+	t.Fatal("bursa is missing from repos-config.yaml")
+}
+
 // TestConfiguredPipelinesGate checks that every configured pipeline actually
 // stages something. Grouping workflows without a needs edge changes nothing
 // that matters: GitHub's concurrency limit counts jobs, not workflow runs, so
