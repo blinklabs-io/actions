@@ -202,6 +202,45 @@ func TestOuroborosMockKeepsLocalWorkflows(t *testing.T) {
 	t.Fatal("ouroboros-mock is missing from repos-config.yaml")
 }
 
+func TestDingoOperatorGoCI(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/dingo-operator" {
+			continue
+		}
+		goTest := findWorkflow(t, repo.Workflows, "go-test.yml")
+		for key, want := range map[string]string{
+			"test-flags":           "-race",
+			"run-golangci-lint":    "true",
+			"golangci-extra-args":  "--build-tags e2e --tests ./test/e2e/...",
+			"run-nilaway":          "true",
+			"nilaway-version":      "latest",
+			"nilaway-include-pkgs": "github.com/blinklabs-io/dingo-operator",
+		} {
+			if got := goTest.Params[key]; got != want {
+				t.Errorf("go-test.yml %s = %q, want %q", key, got, want)
+			}
+		}
+		publish := findWorkflow(t, repo.Workflows, "publish.yml")
+		wantTriggers := map[string]interface{}{
+			"pull_request": nil,
+			"push": map[string]interface{}{
+				"branches": []interface{}{"main"},
+				"tags":     []interface{}{"v*.*.*"},
+			},
+		}
+		for _, wf := range []WorkflowConfig{goTest, publish} {
+			if !reflect.DeepEqual(wf.Triggers, wantTriggers) {
+				t.Errorf("%s triggers = %v, want %v", wf.DestinationFile, wf.Triggers, wantTriggers)
+			}
+		}
+		if !reflect.DeepEqual(publish.Needs, []string{"go-test"}) || publish.If != "github.event_name == 'push'" {
+			t.Errorf("publish gate: needs = %v, if = %q", publish.Needs, publish.If)
+		}
+		return
+	}
+	t.Fatal("dingo-operator is missing from repos-config.yaml")
+}
+
 // TestConfiguredPipelinesGate checks that every configured pipeline actually
 // stages something. Grouping workflows without a needs edge changes nothing
 // that matters: GitHub's concurrency limit counts jobs, not workflow runs, so

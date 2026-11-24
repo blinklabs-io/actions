@@ -300,38 +300,24 @@ profiles:
           run-nilaway: "true"
 
   go-ci-race-nilaway:
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: CI
         job_id: go-test
         supersedes: [nilaway.yml, golangci-lint.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
+        triggers: &dingo-operator-ci-triggers
           pull_request:
           push:
             branches: [main]
             tags: ['v*.*.*']
         params:
+          <<: *go-test-standard-params
           test-flags: "-race"
-          run-golangci-lint: "true"
           golangci-extra-args: "--build-tags e2e --tests ./test/e2e/..."
-          run-nilaway: "true"
           nilaway-version: "latest"
           nilaway-include-pkgs: "github.com/blinklabs-io/dingo-operator"
 
@@ -343,11 +329,7 @@ profiles:
         if: github.event_name == 'push'
         workflow_name: "publish"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
+        triggers: *dingo-operator-ci-triggers
         permissions:
           actions: write
           attestations: write
