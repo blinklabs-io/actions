@@ -174,6 +174,34 @@ func TestPlutigoGoWorkflowInputs(t *testing.T) {
 	t.Fatal("plutigo is missing from repos-config.yaml")
 }
 
+func TestOuroborosMockKeepsLocalWorkflows(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/ouroboros-mock" {
+			continue
+		}
+		checkPaths := func(operation string, paths ...string) {
+			t.Helper()
+			for _, path := range paths {
+				switch path {
+				case ".github/workflows/go-test.yml", ".github/workflows/reproducibility.yml":
+					t.Errorf("sync would %s repository-owned workflow %s", operation, path)
+				}
+			}
+		}
+		standalone, pipelines := groupPipelines(repo.Workflows)
+		for _, wf := range standalone {
+			checkPaths("write", ".github/workflows/"+wf.DestinationFile)
+			checkPaths("delete", supersededStandaloneWorkflowPaths(wf, repo.Workflows)...)
+		}
+		for _, members := range pipelines {
+			checkPaths("write", ".github/workflows/"+members[0].Pipeline)
+			checkPaths("delete", supersededWorkflowPaths(members, repo.Workflows)...)
+		}
+		return
+	}
+	t.Fatal("ouroboros-mock is missing from repos-config.yaml")
+}
+
 // TestConfiguredPipelinesGate checks that every configured pipeline actually
 // stages something. Grouping workflows without a needs edge changes nothing
 // that matters: GitHub's concurrency limit counts jobs, not workflow runs, so
