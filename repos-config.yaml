@@ -2057,39 +2057,16 @@ repositories:
           go-version: "1.26.x"
           update-go-proxy: "true"
   - name: blinklabs-io/bluefin
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
-
+      - <<: *go-test-standard
         params:
-          run-golangci-lint: "true"
-          run-nilaway: "true"
+          <<: *go-test-standard-params
           nilaway-go-version: "1.26.x"
           nilaway-include-pkgs: "github.com/blinklabs-io/bluefin"
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
