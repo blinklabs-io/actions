@@ -274,6 +274,39 @@ func TestDingoOperatorGoCI(t *testing.T) {
 	t.Fatal("dingo-operator is missing from repos-config.yaml")
 }
 
+func TestDingoctlGoChecks(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/dingoctl" {
+			continue
+		}
+		goTest := findWorkflow(t, repo.Workflows, "go-test.yml")
+		wantTriggers := map[string]interface{}{
+			"pull_request": nil,
+			"push":         map[string]interface{}{"branches": []interface{}{"main"}, "tags": []interface{}{"v*"}},
+		}
+		if !reflect.DeepEqual(goTest.Triggers, wantTriggers) {
+			t.Errorf("go-test.yml triggers = %v, want %v", goTest.Triggers, wantTriggers)
+		}
+		if !reflect.DeepEqual(goTest.Supersedes, []string{"golangci-lint.yml"}) {
+			t.Errorf("go-test.yml supersedes = %v, want only golangci-lint.yml", goTest.Supersedes)
+		}
+		wantParams := map[string]string{
+			"go-versions":         `["1.26.x","1.27.x"]`,
+			"platforms":           `["ubuntu-26.04","macos-latest","windows-latest"]`,
+			"pre-test-command":    "make build",
+			"test-flags":          "-v -race -timeout 10m",
+			"run-golangci-lint":   "true",
+			"golangci-go-version": "1.26.x",
+			"golangci-platform":   "ubuntu-26.04",
+		}
+		if !reflect.DeepEqual(goTest.Params, wantParams) {
+			t.Errorf("go-test.yml inputs = %v, want %v", goTest.Params, wantParams)
+		}
+		return
+	}
+	t.Fatal("dingoctl is missing from repos-config.yaml")
+}
+
 func TestTagOnlyLibraryPublishers(t *testing.T) {
 	libraries := map[string]bool{"blinklabs-io/cardano-models": true, "blinklabs-io/go-bip39": true}
 	for _, repo := range loadRealConfig(t).Repositories {
