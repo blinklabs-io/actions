@@ -1711,20 +1711,9 @@ repositories:
   #     downstream CI, so the workflow's `token` secret is mapped to
   #     ORG_PROJECT_PAT.
   - name: blinklabs-io/cardano-up-packages
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: package-validate.yml
         workflow_name: "package-validate"
