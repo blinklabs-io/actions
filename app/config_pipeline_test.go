@@ -57,6 +57,51 @@ func TestGouroborosGoWorkflowInputs(t *testing.T) {
 	t.Fatal("gouroboros is missing from repos-config.yaml")
 }
 
+func TestMerklePatriciaForestryLibraryCI(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/merkle-patricia-forestry" {
+			continue
+		}
+		checks := findWorkflow(t, repo.Workflows, "go-test.yml")
+		if checks.Pipeline != "ci.yml" || checks.PipelineName != "ci" || checks.JobID != "go-test" {
+			t.Errorf("unexpected Go test pipeline: file=%q name=%q job=%q", checks.Pipeline, checks.PipelineName, checks.JobID)
+		}
+		if !reflect.DeepEqual(checks.Supersedes, []string{"golangci-lint.yml", "nilaway.yml"}) {
+			t.Errorf("unexpected superseded Go workflows: %v", checks.Supersedes)
+		}
+		wantParams := map[string]string{
+			"run-golangci-lint":    "true",
+			"run-nilaway":          "true",
+			"nilaway-include-pkgs": "github.com/blinklabs-io/merkle-patricia-forestry",
+		}
+		if !reflect.DeepEqual(checks.Params, wantParams) {
+			t.Errorf("go-test inputs = %v, want %v", checks.Params, wantParams)
+		}
+		wantTriggers := map[string]any{
+			"pull_request": nil,
+			"push":         map[string]any{"branches": []any{"main"}, "tags": []any{"v*"}},
+		}
+		if !reflect.DeepEqual(checks.Triggers, wantTriggers) {
+			t.Errorf("go-test triggers = %v, want %v", checks.Triggers, wantTriggers)
+		}
+		publish := findWorkflow(t, repo.Workflows, "publish.yml")
+		tags := map[string]any{"push": map[string]any{"tags": []any{"v*.*.*"}}}
+		if publish.Pipeline != checks.Pipeline {
+			t.Errorf("publish pipeline = %q, want %q", publish.Pipeline, checks.Pipeline)
+		}
+		if !reflect.DeepEqual(publish.Triggers, tags) || publish.If != "github.event_name == 'push' && github.ref_type == 'tag'" ||
+			!reflect.DeepEqual(publish.Needs, []string{"go-test"}) {
+			t.Errorf("unexpected publish gate: triggers=%v, if=%q, needs=%v", publish.Triggers, publish.If, publish.Needs)
+		}
+		permissions := map[string]string{"contents": "write", "id-token": "write", "attestations": "write"}
+		if !reflect.DeepEqual(publish.Permissions, permissions) || len(publish.Params) != 0 {
+			t.Errorf("unexpected publish permissions or inputs: %v, %v", publish.Permissions, publish.Params)
+		}
+		return
+	}
+	t.Fatal("merkle-patricia-forestry is missing from repos-config.yaml")
+}
+
 func TestConfiguredDependabotManifestsValidate(t *testing.T) {
 	cfg := loadRealConfig(t)
 	if err := validateDependabotConfigs(cfg.Repositories); err != nil {
