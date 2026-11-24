@@ -164,8 +164,13 @@ performs an observe → compare → act loop:
    can replace old wrappers in the same commit. Files that already match are
    skipped.
 
-Writes go **directly to each repository's default branch**; the engine does not
-open pull requests.
+Managed file writes normally go directly to the default branch. Dingo's
+`conventional-commits.yml` and `release-fanout.yml` go through a single pull
+request targeting `main`. The controller adopts the existing caller migration
+while it is open and uses `ci/governance-workflows` for subsequent proposals.
+A matching proposal keeps its head commit and review. The report links the
+pending pull request until the files match on main. Dingo retains its normal
+review and merge queue. Other repositories continue reconciling independently.
 
 The governance sync reports observed differences before applying changes, using
 `-` for the observed value and `+` for the configured value. Results appear in
@@ -339,6 +344,7 @@ The sync engine requires these environment variables:
 | Variable | Description |
 |---|---|
 | `GH_TOKEN` | GitHub App installation token with administration, contents, and workflows write permissions, organization Members read permission, and access to all organization repositories. |
+| `DINGO_WORKFLOW_PR_TOKEN` | Governance App installation token scoped to Dingo for contents, workflows, and pull request writes. |
 | `GITHUB_REPOSITORY` | The controller repository, supplied by GitHub Actions. |
 | `GITHUB_SHA` | The checked-out current `main` revision, supplied by GitHub Actions. |
 | `GOVERNANCE_LIFECYCLE_STATE_KEY` | Stable secret material used to authenticate lifecycle state and conceal repository identities. The workflow supplies the existing `GOVERNANCE_APP_PRIVATE_KEY` secret. |

@@ -60,8 +60,22 @@ jobs:
           APP_SLUG: ${{ steps.generate-token.outputs.app-slug }}
         run: test "$APP_SLUG" = blinklabs-governance
 
+      - name: Authenticate for Dingo workflow pull requests
+        id: dingo-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.GOVERNANCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: dingo
+          permission-contents: write
+          permission-workflows: write
+          permission-pull-requests: write
+
       - name: Run governance sync
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          DINGO_WORKFLOW_PR_TOKEN: ${{ steps.dingo-token.outputs.token }}
           GOVERNANCE_LIFECYCLE_STATE_KEY: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
         run: go run ./app
