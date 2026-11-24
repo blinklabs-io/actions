@@ -1240,33 +1240,17 @@ repositories:
   # checks below use the shared reusable workflows, passing adder's Fyne system
   # dependencies and CGO requirements.
   - name: blinklabs-io/adder
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
+      - <<: *conventional-commits
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
+          <<: *go-test-standard-params
           go-versions: '["1.26.x","1.27.x"]'
           platforms: '["ubuntu-26.04","windows-latest"]'
           system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
@@ -1274,17 +1258,14 @@ repositories:
           test-flags: "-v -timeout 10m"
           windows-test-packages: "./tray/setup/..."
           test-env: "LANG=en_US.UTF-8"
-          run-golangci-lint: "true"
           golangci-platform: "ubuntu-26.04"
           golangci-cgo-enabled: "true"
-          run-nilaway: "true"
           nilaway-platform: "ubuntu-26.04"
           nilaway-cgo-enabled: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/adder"
           nilaway-exclude-pkgs: "github.com/go-gl/glfw"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
+      - <<: *docker-ci
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
         triggers:
           pull_request:
