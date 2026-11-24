@@ -1534,40 +1534,18 @@ repositories:
   # Docker Hub description, docker-password secret and the linux/darwin-only
   # binary matrix need to be provided.
   - name: blinklabs-io/cardano-up
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
-          run-golangci-lint: "true"
-          run-nilaway: "true"
+          <<: *go-test-standard-params
           nilaway-include-pkgs: "github.com/blinklabs-io/cardano-up"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
@@ -1583,11 +1561,7 @@ repositories:
         params:
           image-name: "blinklabs-io/cardano-up"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: "publish"
+      - <<: *go-service-publish
         # This workflow receives tap-write credentials, so pin its reviewed
         # revision.
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
@@ -1595,14 +1569,7 @@ repositories:
           push:
             branches: [main]
             tags: ['v*.*.*']
-        permissions:
-          actions: write
-          attestations: write
-          checks: write
-          contents: write
-          id-token: write
-          packages: write
-          statuses: write
+        permissions: *go-service-publish-permissions
         secrets:
           docker-password: DOCKER_PASSWORD
           homebrew-tap-token: ORG_PROJECT_PAT
