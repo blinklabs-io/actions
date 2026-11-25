@@ -4,7 +4,7 @@ This repository contains the reusable GitHub Actions workflows shared across
 Blink Labs repositories, plus a small **Go governance engine** that keeps every
 repository aligned to a single declarative source of truth: `repos-config.yaml`.
 
-The engine reads `repos-config.yaml`, and for each listed repository it
+The engine reads `repos-config.yaml`, and for each active repository it
 reconciles repository settings, collaborators, team grants, branch protection, and the
 generated workflow wrapper files directly on that repository's default branch.
 
@@ -152,7 +152,7 @@ The org's free plan shares 20 concurrent jobs (5 of them macOS) across every rep
 ## How the engine works
 
 The engine (`app/main.go`) runs as a batch job — there is no long-running
-server or webhook listener. For each repository in `repos-config.yaml` it
+server or webhook listener. For each active repository in `repos-config.yaml` it
 performs an observe → compare → act loop:
 
 1. `syncBranchProtection` — reconciles configured branch protection rules.
@@ -543,9 +543,12 @@ eligibility and records markers in the current configuration as new intent.
 Archival then requires a later removal and successful sync. Invalid current or
 last-applied configurations and Git history read failures still stop the run.
 
-Each reconciliation run processes **every** managed repository (all configured
-and discovered targets), not only the ones touched by the edit. The
-`actions` repository is included in the managed set. `repository-standard`
+Each run reconciles all configured and discovered repositories except those
+with `sync_paused: true`. A pause cancels prior archival intent. To re-arm
+archival, resume sync with `archive_on_removal: true` and let that run succeed
+before removing the entry.
+
+The `actions` repository is included in the managed set. `repository-standard`
 applies the shared repository settings, `main` branch protection, and
 Conventional Commits check to repositories whose CI and release workflows have
 not yet been migrated to shared workflows. The explicit public-repository set
