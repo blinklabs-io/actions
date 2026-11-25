@@ -113,6 +113,7 @@ type WorkflowOverride struct {
 type RepoConfig struct {
 	skipPrivateBranchProtection bool
 	Name                        string `yaml:"name"`
+	SyncPaused                  bool   `yaml:"sync_paused"`
 	Profile                     string `yaml:"profile"`
 	// Private controls creation only; an existing repository's visibility is unchanged.
 	Private *bool `yaml:"private"`
@@ -463,6 +464,12 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 	var result error
 	identities := make(map[string]int64, len(repos))
 	for _, repo := range repos {
+		if repo.SyncPaused {
+			// Visibility is unknown because paused repositories are never queried.
+			report.beginRepo("", false)
+			report.change("repository", "sync paused", "", "").status = "skipped"
+			continue
+		}
 		owner, repoName := parseRepoString(repo.Name)
 		info, _, err := client.Repositories.Get(ctx, owner, repoName)
 		public := err == nil && info != nil && info.Private != nil && !info.GetPrivate() && info.GetVisibility() == "public"

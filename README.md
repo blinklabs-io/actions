@@ -176,6 +176,11 @@ aggregate counts. The report covers configured settings, collaborators, teams, b
 protections, and managed files; it does not audit unmanaged items or identify
 who made a change.
 
+Set `sync_paused: true` on a repository to suspend governance during a migration.
+Its configuration still participates in rendering and discovery precedence. Sync skips
+creation, settings, access controls, and managed files, and disarms archival. Remove
+the flag to resume reconciliation against the current configuration.
+
 The final report distinguishes matches, unmanaged settings, corrections,
 invitations, failures, unchecked items, and skipped or pending work. A
 correction means GitHub accepted the update; collaborator and team permissions are also

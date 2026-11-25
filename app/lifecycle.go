@@ -260,6 +260,9 @@ func archiveRepository(ctx context.Context, client *github.Client, nodeID string
 func (c *lifecycleController) ensureRepositories(ctx context.Context, client *github.Client, repos []RepoConfig, report *driftReport) error {
 	var missing []RepoConfig
 	for _, repo := range repos {
+		if repo.SyncPaused {
+			continue
+		}
 		owner, name, _ := strings.Cut(repo.Name, "/")
 		if repo.ArchiveOnRemoval && strings.EqualFold(repo.Name, c.owner+"/"+c.repo) {
 			return errors.New("the controller repository cannot be marked for archival")
@@ -322,7 +325,7 @@ func transitionCandidates(previous []RepoConfig, transitions [][]RepoConfig, mar
 		}
 		for key := range candidates {
 			repo, exists := present[key]
-			if exists && (removed[key] || !repo.ArchiveOnRemoval) {
+			if exists && (removed[key] || repo.SyncPaused || !repo.ArchiveOnRemoval) {
 				delete(candidates, key)
 			} else if !exists {
 				removed[key] = true
@@ -452,7 +455,7 @@ func (c *lifecycleController) archiveRemoved(ctx context.Context, client *github
 func (c *lifecycleController) prepareApplied(ctx context.Context, client *github.Client, repos []RepoConfig, reconciled map[string]int64) (lifecycleState, error) {
 	state := lifecycleState{Version: 1, Revision: c.revision, Marked: map[string]string{}}
 	for _, repo := range repos {
-		if !repo.ArchiveOnRemoval {
+		if repo.SyncPaused || !repo.ArchiveOnRemoval {
 			continue
 		}
 		if strings.EqualFold(repo.Name, c.owner+"/"+c.repo) {
