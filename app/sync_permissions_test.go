@@ -57,13 +57,23 @@ func TestGovernanceSyncChecksContextBeforeAppToken(t *testing.T) {
 	if job.Environment != "" || !strings.Contains(job.If, "refs/heads/main") {
 		t.Fatalf("sync is not restricted to the main branch without a paid environment: %+v", job)
 	}
-	verify, mint, identity, engine := -1, -1, -1, -1
+	verify, mint, identity, dingoMint, engine := -1, -1, -1, -1, -1
 	for i, step := range job.Steps {
 		if strings.Contains(step.Run, "verify-governance-context") {
 			verify = i
 		}
 		if strings.Contains(step.Uses, "actions/create-github-app-token@") {
+			if step.With["repositories"] == "dingo" {
+				dingoMint = i
+				if step.With["permission-pull-requests"] != "write" || step.With["permission-contents"] != "write" || step.With["permission-workflows"] != "write" {
+					t.Error("Dingo workflow token lacks required permissions")
+				}
+				continue
+			}
 			mint = i
+			if step.With["permission-pull-requests"] != "" {
+				t.Error("organization token must not request pull request writes")
+			}
 			if step.With["client-id"] != "${{ secrets.GOVERNANCE_APP_CLIENT_ID }}" ||
 				step.With["private-key"] != "${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}" {
 				t.Error("sync does not use the existing governance app credentials")
@@ -77,12 +87,15 @@ func TestGovernanceSyncChecksContextBeforeAppToken(t *testing.T) {
 		}
 		if strings.TrimSpace(step.Run) == "go run ./app" {
 			engine = i
+			if step.Env["DINGO_WORKFLOW_PR_TOKEN"] != "${{ steps.dingo-token.outputs.token }}" {
+				t.Error("Dingo workflow reconciler must use the Dingo token")
+			}
 			if step.Env["GOVERNANCE_LIFECYCLE_STATE_KEY"] != "${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}" {
 				t.Error("lifecycle authentication must use the existing App key, without another secret or an expiring token")
 			}
 		}
 	}
-	if verify < 0 || mint < 0 || identity < 0 || engine < 0 || verify >= mint || mint >= identity || identity >= engine {
+	if verify < 0 || mint < 0 || identity < 0 || engine < 0 || verify >= mint || mint >= identity || identity >= dingoMint || dingoMint >= engine {
 		t.Fatalf("context, token, identity and execution are out of order: %d %d %d %d", verify, mint, identity, engine)
 	}
 }

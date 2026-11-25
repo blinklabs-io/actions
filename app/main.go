@@ -423,7 +423,11 @@ func main() {
 	var identities map[string]int64
 	var nextState lifecycleState
 	if result = controller.ensureRepositories(ctx, client, explicit, report); result == nil {
-		identities, result = reconcileRepositoriesWithIdentities(ctx, client, cfg.Repositories, report)
+		var dingoClient *github.Client
+		if token := os.Getenv("DINGO_WORKFLOW_PR_TOKEN"); token != "" {
+			dingoClient = github.NewClient(nil).WithAuthToken(token)
+		}
+		identities, result = reconcileRepositoriesWithIdentities(ctx, client, dingoClient, cfg.Repositories, report)
 	}
 	if result == nil {
 		nextState, result = controller.prepareApplied(ctx, client, explicit, identities)
@@ -456,11 +460,11 @@ func main() {
 
 // reconcileRepositories reports only configured items and redacts non-public repositories.
 func reconcileRepositories(ctx context.Context, client *github.Client, repos []RepoConfig, report *driftReport) error {
-	_, err := reconcileRepositoriesWithIdentities(ctx, client, repos, report)
+	_, err := reconcileRepositoriesWithIdentities(ctx, client, client, repos, report)
 	return err
 }
 
-func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Client, repos []RepoConfig, report *driftReport) (map[string]int64, error) {
+func reconcileRepositoriesWithIdentities(ctx context.Context, client, dingoClient *github.Client, repos []RepoConfig, report *driftReport) (map[string]int64, error) {
 	var result error
 	identities := make(map[string]int64, len(repos))
 	for _, repo := range repos {
@@ -537,9 +541,16 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client *github.Cli
 				report.change("team", fmt.Sprintf("configured team %d", i+1), "", "").status = "skipped"
 			}
 		}
+		fileClient := client
+		if isDingo(owner, repoName) {
+			fileClient = dingoClient
+		}
 		if protectionErr != nil || settingsErr != nil {
 			report.change("managed files", "repository controls", "", "").status = "skipped"
-		} else if err := syncWorkflows(repoCtx, client, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
+		} else if fileClient == nil {
+			report.change("managed files", "workflow pull request token", "", "").status = "unchecked"
+			repoErr = errors.Join(repoErr, errors.New("dingo workflow pull request token unavailable"))
+		} else if err := syncWorkflows(repoCtx, fileClient, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
 			report.diagnostic("managed file reconciliation failed")
 			repoErr = errors.Join(repoErr, err)
 		}
@@ -2278,6 +2289,8 @@ func flushBatch(
 				entry.status = "skipped"
 			} else if result != nil {
 				entry.status = "failed"
+			} else if isDingo(owner, repo) {
+				entry.status = "pending"
 			} else {
 				entry.status = "corrected"
 			}
@@ -2285,6 +2298,9 @@ func flushBatch(
 	}()
 	if batch.failed {
 		return errors.New("managed file observation failed")
+	}
+	if isDingo(owner, repo) {
+		return syncDingoWorkflowPR(ctx, client, defaultBranch, batch)
 	}
 	if len(batch.ops) == 0 {
 		return nil
@@ -2300,13 +2316,53 @@ func flushBatch(
 		return errors.New("managed file base changed during reconciliation")
 	}
 
-	baseCommit, _, err := client.Git.GetCommit(ctx, owner, repo, baseCommitSHA)
+	commitSHA, err := createManagedCommit(ctx, client, owner, repo, baseCommitSHA, batch, batch.message(), []*github.Commit{{SHA: github.String(baseCommitSHA)}})
 	if err != nil {
+		return err
+	}
+
+	// Recheck the default branch and publish only if its observed head is unchanged.
+	latestRepo, _, err := client.Repositories.Get(ctx, owner, repo)
+	if err != nil || latestRepo == nil || latestRepo.GetDefaultBranch() != defaultBranch {
+		return errors.New("default branch changed during reconciliation")
+	}
+	repositoryID := batch.repositoryID
+	if repositoryID == "" {
+		repositoryID = latestRepo.GetNodeID()
+	}
+	if err := updateManagedRef(ctx, client, repositoryID, defaultBranch, baseCommitSHA, commitSHA); err != nil {
+		if report := reportFromContext(ctx); report != nil {
+			var statusErr *refHTTPError
+			if errors.As(err, &statusErr) {
+				report.diagnostic(fmt.Sprintf("atomic ref update returned HTTP %d", statusErr.status))
+			} else {
+				report.diagnostic("atomic ref update failed")
+			}
+		}
+		syncLogf(ctx, "  Error updating branch ref: %v\n", err)
+		return errors.New("managed file update failed")
+	}
+
+	if report := reportFromContext(ctx); report != nil && report.active.public {
+		for _, entry := range batch.reportEntries {
+			entry.commit = commitSHA
+		}
+	}
+	syncLogf(ctx,
+		"✅ Committed %d managed file change(s) to %s/%s@%s in one commit.\n",
+		len(batch.ops), owner, repo, defaultBranch,
+	)
+	return nil
+}
+
+func createManagedCommit(ctx context.Context, client *github.Client, owner, repo, baseCommitSHA string, batch *commitBatch, message string, parents []*github.Commit) (string, error) {
+	baseCommit, _, err := client.Git.GetCommit(ctx, owner, repo, baseCommitSHA)
+	if err != nil || baseCommit.GetTree().GetSHA() == "" {
 		if report := reportFromContext(ctx); report != nil {
 			report.diagnostic("managed file base commit lookup failed")
 		}
 		syncLogf(ctx, "  Error reading base commit: %v\n", err)
-		return errors.New("managed file update failed")
+		return "", errors.New("managed file update failed")
 	}
 	baseTreeSHA := baseCommit.GetTree().GetSHA()
 
@@ -2331,23 +2387,23 @@ func flushBatch(
 		for _, entry := range batch.reportEntries {
 			if err := report.checkpoint(entry); err != nil {
 				batch.failed = true
-				return errors.New("could not record planned managed file changes")
+				return "", errors.New("could not record planned managed file changes")
 			}
 		}
 	}
 	newTree, _, err := client.Git.CreateTree(ctx, owner, repo, baseTreeSHA, entries)
-	if err != nil {
+	if err != nil || newTree.GetSHA() == "" {
 		if report := reportFromContext(ctx); report != nil {
 			report.diagnostic("managed file tree creation failed")
 		}
 		syncLogf(ctx, "  Error creating tree: %v\n", err)
-		return errors.New("managed file update failed")
+		return "", errors.New("managed file update failed")
 	}
 
 	commit := &github.Commit{
-		Message: github.String(batch.message()),
+		Message: github.String(message),
 		Tree:    newTree,
-		Parents: []*github.Commit{{SHA: github.String(baseCommitSHA)}},
+		Parents: parents,
 	}
 	newCommit, _, err := client.Git.CreateCommit(ctx, owner, repo, commit, nil)
 	if err != nil || newCommit == nil || newCommit.GetSHA() == "" {
@@ -2355,39 +2411,8 @@ func flushBatch(
 			report.diagnostic("managed file commit creation failed")
 		}
 		syncLogf(ctx, "  Error creating commit: %v\n", err)
-		return errors.New("managed file update failed")
+		return "", errors.New("managed file update failed")
 	}
 
-	// Recheck the default branch and publish only if its observed head is unchanged.
-	latestRepo, _, err := client.Repositories.Get(ctx, owner, repo)
-	if err != nil || latestRepo == nil || latestRepo.GetDefaultBranch() != defaultBranch {
-		return errors.New("default branch changed during reconciliation")
-	}
-	repositoryID := batch.repositoryID
-	if repositoryID == "" {
-		repositoryID = latestRepo.GetNodeID()
-	}
-	if err := updateManagedRef(ctx, client, repositoryID, defaultBranch, baseCommitSHA, newCommit.GetSHA()); err != nil {
-		if report := reportFromContext(ctx); report != nil {
-			var statusErr *refHTTPError
-			if errors.As(err, &statusErr) {
-				report.diagnostic(fmt.Sprintf("atomic ref update returned HTTP %d", statusErr.status))
-			} else {
-				report.diagnostic("atomic ref update failed")
-			}
-		}
-		syncLogf(ctx, "  Error updating branch ref: %v\n", err)
-		return errors.New("managed file update failed")
-	}
-
-	if report := reportFromContext(ctx); report != nil && report.active.public {
-		for _, entry := range batch.reportEntries {
-			entry.commit = newCommit.GetSHA()
-		}
-	}
-	syncLogf(ctx,
-		"✅ Committed %d managed file change(s) to %s/%s@%s in one commit.\n",
-		len(batch.ops), owner, repo, defaultBranch,
-	)
-	return nil
+	return newCommit.GetSHA(), nil
 }
