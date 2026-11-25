@@ -202,29 +202,19 @@ profiles:
     workflows:
       - *conventional-commits
 
-  # Repositories requiring reviewed workflow changes pin this reusable call.
+  # Protected callers can advance their reviewed revision separately from the standard caller.
   repository-standard-pinned:
     <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
+      - <<: *conventional-commits
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         pin_to_latest_change: false
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
 
   helm-charts-standard:
     <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
+      - <<: *conventional-commits
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
       - destination_file: publish-helm-charts.yml
         workflow_name: "Publish Helm Charts"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-helm-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
@@ -326,8 +316,8 @@ profiles:
         destination_file: go-test.yml
         supersedes: [golangci-lint.yml, nilaway.yml]
         workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
+        reusable_workflow: &go-test-caller "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        triggers: &go-ci-check-triggers
           pull_request:
           push:
             branches: [main]
@@ -337,55 +327,38 @@ profiles:
           run-nilaway: "true"
 
   go-ci-race-nilaway:
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: CI
         job_id: go-test
         supersedes: [nilaway.yml, golangci-lint.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
+        triggers: &dingo-operator-ci-triggers
           pull_request:
           push:
             branches: [main]
             tags: ['v*.*.*']
         params:
+          <<: *go-test-standard-params
           test-flags: "-race"
-          run-golangci-lint: "true"
           golangci-extra-args: "--build-tags e2e --tests ./test/e2e/..."
-          run-nilaway: "true"
           nilaway-version: "latest"
           nilaway-include-pkgs: "github.com/blinklabs-io/dingo-operator"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
+      - <<: &go-service-publish
+          destination_file: publish.yml
+          pipeline: ci.yml
+          needs: [go-test]
+          if: github.event_name == 'push'
+          workflow_name: "publish"
+          reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         pipeline_name: CI
         job_id: publish
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*.*.*']
-        permissions:
+        triggers: *dingo-operator-ci-triggers
+        permissions: &go-service-publish-permissions
           actions: write
           attestations: write
           checks: write
@@ -605,41 +578,19 @@ repositories:
         file: docker-compose.yaml
         var: TX_SUBMIT_API_VERSION
   - name: blinklabs-io/tx-submit-api-mirror
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
         job_id: go-test
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
-          run-golangci-lint: "true"
-          run-nilaway: "true"
+          <<: *go-test-standard-params
           nilaway-include-pkgs: "github.com/blinklabs-io/tx-submit-api-mirror"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
@@ -653,24 +604,12 @@ repositories:
         params:
           image-name: "blinklabs-io/tx-submit-api-mirror"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *go-service-publish
         triggers:
           push:
             branches: [main]
             tags: ['v*.*.*']
-        permissions:
-          actions: write
-          attestations: write
-          checks: write
-          contents: write
-          id-token: write
-          packages: write
-          statuses: write
+        permissions: *go-service-publish-permissions
         secrets:
           docker-password: DOCKER_PASSWORD
         params:
@@ -767,12 +706,7 @@ repositories:
           description: "txtop is a mempool display tool for a Cardano Node"
           go-version: "1.26.x"
   - name: blinklabs-io/cardano-txpump
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     dependabot: |
       version: 2
       updates:
@@ -789,20 +723,11 @@ repositories:
           schedule:
             interval: weekly
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           pull_request:
             paths:
@@ -823,14 +748,11 @@ repositories:
         permissions:
           contents: read
         params:
-          run-golangci-lint: "true"
-          run-nilaway: "true"
+          <<: *go-test-standard-params
           nilaway-version: "latest"
           test-flags: "-race"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
@@ -845,12 +767,7 @@ repositories:
         params:
           image-name: "blinklabs-io/cardano-txpump"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *go-service-publish
         triggers:
           push:
             branches: [main]
@@ -881,43 +798,21 @@ repositories:
       image: go
       description: Go image built from Chainguard Wolfi
   - name: blinklabs-io/shai
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
+          <<: *go-test-standard-params
           go-versions: '["1.26.x","1.27.x"]'
-          run-golangci-lint: "true"
           check-format: "true"
-          run-nilaway: "true"
           nilaway-version: "latest"
           nilaway-include-pkgs: "github.com/blinklabs-io/shai"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
@@ -929,24 +824,12 @@ repositories:
         params:
           image-name: "blinklabs-io/shai"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *go-service-publish
         triggers:
           push:
             branches: [main]
             tags: ['v*.*.*']
-        permissions:
-          actions: write
-          attestations: write
-          checks: write
-          contents: write
-          id-token: write
-          packages: write
-          statuses: write
+        permissions: *go-service-publish-permissions
         params:
           binary-name: "shai"
           go-version: "1.26.x"
@@ -1300,33 +1183,17 @@ repositories:
   # checks below use the shared reusable workflows, passing adder's Fyne system
   # dependencies and CGO requirements.
   - name: blinklabs-io/adder
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
+      - <<: *conventional-commits
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
+          <<: *go-test-standard-params
           go-versions: '["1.26.x","1.27.x"]'
           platforms: '["ubuntu-26.04","windows-latest"]'
           system-dependencies: "libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols"
@@ -1334,17 +1201,14 @@ repositories:
           test-flags: "-v -timeout 10m"
           windows-test-packages: "./tray/setup/..."
           test-env: "LANG=en_US.UTF-8"
-          run-golangci-lint: "true"
           golangci-platform: "ubuntu-26.04"
           golangci-cgo-enabled: "true"
-          run-nilaway: "true"
           nilaway-platform: "ubuntu-26.04"
           nilaway-cgo-enabled: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/adder"
           nilaway-exclude-pkgs: "github.com/go-gl/glfw"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
+      - <<: *docker-ci
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
         triggers:
           pull_request:
@@ -1503,17 +1367,9 @@ repositories:
   #   - ui.yml (Node web bundle + embedded Go) and mobile.yml /
   #     mobile-contracts.yml (gomobile Android/iOS) have no shared equivalent.
   - name: blinklabs-io/bursa
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
-    workflows:
-      - destination_file: go-test.yml
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: go-test
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+    profile: go-ci-standard
+    overrides:
+      go-test.yml:
         # Pull requests only: a push to main or a tag re-ran the suite the pull
         # request had just passed, and publish.yml does not depend on it.
         triggers:
@@ -1525,8 +1381,6 @@ repositories:
           go-versions: '["1.26.x","1.27.x"]'
           verify-modules: "true"
           run-vet: "true"
-          run-golangci-lint: "true"
-          run-nilaway: "true"
           nilaway-version: "latest"
           nilaway-include-pkgs: "github.com/blinklabs-io/bursa"
           nilaway-additional-working-directories: "ui"
@@ -1541,14 +1395,6 @@ repositories:
           cross-build-go-version: "1.26.x"
           build-packages: "./cmd/bursa"
           cross-build-targets: '[{"os":"darwin","arch":"arm64"},{"os":"freebsd","arch":"amd64"},{"os":"freebsd","arch":"arm64"},{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"windows","arch":"amd64"},{"os":"windows","arch":"arm64"}]'
-
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
 
   # dingo is a Cardano node written in Go. Like bursa, its CI/release surface is
   # a hand-tuned monorepo pipeline that the shared reusable workflows cannot
@@ -1630,20 +1476,9 @@ repositories:
   # reusable CI workflows scoped to their paths. Its weekly image-version
   # checker uses the shared reusable workflow and the built-in github.token.
   - name: blinklabs-io/cardano-compose-stacks
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: check-versions.yml
         workflow_name: "check-versions"
@@ -1658,7 +1493,7 @@ repositories:
 
       - destination_file: antithesis-go-test.yml
         workflow_name: "Antithesis Go tests"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        reusable_workflow: *go-test-caller
         triggers:
           pull_request:
             paths:
@@ -1668,15 +1503,14 @@ repositories:
             paths:
               - antithesis/dingo-praos/**
         params:
+          <<: *go-test-standard-params
           working-directory: "antithesis/dingo-praos"
           test-flags: "-race"
-          run-golangci-lint: "true"
-          run-nilaway: "true"
           nilaway-version: "latest"
 
       - destination_file: archive-demo-go-test.yml
         workflow_name: "Archive demo Go checks"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        reusable_workflow: *go-test-caller
         triggers:
           pull_request:
             paths:
@@ -1686,11 +1520,10 @@ repositories:
             paths:
               - dingo-archive-demo/**
         params:
+          <<: *go-test-standard-params
           working-directory: "dingo-archive-demo"
           # Compile the Docker-backed suite without starting its local devnet.
           test-flags: "-race -tags=archive_demo -run=^$"
-          run-golangci-lint: "true"
-          run-nilaway: "true"
           nilaway-version: "latest"
 
   # cardano-up is a Go command line utility for managing Cardano services for
@@ -1701,40 +1534,18 @@ repositories:
   # Docker Hub description, docker-password secret and the linux/darwin-only
   # binary matrix need to be provided.
   - name: blinklabs-io/cardano-up
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
-          run-golangci-lint: "true"
-          run-nilaway: "true"
+          <<: *go-test-standard-params
           nilaway-include-pkgs: "github.com/blinklabs-io/cardano-up"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
@@ -1750,11 +1561,7 @@ repositories:
         params:
           image-name: "blinklabs-io/cardano-up"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: "publish"
+      - <<: *go-service-publish
         # This workflow receives tap-write credentials, so pin its reviewed
         # revision.
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
@@ -1762,14 +1569,7 @@ repositories:
           push:
             branches: [main]
             tags: ['v*.*.*']
-        permissions:
-          actions: write
-          attestations: write
-          checks: write
-          contents: write
-          id-token: write
-          packages: write
-          statuses: write
+        permissions: *go-service-publish-permissions
         secrets:
           docker-password: DOCKER_PASSWORD
           homebrew-tap-token: ORG_PROJECT_PAT
@@ -1810,20 +1610,9 @@ repositories:
   #     downstream CI, so the workflow's `token` secret is mapped to
   #     ORG_PROJECT_PAT.
   - name: blinklabs-io/cardano-up-packages
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: package-validate.yml
         workflow_name: "package-validate"
@@ -1851,27 +1640,13 @@ repositories:
   # coverage; nilaway skips a stack-machine docstring. benchmark.yml is repository-specific
   # and remains hand-maintained.
   - name: blinklabs-io/plutigo
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           workflow_dispatch:
           pull_request:
@@ -1879,28 +1654,28 @@ repositories:
             branches: [main]
             tags: ['v*']
         params:
+          <<: *go-test-standard-params
           submodules: "true"
           test-flags: "-race"
-          run-golangci-lint: "true"
-          run-nilaway: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/plutigo"
           nilaway-exclude-file-docstrings: "<nilaway skip stack-machine>"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
-        needs: [go-test]
-        if: github.event_name == 'push' && github.ref_type == 'tag'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-library-release.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          push:
-            tags: ['v*.*.*']
+      - <<: &go-library-tag-publish
+          destination_file: publish.yml
+          pipeline: ci.yml
+          needs: [go-test]
+          if: github.event_name == 'push' && github.ref_type == 'tag'
+          workflow_name: "publish"
+          reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-library-release.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+          triggers:
+            push:
+              tags: ['v*.*.*']
         # reuseable-go-library-release's publish-examples job statically
         # declares id-token/attestations write. GitHub validates a called
         # workflow's permission requirements at load time regardless of the
         # job's runtime if: gate, so the caller must grant the full set even
         # though plutigo leaves build-examples unset and never runs that job.
-        permissions:
+        permissions: &go-library-release-permissions
           contents: write
           id-token: write
           attestations: write
@@ -1923,31 +1698,16 @@ repositories:
   # conformance job) and reproducibility.yml are repository-specific and stay
   # hand-maintained; the remaining checks map to the shared reusable workflows.
   - name: blinklabs-io/ouroboros-mock
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: golangci-lint.yml
         pipeline: ci.yml
         pipeline_name: ci
         workflow_name: "golangci-lint"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-golangci-lint.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
+        triggers: *go-ci-check-triggers
         permissions:
           contents: read
         params:
@@ -1958,11 +1718,7 @@ repositories:
         needs: [golangci-lint]
         workflow_name: "nilaway"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-nilaway.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
+        triggers: *go-ci-check-triggers
         permissions:
           contents: read
         params:
@@ -1997,38 +1753,26 @@ repositories:
   # diff. publish.yml remains repository-specific because it regenerates and
   # commits Go code on main before creating releases on tags.
   - name: blinklabs-io/bark
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
       - destination_file: go-test.yml
         workflow_name: go-test
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+        reusable_workflow: *go-test-caller
         triggers:
           pull_request:
             branches: [main]
           push:
             branches: [main]
         params:
+          <<: *go-test-standard-params
           go-versions: '["1.26.x","1.27.x"]'
           verify-modules: "true"
           run-build: "true"
           run-vet: "true"
-          run-golangci-lint: "true"
           check-format: "true"
-          run-nilaway: "true"
           run-buf-checks: "true"
 
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: govulncheck.yml
         workflow_name: govulncheck
@@ -2040,98 +1784,34 @@ repositories:
         params:
           go-version: "1.26.x"
   - name: blinklabs-io/cardano-models
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
         job_id: go-test
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
-
         params:
-          run-golangci-lint: "true"
-          run-nilaway: "true"
+          <<: *go-test-standard-params
           nilaway-include-pkgs: "github.com/blinklabs-io/cardano-models"
-      - destination_file: publish.yml
-        needs: [go-test]
-        pipeline: ci.yml
-        if: github.event_name == 'push' && github.ref_type == 'tag'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-library-release.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          push:
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          id-token: write
-          attestations: write
+      - <<: *go-library-tag-publish
+        permissions: *go-library-release-permissions
   - name: blinklabs-io/go-bip39
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
         job_id: go-test
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
-
         params:
-          run-golangci-lint: "true"
+          <<: *go-test-standard-params
           check-format: "true"
-          run-nilaway: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/go-bip39"
-      - destination_file: publish.yml
-        needs: [go-test]
-        pipeline: ci.yml
-        if: github.event_name == 'push' && github.ref_type == 'tag'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-library-release.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          push:
-            tags: ['v*.*.*']
-        permissions:
-          contents: write
-          id-token: write
-          attestations: write
+      - <<: *go-library-tag-publish
+        permissions: *go-library-release-permissions
   - name: blinklabs-io/merkle-patricia-forestry
     <<: *repository-standard
     workflows:
@@ -2195,37 +1875,17 @@ repositories:
   # cdnsd's normal and race test passes now share the Go test wrapper. Its
   # standalone govulncheck job is covered by the separate shared wrapper.
   - name: blinklabs-io/cdnsd
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: ci
         job_id: go-test
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
+          <<: *go-test-standard-params
           run-race-test: "true"
-          run-golangci-lint: "true"
-          run-nilaway: "true"
           nilaway-include-pkgs: "github.com/blinklabs-io/cdnsd"
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: govulncheck.yml
         workflow_name: "govulncheck"
@@ -2237,9 +1897,7 @@ repositories:
         params:
           go-version: "1.26.x"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
@@ -2254,26 +1912,14 @@ repositories:
         params:
           image-name: "blinklabs-io/cdnsd"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
+      - <<: *go-service-publish
         pipeline_name: ci
         job_id: publish
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: "publish"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           push:
             branches: [main]
             tags: ['v*.*.*']
-        permissions:
-          actions: write
-          attestations: write
-          checks: write
-          contents: write
-          id-token: write
-          packages: write
-          statuses: write
+        permissions: *go-service-publish-permissions
         secrets:
           docker-password: DOCKER_PASSWORD
         params:
@@ -2371,39 +2017,16 @@ repositories:
           go-version: "1.26.x"
           update-go-proxy: "true"
   - name: blinklabs-io/bluefin
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
-
+      - <<: *go-test-standard
         params:
-          run-golangci-lint: "true"
-          run-nilaway: "true"
+          <<: *go-test-standard-params
           nilaway-go-version: "1.26.x"
           nilaway-include-pkgs: "github.com/blinklabs-io/bluefin"
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
@@ -2418,45 +2041,23 @@ repositories:
   # version never actually built the arm64 platform (the `platforms:` line
   # was commented out with a `TODO: test multiple platforms` note).
   - name: blinklabs-io/nview
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         pipeline: ci.yml
         pipeline_name: CI
         job_id: go-test
-        supersedes: [golangci-lint.yml, nilaway.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
+          <<: *go-test-standard-params
           go-versions: '["1.26.x","1.27.x"]'
-          run-golangci-lint: "true"
           golangci-go-version: "1.26.x"
           check-format: "true"
-          run-nilaway: "true"
           nilaway-go-version: "1.26.x"
           nilaway-include-pkgs: "github.com/blinklabs-io/nview"
 
-      - destination_file: ci-docker.yml
-        workflow_name: "Docker CI"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-ci-docker-multiarch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - <<: *docker-ci
         triggers:
           pull_request:
             branches: [main]
@@ -2468,26 +2069,14 @@ repositories:
         params:
           image-name: "blinklabs-io/nview"
 
-      - destination_file: publish.yml
-        pipeline: ci.yml
+      - <<: *go-service-publish
         pipeline_name: ci
         job_id: publish
-        needs: [go-test]
-        if: github.event_name == 'push'
-        workflow_name: publish
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
         triggers:
           push:
             branches: [main]
             tags: ['v*.*.*']
-        permissions:
-          actions: write
-          attestations: write
-          checks: write
-          contents: write
-          id-token: write
-          packages: write
-          statuses: write
+        permissions: *go-service-publish-permissions
         secrets:
           docker-password: DOCKER_PASSWORD
           maxmind-api-credentials: MAXMIND_API_CREDENTIALS
@@ -2589,30 +2178,12 @@ repositories:
   # removed from the repo to avoid a duplicate run). There was no existing
   # conventional-commits check, so it's added as a net-new check.
   - name: blinklabs-io/dingoctl
-    settings:
-      delete_branch_on_merge: true
-    collaborators: []
-    branch_protection:
-      - branch: main
-        <<: *branch_protection_defaults
+    <<: *repository-standard
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
-      - destination_file: go-test.yml
+      - <<: *go-test-standard
         supersedes: [golangci-lint.yml]
-        workflow_name: "go-test"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-go-test.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-          push:
-            branches: [main]
-            tags: ['v*']
         params:
           go-versions: '["1.26.x","1.27.x"]'
           platforms: '["ubuntu-26.04","macos-latest","windows-latest"]'

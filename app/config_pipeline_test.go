@@ -192,6 +192,219 @@ func TestGoTestSkipsPushToMain(t *testing.T) {
 	}
 }
 
+func TestBursaPullRequestGoChecks(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/bursa" {
+			continue
+		}
+		workflow := findWorkflow(t, repo.Workflows, "go-test.yml")
+		if _, ok := workflow.Triggers["pull_request"]; !ok || len(workflow.Triggers) != 1 {
+			t.Errorf("go-test.yml triggers = %v, want pull_request only", workflow.Triggers)
+		}
+		for key, want := range map[string]string{
+			"extra-test-packages":           "./internal/signer/...",
+			"extra-test-flags":              "-tags pkcs11 -race",
+			"additional-module-directories": "openapi",
+			"test-env":                      "BURSA_TEST_POSTGRES_DSN=postgres://postgres:postgres@127.0.0.1:5432/bursa_test?sslmode=disable",
+		} {
+			if got := workflow.Params[key]; got != want {
+				t.Errorf("go-test.yml %s = %q, want %q", key, got, want)
+			}
+		}
+
+		var services map[string]struct {
+			Image   string
+			Env     map[string]string
+			Ports   []string
+			Options string
+		}
+		if err := json.Unmarshal([]byte(workflow.Params["services"]), &services); err != nil {
+			t.Fatalf("go-test.yml services: %v", err)
+		}
+		pg := services["postgres"]
+		if pg.Image != "postgres:16" || pg.Env["POSTGRES_DB"] != "bursa_test" ||
+			pg.Env["POSTGRES_USER"] != "postgres" || pg.Env["POSTGRES_PASSWORD"] != "postgres" ||
+			!reflect.DeepEqual(pg.Ports, []string{"5432:5432"}) ||
+			!strings.Contains(pg.Options, `--health-cmd "pg_isready -U postgres -d bursa_test"`) {
+			t.Error("go-test.yml postgres service must provide postgres:16 with the bursa_test database, test credentials, port 5432 and readiness check")
+		}
+
+		var targets []struct{ OS, Arch string }
+		if err := json.Unmarshal([]byte(workflow.Params["cross-build-targets"]), &targets); err != nil {
+			t.Fatalf("go-test.yml cross-build-targets: %v", err)
+		}
+		var platforms []string
+		for _, target := range targets {
+			platforms = append(platforms, target.OS+"/"+target.Arch)
+		}
+		sort.Strings(platforms)
+		wantPlatforms := []string{"darwin/arm64", "freebsd/amd64", "freebsd/arm64", "linux/amd64", "linux/arm64", "windows/amd64", "windows/arm64"}
+		if !reflect.DeepEqual(platforms, wantPlatforms) {
+			t.Errorf("go-test.yml cross-build-targets = %v, want %v", platforms, wantPlatforms)
+		}
+		return
+	}
+	t.Fatal("bursa is missing from repos-config.yaml")
+}
+
+func TestPlutigoGoWorkflowInputs(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/plutigo" {
+			continue
+		}
+		workflow := findWorkflow(t, repo.Workflows, "go-test.yml")
+		wantTriggers := map[string]interface{}{
+			"workflow_dispatch": nil,
+			"pull_request":      nil,
+			"push":              map[string]interface{}{"branches": []interface{}{"main"}, "tags": []interface{}{"v*"}},
+		}
+		if !reflect.DeepEqual(workflow.Triggers, wantTriggers) {
+			t.Errorf("go-test.yml triggers = %v, want %v", workflow.Triggers, wantTriggers)
+		}
+		for key, want := range map[string]string{
+			"run-golangci-lint":               "true",
+			"run-nilaway":                     "true",
+			"submodules":                      "true",
+			"test-flags":                      "-race",
+			"nilaway-include-pkgs":            "github.com/blinklabs-io/plutigo",
+			"nilaway-exclude-file-docstrings": "<nilaway skip stack-machine>",
+		} {
+			if got := workflow.Params[key]; got != want {
+				t.Errorf("go-test.yml %s = %q, want %q", key, got, want)
+			}
+		}
+		return
+	}
+	t.Fatal("plutigo is missing from repos-config.yaml")
+}
+
+func TestOuroborosMockKeepsLocalWorkflows(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/ouroboros-mock" {
+			continue
+		}
+		checkPaths := func(operation string, paths ...string) {
+			t.Helper()
+			for _, path := range paths {
+				switch path {
+				case ".github/workflows/go-test.yml", ".github/workflows/reproducibility.yml":
+					t.Errorf("sync would %s repository-owned workflow %s", operation, path)
+				}
+			}
+		}
+		standalone, pipelines := groupPipelines(repo.Workflows)
+		for _, wf := range standalone {
+			checkPaths("write", ".github/workflows/"+wf.DestinationFile)
+			checkPaths("delete", supersededStandaloneWorkflowPaths(wf, repo.Workflows)...)
+		}
+		for _, members := range pipelines {
+			checkPaths("write", ".github/workflows/"+members[0].Pipeline)
+			checkPaths("delete", supersededWorkflowPaths(members, repo.Workflows)...)
+		}
+		return
+	}
+	t.Fatal("ouroboros-mock is missing from repos-config.yaml")
+}
+
+func TestDingoOperatorGoCI(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/dingo-operator" {
+			continue
+		}
+		goTest := findWorkflow(t, repo.Workflows, "go-test.yml")
+		for key, want := range map[string]string{
+			"test-flags":           "-race",
+			"run-golangci-lint":    "true",
+			"golangci-extra-args":  "--build-tags e2e --tests ./test/e2e/...",
+			"run-nilaway":          "true",
+			"nilaway-version":      "latest",
+			"nilaway-include-pkgs": "github.com/blinklabs-io/dingo-operator",
+		} {
+			if got := goTest.Params[key]; got != want {
+				t.Errorf("go-test.yml %s = %q, want %q", key, got, want)
+			}
+		}
+		publish := findWorkflow(t, repo.Workflows, "publish.yml")
+		wantTriggers := map[string]interface{}{
+			"pull_request": nil,
+			"push": map[string]interface{}{
+				"branches": []interface{}{"main"},
+				"tags":     []interface{}{"v*.*.*"},
+			},
+		}
+		for _, wf := range []WorkflowConfig{goTest, publish} {
+			if !reflect.DeepEqual(wf.Triggers, wantTriggers) {
+				t.Errorf("%s triggers = %v, want %v", wf.DestinationFile, wf.Triggers, wantTriggers)
+			}
+		}
+		if !reflect.DeepEqual(publish.Needs, []string{"go-test"}) || publish.If != "github.event_name == 'push'" {
+			t.Errorf("publish gate: needs = %v, if = %q", publish.Needs, publish.If)
+		}
+		return
+	}
+	t.Fatal("dingo-operator is missing from repos-config.yaml")
+}
+
+func TestDingoctlGoChecks(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/dingoctl" {
+			continue
+		}
+		goTest := findWorkflow(t, repo.Workflows, "go-test.yml")
+		wantTriggers := map[string]interface{}{
+			"pull_request": nil,
+			"push":         map[string]interface{}{"branches": []interface{}{"main"}, "tags": []interface{}{"v*"}},
+		}
+		if !reflect.DeepEqual(goTest.Triggers, wantTriggers) {
+			t.Errorf("go-test.yml triggers = %v, want %v", goTest.Triggers, wantTriggers)
+		}
+		if !reflect.DeepEqual(goTest.Supersedes, []string{"golangci-lint.yml"}) {
+			t.Errorf("go-test.yml supersedes = %v, want only golangci-lint.yml", goTest.Supersedes)
+		}
+		wantParams := map[string]string{
+			"go-versions":         `["1.26.x","1.27.x"]`,
+			"platforms":           `["ubuntu-26.04","macos-latest","windows-latest"]`,
+			"pre-test-command":    "make build",
+			"test-flags":          "-v -race -timeout 10m",
+			"run-golangci-lint":   "true",
+			"golangci-go-version": "1.26.x",
+			"golangci-platform":   "ubuntu-26.04",
+		}
+		if !reflect.DeepEqual(goTest.Params, wantParams) {
+			t.Errorf("go-test.yml inputs = %v, want %v", goTest.Params, wantParams)
+		}
+		return
+	}
+	t.Fatal("dingoctl is missing from repos-config.yaml")
+}
+
+func TestTagOnlyLibraryPublishers(t *testing.T) {
+	libraries := map[string]bool{"blinklabs-io/cardano-models": true, "blinklabs-io/go-bip39": true}
+	for _, repo := range loadRealConfig(t).Repositories {
+		if !libraries[repo.Name] {
+			continue
+		}
+		delete(libraries, repo.Name)
+		wf := findWorkflow(t, repo.Workflows, "publish.yml")
+		t.Run(repo.Name, func(t *testing.T) {
+			if wf.If != "github.event_name == 'push' && github.ref_type == 'tag'" ||
+				!reflect.DeepEqual(wf.Needs, []string{"go-test"}) {
+				t.Errorf("publish gate: if = %q, needs = %v", wf.If, wf.Needs)
+			}
+			if len(wf.Secrets) != 0 || len(wf.Params) != 0 {
+				t.Errorf("unexpected publish secrets or inputs: %v, %v", wf.Secrets, wf.Params)
+			}
+			want := map[string]string{"contents": "write", "id-token": "write", "attestations": "write"}
+			if !reflect.DeepEqual(wf.Permissions, want) {
+				t.Errorf("publish permissions = %v, want %v", wf.Permissions, want)
+			}
+		})
+	}
+	for name := range libraries {
+		t.Errorf("%s missing from repos-config.yaml", name)
+	}
+}
+
 // TestConfiguredPipelinesGate checks that every configured pipeline actually
 // stages something. Grouping workflows without a needs edge changes nothing
 // that matters: GitHub's concurrency limit counts jobs, not workflow runs, so
