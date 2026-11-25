@@ -63,6 +63,7 @@ func TestTransitionCandidates(t *testing.T) {
 		{"applied marker then removed", []RepoConfig{markedRepo}, [][]RepoConfig{{markedRepo, other}, {other}}, marks, true},
 		{"unmarked removal", []RepoConfig{unmarkedRepo}, [][]RepoConfig{{other}}, marks, false},
 		{"no successfully applied marker", []RepoConfig{markedRepo}, [][]RepoConfig{{other}}, map[string]string{}, false},
+		{"intermediate pause cancels", []RepoConfig{markedRepo}, [][]RepoConfig{{{Name: markedRepo.Name, ArchiveOnRemoval: true, SyncPaused: true}, other}, {other}}, marks, false},
 		{"intermediate unmark cancels", []RepoConfig{markedRepo}, [][]RepoConfig{{unmarkedRepo, other}, {other}}, marks, false},
 		{"reintroduction cancels old intent", []RepoConfig{markedRepo}, [][]RepoConfig{{other}, {markedRepo, other}, {other}}, marks, false},
 	} {
@@ -540,5 +541,31 @@ func TestAppliedHistoryRecoversFromInvalidIntermediateConfig(t *testing.T) {
 	restored := write("repositories:\n  - name: org/restored\n")
 	if _, _, _, err := appliedHistory(newBaseline, restored, "org"); err == nil {
 		t.Fatal("an unreadable historical config must fail")
+	}
+}
+
+func TestPausedRepositorySkipsGitHubAndLifecycle(t *testing.T) {
+	ctx := context.Background()
+	client := github.NewClient(&http.Client{Transport: settingsTestTransport(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("paused repository received %s %s", req.Method, req.URL.Path)
+		return nil, nil
+	})})
+	controller := &lifecycleController{owner: "o", repo: "actions", key: testLifecycleKey}
+	repo := RepoConfig{Name: "o/paused", SyncPaused: true, ArchiveOnRemoval: true}
+	repos := []RepoConfig{repo}
+	report := newDriftReport(io.Discard)
+	if err := controller.ensureRepositories(ctx, client, repos, report); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileRepositories(ctx, client, repos, report); err != nil {
+		t.Fatal(err)
+	}
+	state, err := controller.prepareApplied(ctx, client, repos, nil)
+	if err != nil || len(state.Marked) != 0 {
+		t.Fatalf("paused repo armed for archival: %v, %v", state.Marked, err)
+	}
+	key := lifecycleNameKey(controller.key, repo.Name)
+	if err := controller.archiveRemoved(ctx, client, map[string]RepoConfig{key: repo}, repos, report); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -1583,6 +1583,8 @@ repositories:
   #     dingo itself is not a target: its own files hold no version string
   #     the refs rules rewrite.
   - name: blinklabs-io/dingo
+    # Resume after the other repositories complete the shared-actions migration.
+    sync_paused: true
     settings:
       delete_branch_on_merge: true
     collaborators: []
