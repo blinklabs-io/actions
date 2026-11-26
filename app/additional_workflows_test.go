@@ -19,6 +19,8 @@ func TestAdditionalProfileWorkflows(t *testing.T) {
 		{"parent path", true, []WorkflowConfig{{DestinationFile: "../outside.yml"}}, false},
 		{"backslash", true, []WorkflowConfig{{DestinationFile: `nested\pilot.yml`}}, false},
 		{"wrong extension", true, []WorkflowConfig{{DestinationFile: "pilot.txt"}}, false},
+		{"obsolete update workflow", true, []WorkflowConfig{{DestinationFile: "update-issue-on-close.yml"}}, false},
+		{"obsolete test workflow", true, []WorkflowConfig{{DestinationFile: "test-issue-on-close.yml"}}, false},
 		{"yaml extension", true, []WorkflowConfig{{DestinationFile: "pilot.yaml"}}, true},
 		{"joins pipeline", true, []WorkflowConfig{{DestinationFile: "pilot.yml", Pipeline: "ci.yml"}}, false},
 		{"without profile", false, []WorkflowConfig{{DestinationFile: "pilot.yml"}}, false},

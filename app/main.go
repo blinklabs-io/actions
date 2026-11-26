@@ -777,6 +777,11 @@ func expandRepo(cfg *Config, repo *RepoConfig) error {
 		if !additionalWorkflowName.MatchString(extra.DestinationFile) || extra.Pipeline != "" {
 			return fmt.Errorf("repository %q additional workflow requires a safe .yml or .yaml filename and cannot join a pipeline", repo.Name)
 		}
+		for _, obsolete := range obsoleteIssueCloseWorkflowPaths {
+			if ".github/workflows/"+extra.DestinationFile == obsolete {
+				return fmt.Errorf("repository %q additional workflow %q conflicts with obsolete workflow cleanup", repo.Name, extra.DestinationFile)
+			}
+		}
 		for _, existing := range workflows {
 			if extra.DestinationFile == existing.DestinationFile || extra.DestinationFile == existing.Pipeline {
 				return fmt.Errorf("repository %q additional workflow %q collides with a profile workflow", repo.Name, extra.DestinationFile)
