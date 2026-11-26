@@ -31,6 +31,8 @@ func loadRealConfig(t *testing.T) Config {
 	return cfg
 }
 
+const wantAdderSharedReusableSHA = "7328ad66dec3a12676f5a9d1948fa74946712613"
+
 func TestGouroborosGoWorkflowInputs(t *testing.T) {
 	for _, repo := range loadRealConfig(t).Repositories {
 		if repo.Name != "blinklabs-io/gouroboros" {
@@ -541,7 +543,11 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 			}
 			if repo.Name == "blinklabs-io/adder" {
 				file, expected := adderCalls[wf.DestinationFile]
-				want := sharedPrefix + file + "@" + wantDesktopReusableSHA
+				sha := wantAdderSharedReusableSHA
+				if file == "reuseable-publish-desktop.yml" {
+					sha = wantDesktopReusableSHA
+				}
+				want := sharedPrefix + file + "@" + sha
 				if !expected || wf.ReusableWorkflow != want {
 					t.Errorf("Adder %s must use the reviewed public workflow %q, got %q", wf.DestinationFile, want, wf.ReusableWorkflow)
 				}
@@ -969,7 +975,7 @@ func TestExplicitReleaseDispatchersUseReviewedContract(t *testing.T) {
 			found = true
 			sha := "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
 			if repo.Name == "blinklabs-io/adder" {
-				sha = wantDesktopReusableSHA
+				sha = wantAdderSharedReusableSHA
 			}
 			want := "blinklabs-io/shared-actions/.github/workflows/reuseable-release-dispatch.yml@" + sha
 			if wf.ReusableWorkflow != want || wf.PinToLatestChange {
