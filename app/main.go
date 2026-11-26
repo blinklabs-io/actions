@@ -131,6 +131,8 @@ type RepoConfig struct {
 	Teams            []TeamGrant                 `yaml:"teams"`
 	BranchProtection []BranchProtection          `yaml:"branch_protection"`
 	Workflows        []WorkflowConfig            `yaml:"workflows"`
+	// AdditionalWorkflows extends a profile without replacing its shared workflows.
+	AdditionalWorkflows []WorkflowConfig `yaml:"additional_workflows"`
 	// ReleaseFanout lists downstream repositories that pin this repository's
 	// released version; see fanout.go.
 	ReleaseFanout []FanoutTarget `yaml:"release_fanout"`
@@ -708,8 +710,13 @@ func expandProfiles(cfg *Config) error {
 // expandProfiles so discovered repositories can be expanded and validated one
 // at a time — a bad marker then skips only that repository instead of aborting
 // the whole run (see mergeDiscovered).
+var additionalWorkflowName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.ya?ml$`)
+
 func expandRepo(cfg *Config, repo *RepoConfig) error {
 	if repo.Profile == "" {
+		if len(repo.AdditionalWorkflows) != 0 {
+			return fmt.Errorf("repository %q sets additional_workflows without a profile", repo.Name)
+		}
 		return nil
 	}
 
@@ -766,8 +773,20 @@ func expandRepo(cfg *Config, repo *RepoConfig) error {
 			return fmt.Errorf("repository %q override targets unknown workflow %q", repo.Name, dest)
 		}
 	}
+	for _, extra := range repo.AdditionalWorkflows {
+		if !additionalWorkflowName.MatchString(extra.DestinationFile) || extra.Pipeline != "" {
+			return fmt.Errorf("repository %q additional workflow requires a safe .yml or .yaml filename and cannot join a pipeline", repo.Name)
+		}
+		for _, existing := range workflows {
+			if extra.DestinationFile == existing.DestinationFile || extra.DestinationFile == existing.Pipeline {
+				return fmt.Errorf("repository %q additional workflow %q collides with a profile workflow", repo.Name, extra.DestinationFile)
+			}
+		}
+		workflows = append(workflows, cloneWorkflow(extra))
+	}
 
 	repo.Workflows = workflows
+	repo.AdditionalWorkflows = nil
 	repo.Profile = ""
 	repo.Vars = nil
 	repo.Overrides = nil
