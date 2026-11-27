@@ -295,7 +295,7 @@ jobs:
         run: |
           echo "A selected lint platform is not present in the platforms input." >&2
           exit 1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0 https://github.com/actions/setup-go/releases/tag/v7.1.0
         with:
           go-version: ${{ matrix.go-version }}
           check-latest: true
@@ -671,7 +671,7 @@ jobs:
         with:
           submodules: ${{ inputs.submodules }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0 https://github.com/actions/setup-go/releases/tag/v7.1.0
         with:
           go-version: ${{ inputs.cross-build-go-version }}
           check-latest: true

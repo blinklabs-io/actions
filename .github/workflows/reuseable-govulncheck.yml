@@ -52,7 +52,7 @@ jobs:
         with:
           submodules: ${{ inputs.submodules }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0 https://github.com/actions/setup-go/releases/tag/v7.1.0
         with:
           go-version: ${{ inputs.go-version }}
           check-latest: true
@@ -87,6 +87,6 @@ jobs:
         with:
           args: '-no-fail -fmt sarif -out results.sarif ./...'
       - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3 https://github.com/github/codeql-action/releases/tag/v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4 https://github.com/github/codeql-action/releases/tag/v4.39.4
         with:
           sarif_file: results.sarif
