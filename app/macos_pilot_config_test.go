@@ -82,3 +82,18 @@ func TestMacOSPilotWorkflowSettings(t *testing.T) {
 		t.Errorf("missing pilot repositories: %v", cases)
 	}
 }
+
+func TestAdderReleaseUsesVerifiedPilotSettings(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/adder" {
+			continue
+		}
+		pilot := findWorkflow(t, repo.Workflows, "test-macos-release.yml")
+		publish := findWorkflow(t, repo.Workflows, "publish.yml")
+		if pilot.Params["config"] == "" || pilot.Params["config"] != publish.Params["macos-release-config"] {
+			t.Fatal("Adder release must use the same macOS settings as the signed pilot")
+		}
+		return
+	}
+	t.Fatal("Adder is missing from governance configuration")
+}
