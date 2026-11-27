@@ -1285,6 +1285,24 @@ repositories:
           # Intel .pkg fails reproducibly on macos-15-intel runners, so adder
           # ships macOS for Apple silicon only.
           binary-target-matrix: '[{"runner":"macos-15","os":"darwin","arch":"arm64","tray":true},{"runner":"ubuntu-26.04","os":"freebsd","arch":"amd64","tray":false},{"runner":"ubuntu-26.04","os":"freebsd","arch":"arm64","tray":false},{"runner":"ubuntu-26.04","os":"linux","arch":"amd64","tray":true},{"runner":"ubuntu-26.04-arm","os":"linux","arch":"arm64","tray":true},{"runner":"windows-latest","os":"windows","arch":"amd64","tray":true},{"runner":"windows-11-arm","os":"windows","arch":"arm64","tray":true}]'
+      - destination_file: test-macos-release.yml
+        workflow_name: "test-macos-release"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-test-macos-release.yml@a80f7002ed898be8536905f5a59002fce59890c4"
+        triggers:
+          workflow_dispatch:
+        permissions:
+          contents: read
+        secrets: &macos_pilot_secrets
+          apple-certificate: APPLE_CERTIFICATE
+          apple-certificate-password: APPLE_CERTIFICATE_PASSWORD
+          apple-installer-certificate: APPLE_INSTALLER_CERTIFICATE
+          apple-installer-certificate-password: APPLE_CERTIFICATE_PASSWORD
+          apple-keychain-password: APPLE_KEYCHAIN_PASSWORD
+          apple-id: APPLE_ID
+          apple-app-specific-password: APPLE_APP_SPECIFIC_PASSWORD
+          apple-team-id: APPLE_TEAM_ID
+        params:
+          config: '{"artifact_type":"pkg","artifact_basename":"adder","build":{"binaries":[{"name":"adder","module":".","package":"./cmd/adder","cgo":false,"tags":["nodbus"]},{"name":"adder-tray","module":".","package":"./cmd/adder-tray","cgo":true,"tags":[]}]},"metadata":{"application_name":"Adder","bundle_id":"io.blinklabs.adder","executable":"adder-tray","icon_name":"adder","cli_symlink":"adder"},"icon":".github/assets/Adder.icns"}'
       - destination_file: release-fanout.yml
         workflow_name: "release-fanout"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-release-dispatch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
@@ -1395,6 +1413,35 @@ repositories:
           cross-build-go-version: "1.26.x"
           build-packages: "./cmd/bursa"
           cross-build-targets: '[{"os":"darwin","arch":"arm64"},{"os":"freebsd","arch":"amd64"},{"os":"freebsd","arch":"arm64"},{"os":"linux","arch":"amd64"},{"os":"linux","arch":"arm64"},{"os":"windows","arch":"amd64"},{"os":"windows","arch":"arm64"}]'
+
+    additional_workflows:
+      - destination_file: test-macos-release.yml
+        workflow_name: "test-macos-release"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-test-macos-release.yml@a80f7002ed898be8536905f5a59002fce59890c4"
+        triggers:
+          workflow_dispatch:
+        permissions:
+          contents: read
+        secrets: *macos_pilot_secrets
+        params:
+          node-version: "22.x"
+          config: '{"artifact_type":"pkg","artifact_basename":"bursa-wallet","build":{"binaries":[{"name":"bursa-wallet","module":"ui","package":"./cmd/bursa-wallet","cgo":true,"tags":["webview"]}],"web":{"directory":"ui/web","dist":"ui/web/dist","embed":"ui/internal/webui/dist","reuse":false,"placeholder":"Pre-build placeholder"}},"metadata":{"application_name":"Bursa","bundle_id":"com.blinklabssoftware.bursa","executable":"bursa-wallet","icon_name":"bursa"},"icon":".github/assets/Bursa.icns"}'
+      - destination_file: test-macos-cli-release.yml
+        workflow_name: "test-macos-cli-release"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-test-macos-release.yml@a80f7002ed898be8536905f5a59002fce59890c4"
+        triggers:
+          workflow_dispatch:
+        permissions:
+          contents: read
+        secrets:
+          apple-certificate: APPLE_CERTIFICATE
+          apple-certificate-password: APPLE_CERTIFICATE_PASSWORD
+          apple-keychain-password: APPLE_KEYCHAIN_PASSWORD
+          apple-id: APPLE_ID
+          apple-app-specific-password: APPLE_APP_SPECIFIC_PASSWORD
+          apple-team-id: APPLE_TEAM_ID
+        params:
+          config: '{"artifact_type":"zip","artifact_basename":"bursa","build":{"binaries":[{"name":"bursa","module":".","package":"./cmd/bursa","cgo":false,"tags":[]}],"version_prefix":"preserve"},"cli_binary":"bursa","signing_identifier":"com.blinklabssoftware.bursa"}'
 
   # dingo is a Cardano node written in Go. Like bursa, its CI/release surface is
   # a hand-tuned monorepo pipeline that the shared reusable workflows cannot

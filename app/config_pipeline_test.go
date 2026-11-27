@@ -32,6 +32,7 @@ func loadRealConfig(t *testing.T) Config {
 }
 
 const wantAdderSharedReusableSHA = "7328ad66dec3a12676f5a9d1948fa74946712613"
+const wantMacOSPilotSHA = "a80f7002ed898be8536905f5a59002fce59890c4"
 
 func TestGouroborosGoWorkflowInputs(t *testing.T) {
 	for _, repo := range loadRealConfig(t).Repositories {
@@ -462,6 +463,7 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 		"ci-docker.yml":            "reuseable-ci-docker-multiarch.yml",
 		"publish.yml":              "reuseable-publish-desktop.yml",
 		"release-fanout.yml":       "reuseable-release-dispatch.yml",
+		"test-macos-release.yml":   "reuseable-test-macos-release.yml",
 	}
 	data, err := os.ReadFile("../repos-config.yaml")
 	if err != nil {
@@ -546,6 +548,9 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 				sha := wantAdderSharedReusableSHA
 				if file == "reuseable-publish-desktop.yml" {
 					sha = wantDesktopReusableSHA
+				}
+				if file == "reuseable-test-macos-release.yml" {
+					sha = wantMacOSPilotSHA
 				}
 				want := sharedPrefix + file + "@" + sha
 				if !expected || wf.ReusableWorkflow != want {
@@ -698,8 +703,10 @@ func TestMigratedWorkflowsUseReviewedPublicRevision(t *testing.T) {
 			"publish.yml":              "reuseable-flutter.yml",
 		},
 		"blinklabs-io/bursa": {
-			"go-test.yml":              "reuseable-go-test.yml",
-			"conventional-commits.yml": "reuseable-conventional-commits.yml",
+			"go-test.yml":                "reuseable-go-test.yml",
+			"conventional-commits.yml":   "reuseable-conventional-commits.yml",
+			"test-macos-release.yml":     "reuseable-test-macos-release.yml",
+			"test-macos-cli-release.yml": "reuseable-test-macos-release.yml",
 		},
 		"blinklabs-io/cardano-compose-stacks": {
 			"conventional-commits.yml": "reuseable-conventional-commits.yml",
@@ -835,6 +842,9 @@ func TestMigratedWorkflowsUseReviewedPublicRevision(t *testing.T) {
 		for _, wf := range repo.Workflows {
 			file, expected := calls[wf.DestinationFile]
 			revision := workflowSHA
+			if file == "reuseable-test-macos-release.yml" {
+				revision = wantMacOSPilotSHA
+			}
 			if repo.Name == "blinklabs-io/adder-mobile" && wf.DestinationFile == "publish.yml" {
 				revision = flutterAPKWorkflowSHA
 				tmpl, err := newWorkflowTemplate(t)
