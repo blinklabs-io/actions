@@ -131,6 +131,8 @@ type RepoConfig struct {
 	Teams            []TeamGrant                 `yaml:"teams"`
 	BranchProtection []BranchProtection          `yaml:"branch_protection"`
 	Workflows        []WorkflowConfig            `yaml:"workflows"`
+	// ManagedConfigs are JSON objects written under .github/governance/.
+	ManagedConfigs map[string]string `yaml:"managed_configs"`
 	// AdditionalWorkflows extends a profile without replacing its shared workflows.
 	AdditionalWorkflows []WorkflowConfig `yaml:"additional_workflows"`
 	// ReleaseFanout lists downstream repositories that pin this repository's
@@ -552,7 +554,7 @@ func reconcileRepositoriesWithIdentities(ctx context.Context, client, dingoClien
 		} else if fileClient == nil {
 			report.change("managed files", "workflow pull request token", "", "").status = "unchecked"
 			repoErr = errors.Join(repoErr, errors.New("dingo workflow pull request token unavailable"))
-		} else if err := syncWorkflows(repoCtx, fileClient, owner, repoName, repo.Workflows, repo.Dependabot); err != nil {
+		} else if err := syncWorkflowsWithConfigs(repoCtx, fileClient, owner, repoName, repo.Workflows, repo.Dependabot, repo.ManagedConfigs); err != nil {
 			report.diagnostic("managed file reconciliation failed")
 			repoErr = errors.Join(repoErr, err)
 		}
@@ -689,6 +691,9 @@ func expandProfiles(cfg *Config) error {
 		cfg.Repositories[i].skipPrivateBranchProtection = cfg.GitHubFree
 		if err := expandRepo(cfg, &cfg.Repositories[i]); err != nil {
 			return err
+		}
+		if err := validateManagedConfigs(cfg.Repositories[i].ManagedConfigs); err != nil {
+			return fmt.Errorf("repository %q: %w", cfg.Repositories[i].Name, err)
 		}
 		if err := validateRepoSettings(cfg.Repositories[i].Settings); err != nil {
 			return fmt.Errorf("repository %q: %w", cfg.Repositories[i].Name, err)
@@ -2006,7 +2011,30 @@ func declaresWorkflowCall(on yaml.Node) bool {
 	return false
 }
 
+var managedConfigName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+func validateManagedConfigs(configs map[string]string) error {
+	for name, raw := range configs {
+		var object map[string]json.RawMessage
+		if !managedConfigName.MatchString(name) || json.Unmarshal([]byte(raw), &object) != nil || object == nil {
+			return fmt.Errorf("managed config %q must have a safe name and a JSON object", name)
+		}
+	}
+	return nil
+}
+
 func syncWorkflows(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig, dependabotConfig ...string) error {
+	dependabot := ""
+	if len(dependabotConfig) > 0 {
+		dependabot = dependabotConfig[0]
+	}
+	return syncWorkflowsWithConfigs(ctx, client, owner, repo, workflows, dependabot, nil)
+}
+
+func syncWorkflowsWithConfigs(ctx context.Context, client *github.Client, owner, repo string, workflows []WorkflowConfig, dependabot string, configs map[string]string) error {
+	if err := validateManagedConfigs(configs); err != nil {
+		return err
+	}
 	// Fetch repo info once to get the actual default branch name.
 	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
 	if err != nil || repoInfo == nil || repoInfo.GetDefaultBranch() == "" {
@@ -2017,10 +2045,6 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 		return errors.New("could not observe repository for managed files")
 	}
 	defaultBranch := repoInfo.GetDefaultBranch()
-	dependabot := ""
-	if len(dependabotConfig) > 0 {
-		dependabot = dependabotConfig[0]
-	}
 
 	tmpl, err := buildWorkflowTemplate("templates/workflow.tmpl")
 	if err != nil {
@@ -2090,6 +2114,19 @@ func syncWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 	stageObsoleteFanoutWrapper(ctx, client, owner, repo, batch, workflows)
 	if dependabot != "" {
 		stageManagedFile(ctx, client, owner, repo, batch, ".github/dependabot.yml", []byte(dependabot))
+	}
+	configNames := make([]string, 0, len(configs))
+	for name := range configs {
+		configNames = append(configNames, name)
+	}
+	sort.Strings(configNames)
+	for _, name := range configNames {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, []byte(configs[name])); err != nil {
+			return fmt.Errorf("managed config %q: %w", name, err)
+		}
+		compact.WriteByte('\n')
+		stageManagedFile(ctx, client, owner, repo, batch, ".github/governance/"+name+".json", compact.Bytes())
 	}
 
 	return flushBatch(ctx, client, owner, repo, defaultBranch, batch)

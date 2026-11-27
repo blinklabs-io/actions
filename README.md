@@ -492,6 +492,12 @@ repositories:
 ```
 
 To onboard or change a repository, edit `repos-config.yaml` and push to `main`.
+Repository entries may declare `managed_configs` as a mapping of safe names to
+JSON objects encoded as strings. The controller writes each object to
+`.github/governance/<name>.json` in the same commit as workflow changes, so
+product workflows can consume centrally defined settings. Names use lowercase
+letters, digits and hyphens. Removing an entry stops managing its file; it does
+not delete the file.
 An explicitly listed repository that does not exist is created with an initial
 README. New repositories are public by default. The `private: true` setting
 controls creation only and does not change an existing repository's visibility.
