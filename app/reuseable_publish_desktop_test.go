@@ -149,7 +149,7 @@ var commitSHARef = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // squash-merges, so a branch commit is unreachable once the branch is deleted
 // and GitHub Actions then fails to resolve the reusable ("cannot find
 // workflow") before any job is created.
-const wantDesktopReusableSHA = "4de297c45676130a4ff441f6a587f3a1087af6c4"
+const wantDesktopReusableSHA = "a80f7002ed898be8536905f5a59002fce59890c4"
 
 // TestAdderPublishPinnedToImmutableRef enforces the repository policy that a
 // secret-bearing release call must reference a frozen commit SHA, not a mutable
@@ -177,7 +177,22 @@ func TestAdderPublishPinnedToImmutableRef(t *testing.T) {
 // drift: every secret and param key adder maps must be a declared input/secret
 // of the reusable, otherwise the workflow call fails validation at runtime.
 func TestAdderPublishSecretsAndParamsAreDeclared(t *testing.T) {
-	inputs, secrets, _ := loadPublishDesktopWorkflow(t)
+	data, err := os.ReadFile("testdata/shared-desktop-call.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract struct {
+		On struct {
+			WorkflowCall struct {
+				Inputs  map[string]yaml.Node `yaml:"inputs"`
+				Secrets map[string]yaml.Node `yaml:"secrets"`
+			} `yaml:"workflow_call"`
+		} `yaml:"on"`
+	}
+	if err := yaml.Unmarshal(data, &contract); err != nil {
+		t.Fatal(err)
+	}
+	inputs, secrets := contract.On.WorkflowCall.Inputs, contract.On.WorkflowCall.Secrets
 	wf := adderPublishWorkflow(t)
 
 	for key := range wf.Secrets {

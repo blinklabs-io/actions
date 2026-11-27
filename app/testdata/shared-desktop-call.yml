@@ -1,0 +1,127 @@
+# workflow_call from shared-actions at a80f7002ed898be8536905f5a59002fce59890c4
+on:
+  workflow_call:
+    inputs:
+      application-name:
+        description: Base name of the application binary (e.g. adder). The tray binary is "<application-name>-tray".
+        required: true
+        type: string
+      go-version:
+        description: Go toolchain version to build with.
+        required: false
+        type: string
+        default: "1.26.x"
+      docker-image:
+        description: Docker Hub image name (e.g. blinklabs/adder). Leave empty to skip Docker Hub and publish to GHCR only.
+        required: false
+        type: string
+        default: ""
+      dockerhub-username:
+        description: Docker Hub username used for login and the description update.
+        required: false
+        type: string
+        default: blinklabs
+      description:
+        description: Short description for the Docker Hub repository. Empty skips the description update.
+        required: false
+        type: string
+        default: ""
+      tray-icon:
+        description: Repo-relative path to the tray icon used by fyne-cross (FreeBSD tray builds).
+        required: false
+        type: string
+        default: .github/assets/adder-logo-with-buffer.png
+      fyne-cross-version:
+        description: fyne-cross version to install for FreeBSD tray cross-compilation.
+        required: false
+        type: string
+        default: v1.6.2
+      windows-signing-name:
+        description: Display name embedded in the Windows Authenticode signature. Empty falls back to application-name.
+        required: false
+        type: string
+        default: ""
+      project-url:
+        description: Project URL embedded in the Windows signature. Empty falls back to the caller repository URL.
+        required: false
+        type: string
+        default: ""
+      macos-release-config:
+        description: JSON product settings for the shared macOS release action. Empty preserves the legacy packaging contract.
+        required: false
+        type: string
+        default: ""
+      apple-signing-org:
+        description: Organization name in the Apple Developer ID identities (e.g. "Blink Labs Software").
+        required: false
+        type: string
+        default: Blink Labs Software
+      windows-tsa-url:
+        description: RFC 3161 timestamp authority URL for jsign.
+        required: false
+        type: string
+        default: http://timestamp.globalsign.com/tsa/r6advanced1
+      enable-trivy-scan:
+        description: Scan the published multi-arch image for HIGH/CRITICAL vulnerabilities with Trivy and upload SARIF. On by default.
+        required: false
+        type: boolean
+        default: true
+      max-parallel:
+        description: Maximum number of build-binaries matrix jobs running at once. build-images runs its two jobs beside them, and two of the eight default rows are macOS (the org has 5 macOS slots), so the default keeps a release at four jobs.
+        required: false
+        type: string
+        default: "2"
+      binary-target-matrix:
+        description: >-
+          JSON array of build-binaries rows, each with runner, os, arch, and tray
+          (false builds only the core binary). The default builds every target;
+          a caller drops a target by passing the list without that row. darwin
+          rows need a native macOS runner per arch because the Fyne tray needs
+          CGO, and the two darwin rows sit at opposite ends so a max-parallel of
+          2 does not hold two macOS slots at once.
+        required: false
+        type: string
+        default: '[{"runner":"macos-15","os":"darwin","arch":"arm64","tray":true},{"runner":"ubuntu-26.04","os":"freebsd","arch":"amd64","tray":false},{"runner":"ubuntu-26.04","os":"freebsd","arch":"arm64","tray":false},{"runner":"ubuntu-26.04","os":"linux","arch":"amd64","tray":true},{"runner":"ubuntu-26.04-arm","os":"linux","arch":"arm64","tray":true},{"runner":"windows-latest","os":"windows","arch":"amd64","tray":true},{"runner":"windows-11-arm","os":"windows","arch":"arm64","tray":true},{"runner":"macos-15-intel","os":"darwin","arch":"amd64","tray":true}]'
+    secrets:
+      docker-password:
+        description: Docker Hub access token. Required when docker-image is set.
+        required: false
+      apple-certificate:
+        description: Base64 Developer ID Application certificate (.p12). Required for signed macOS builds.
+        required: false
+      apple-certificate-password:
+        description: Password for the Developer ID Application certificate.
+        required: false
+      apple-installer-certificate:
+        description: Base64 Developer ID Installer certificate (.p12). Required to sign the .pkg.
+        required: false
+      apple-installer-certificate-password:
+        description: Password for the Developer ID Installer certificate.
+        required: false
+      apple-keychain-password:
+        description: Password for the temporary build keychain.
+        required: false
+      apple-id:
+        description: Apple ID email used for notarization.
+        required: false
+      apple-app-specific-password:
+        description: App-specific password for the Apple ID used by notarytool.
+        required: false
+      apple-team-id:
+        description: Apple Developer Team ID.
+        required: false
+      certificate-sa-credentials:
+        description: Google Cloud service-account JSON used to mint a KMS access token for jsign.
+        required: false
+      certificate-chain:
+        description: Base64 PEM certificate chain for the Windows code-signing certificate.
+        required: false
+      certificate-store-type:
+        description: jsign storetype for the Windows signing keystore (e.g. GOOGLECLOUD).
+        required: false
+      certificate-keystore:
+        description: jsign keystore reference (e.g. Google Cloud KMS keyring resource).
+        required: false
+      certificate-key-name:
+        description: jsign alias / key name within the keystore.
+        required: false

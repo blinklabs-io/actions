@@ -1176,9 +1176,9 @@ repositories:
   # signed+notarized .pkg, Windows signed .msi, Linux/FreeBSD tarballs, native
   # multi-arch Docker images, and per-artifact build-provenance attestations) is
   # driven by the shared reuseable-publish-desktop.yml workflow below. The
-  # repo-specific packaging scripts (packaging/macos/build-pkg.sh,
-  # packaging/windows/build-msi.ps1) and Makefile targets that workflow invokes
-  # remain in-repo. test-msi.yml is a manual (workflow_dispatch) MSI smoke-test
+  # macOS package uses the shared release action and the settings below; the
+  # Windows packaging script and Makefile targets remain in-repo. test-msi.yml
+  # is a manual (workflow_dispatch) MSI smoke-test
   # harness with no shared equivalent, so it stays managed in-repo. The CI
   # checks below use the shared reusable workflows, passing adder's Fyne system
   # dependencies and CGO requirements.
@@ -1240,7 +1240,7 @@ repositories:
         # SHA ("cannot find workflow"), which fails the caller before any job is
         # created. Always pin to a commit that lands on main (the squash/merge
         # commit), never to a feature-branch commit.
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish-desktop.yml@4de297c45676130a4ff441f6a587f3a1087af6c4"
+        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-publish-desktop.yml@a80f7002ed898be8536905f5a59002fce59890c4"
         triggers:
           push:
             branches: [main]
@@ -1276,6 +1276,7 @@ repositories:
           certificate-key-name: CERTIFICATE_KEY_NAME
         params:
           application-name: "adder"
+          macos-release-config: &adder_macos_config '{"artifact_type":"pkg","artifact_basename":"adder","build":{"binaries":[{"name":"adder","module":".","package":"./cmd/adder","cgo":false,"tags":["nodbus"]},{"name":"adder-tray","module":".","package":"./cmd/adder-tray","cgo":true,"tags":[]}]},"metadata":{"application_name":"Adder","bundle_id":"io.blinklabs.adder","executable":"adder-tray","icon_name":"adder","cli_symlink":"adder"},"icon":".github/assets/Adder.icns"}'
           docker-image: "blinklabs/adder"
           description: "Adder is a tool for tailing the Cardano blockchain and emitting events"
           # Preserve the capitalized Authenticode display name the in-repo
@@ -1302,7 +1303,7 @@ repositories:
           apple-app-specific-password: APPLE_APP_SPECIFIC_PASSWORD
           apple-team-id: APPLE_TEAM_ID
         params:
-          config: '{"artifact_type":"pkg","artifact_basename":"adder","build":{"binaries":[{"name":"adder","module":".","package":"./cmd/adder","cgo":false,"tags":["nodbus"]},{"name":"adder-tray","module":".","package":"./cmd/adder-tray","cgo":true,"tags":[]}]},"metadata":{"application_name":"Adder","bundle_id":"io.blinklabs.adder","executable":"adder-tray","icon_name":"adder","cli_symlink":"adder"},"icon":".github/assets/Adder.icns"}'
+          config: *adder_macos_config
       - destination_file: release-fanout.yml
         workflow_name: "release-fanout"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-release-dispatch.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
@@ -1425,7 +1426,7 @@ repositories:
         secrets: *macos_pilot_secrets
         params:
           node-version: "22.x"
-          config: '{"artifact_type":"pkg","artifact_basename":"bursa-wallet","build":{"binaries":[{"name":"bursa-wallet","module":"ui","package":"./cmd/bursa-wallet","cgo":true,"tags":["webview"]}],"web":{"directory":"ui/web","dist":"ui/web/dist","embed":"ui/internal/webui/dist","reuse":false,"placeholder":"Pre-build placeholder"}},"metadata":{"application_name":"Bursa","bundle_id":"com.blinklabssoftware.bursa","executable":"bursa-wallet","icon_name":"bursa"},"icon":".github/assets/Bursa.icns"}'
+          config: &bursa_wallet_macos '{"artifact_type":"pkg","artifact_basename":"bursa-wallet","build":{"binaries":[{"name":"bursa-wallet","module":"ui","package":"./cmd/bursa-wallet","cgo":true,"tags":["webview"]}],"web":{"directory":"ui/web","dist":"ui/web/dist","embed":"ui/internal/webui/dist","reuse":false,"placeholder":"Pre-build placeholder"}},"metadata":{"application_name":"Bursa","bundle_id":"com.blinklabssoftware.bursa","executable":"bursa-wallet","icon_name":"bursa"},"icon":".github/assets/Bursa.icns"}'
       - destination_file: test-macos-cli-release.yml
         workflow_name: "test-macos-cli-release"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-test-macos-release.yml@a80f7002ed898be8536905f5a59002fce59890c4"
@@ -1441,7 +1442,12 @@ repositories:
           apple-app-specific-password: APPLE_APP_SPECIFIC_PASSWORD
           apple-team-id: APPLE_TEAM_ID
         params:
-          config: '{"artifact_type":"zip","artifact_basename":"bursa","build":{"binaries":[{"name":"bursa","module":".","package":"./cmd/bursa","cgo":false,"tags":[]}],"version_prefix":"preserve"},"cli_binary":"bursa","signing_identifier":"com.blinklabssoftware.bursa"}'
+          config: &bursa_cli_macos '{"artifact_type":"zip","artifact_basename":"bursa","build":{"binaries":[{"name":"bursa","module":".","package":"./cmd/bursa","cgo":false,"tags":[]}],"version_prefix":"preserve"},"cli_binary":"bursa","signing_identifier":"com.blinklabssoftware.bursa"}'
+
+    # Product workflows read the same settings exercised by the signed pilots.
+    managed_configs:
+      macos-wallet: *bursa_wallet_macos
+      macos-cli: *bursa_cli_macos
 
   # dingo is a Cardano node written in Go. Like bursa, its CI/release surface is
   # a hand-tuned monorepo pipeline that the shared reusable workflows cannot
