@@ -546,6 +546,9 @@ func TestConfiguredPrivilegedWorkflowsUseSafeRefs(t *testing.T) {
 			if repo.Name == "blinklabs-io/adder" {
 				file, expected := adderCalls[wf.DestinationFile]
 				sha := wantAdderSharedReusableSHA
+				if file == "reuseable-conventional-commits.yml" {
+					sha = "d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+				}
 				if file == "reuseable-publish-desktop.yml" {
 					sha = wantDesktopReusableSHA
 				}
@@ -1113,7 +1116,8 @@ func TestConfiguredConventionalCommitsPermissions(t *testing.T) {
 	check := func(repo string, workflow WorkflowConfig, workflows []WorkflowConfig) {
 		t.Helper()
 		path, ref, ok := strings.Cut(workflow.ReusableWorkflow, "@")
-		if !ok || ref == "" || (path != "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml" && path != "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml") {
+		localSelfTest := repo == "blinklabs-io/shared-actions" && workflow.ReusableWorkflow == "./.github/workflows/reuseable-conventional-commits.yml"
+		if !localSelfTest && (!ok || ref == "" || (path != "blinklabs-io/actions/.github/workflows/reuseable-conventional-commits.yml" && path != "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml")) {
 			t.Errorf("%s: unexpected conventional commits workflow %q", repo, workflow.ReusableWorkflow)
 			return
 		}

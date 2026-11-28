@@ -206,15 +206,12 @@ profiles:
   repository-standard-pinned:
     <<: *repository-standard
     workflows:
-      - <<: *conventional-commits
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        pin_to_latest_change: false
+      - *conventional-commits
 
   helm-charts-standard:
     <<: *repository-standard
     workflows:
-      - <<: *conventional-commits
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
+      - *conventional-commits
       - destination_file: publish-helm-charts.yml
         workflow_name: "Publish Helm Charts"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-helm-publish.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
@@ -382,13 +379,7 @@ profiles:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: go-test.yml
         pipeline: ci.yml
@@ -478,6 +469,10 @@ repositories:
     branch_protection:
       - branch: main
         <<: *branch_protection_defaults
+    workflows:
+      # Test changes to the reusable workflow from the pull request itself.
+      - <<: *conventional-commits
+        reusable_workflow: "./.github/workflows/reuseable-conventional-commits.yml"
 
   - name: blinklabs-io/tx-submit-api
     settings:
@@ -489,13 +484,7 @@ repositories:
         # confirms the generated workflow check names (orchestrate / <job>).
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: go-test.yml
         pipeline: ci.yml
@@ -640,13 +629,7 @@ repositories:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: go-test.yml
         pipeline: ci.yml
@@ -1014,13 +997,7 @@ repositories:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: ci-docker.yml
         workflow_name: "Docker CI"
@@ -1185,8 +1162,7 @@ repositories:
   - name: blinklabs-io/adder
     <<: *repository-standard
     workflows:
-      - <<: *conventional-commits
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@7328ad66dec3a12676f5a9d1948fa74946712613"
+      - *conventional-commits
 
       - <<: *go-test-standard
         pipeline: ci.yml
@@ -1335,13 +1311,7 @@ repositories:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: pr.yml
         workflow_name: "PR"
@@ -1487,14 +1457,8 @@ repositories:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        # Dingo requires every reusable workflow reference to be immutable.
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      # Dingo requires every reusable workflow reference to be immutable.
+      - *conventional-commits
       - destination_file: release-fanout.yml
         workflow_name: "release-fanout"
         reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-release-dispatch.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
@@ -1887,13 +1851,7 @@ repositories:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: go-test.yml
         pipeline: ci.yml
@@ -2006,13 +1964,7 @@ repositories:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: go-test.yml
         supersedes: [golangci-lint.yml, nilaway.yml]
@@ -2151,13 +2103,7 @@ repositories:
       - branch: main
         <<: *branch_protection_defaults
     workflows:
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
       - destination_file: go-test.yml
         pipeline: ci.yml
@@ -2292,13 +2238,7 @@ repositories:
           build-packages: "./cmd/dns-cli"
           run-race-test: "true"
           forbidden-go-imports: 'github.com/Salvionied/apollo([^/]|$)'
-      - destination_file: conventional-commits.yml
-        workflow_name: "Conventional Commits"
-        reusable_workflow: "blinklabs-io/shared-actions/.github/workflows/reuseable-conventional-commits.yml@d90d0eef9c2d00ecac430e1b184ac2993ac768fb"
-        triggers:
-          pull_request:
-        permissions:
-          contents: read
+      - *conventional-commits
 
   # Public, active repositories onboarded to baseline governance. Their
   # repository-specific CI and release workflows remain in place for now.
