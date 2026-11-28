@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -281,16 +282,31 @@ func TestPlutigoGoWorkflowInputs(t *testing.T) {
 	t.Fatal("plutigo is missing from repos-config.yaml")
 }
 
-func TestOuroborosMockKeepsLocalWorkflows(t *testing.T) {
+func TestOuroborosMockSharedGoCI(t *testing.T) {
 	for _, repo := range loadRealConfig(t).Repositories {
 		if repo.Name != "blinklabs-io/ouroboros-mock" {
 			continue
+		}
+		workflow := findWorkflow(t, repo.Workflows, "go-test.yml")
+		for key, want := range map[string]string{
+			"submodules": "true", "pre-test-command": "make prepare-blueprint-testdata",
+			"extra-test-packages": "./conformance/...", "extra-test-flags": "-race -timeout 15m -v",
+			"golangci-go-version": "1.26.x", "nilaway-include-pkgs": "github.com/blinklabs-io/ouroboros-mock",
+			"run-golangci-lint": "true", "run-nilaway": "true",
+		} {
+			if got := workflow.Params[key]; got != want {
+				t.Errorf("go-test %s = %q, want %q", key, got, want)
+			}
+		}
+		publish := findWorkflow(t, repo.Workflows, "publish.yml")
+		if workflow.Pipeline != "ci.yml" || !reflect.DeepEqual(publish.Needs, []string{"go-test"}) {
+			t.Error("release must follow shared Go CI")
 		}
 		checkPaths := func(operation string, paths ...string) {
 			t.Helper()
 			for _, path := range paths {
 				switch path {
-				case ".github/workflows/go-test.yml", ".github/workflows/reproducibility.yml":
+				case ".github/workflows/reproducibility.yml":
 					t.Errorf("sync would %s repository-owned workflow %s", operation, path)
 				}
 			}
@@ -302,11 +318,29 @@ func TestOuroborosMockKeepsLocalWorkflows(t *testing.T) {
 		}
 		for _, members := range pipelines {
 			checkPaths("write", ".github/workflows/"+members[0].Pipeline)
-			checkPaths("delete", supersededWorkflowPaths(members, repo.Workflows)...)
+			removed := supersededWorkflowPaths(members, repo.Workflows)
+			checkPaths("delete", removed...)
+			if members[0].Pipeline == "ci.yml" && !slices.Contains(removed, ".github/workflows/go-test.yml") {
+				t.Error("shared CI must remove the old local Go workflow atomically")
+			}
 		}
 		return
 	}
 	t.Fatal("ouroboros-mock is missing from repos-config.yaml")
+}
+
+func TestSignTestUsesStandardGoCI(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/sign-test" {
+			continue
+		}
+		workflow := findWorkflow(t, repo.Workflows, "go-test.yml")
+		if !strings.Contains(workflow.ReusableWorkflow, "/reuseable-go-test.yml@") || workflow.Params["run-golangci-lint"] != "true" || workflow.Params["run-nilaway"] != "true" {
+			t.Error("sign-test must use the standard shared Go checks")
+		}
+		return
+	}
+	t.Fatal("sign-test is missing from repos-config.yaml")
 }
 
 func TestDingoOperatorGoCI(t *testing.T) {
@@ -656,8 +690,7 @@ func TestMigratedWorkflowsUseReviewedPublicRevision(t *testing.T) {
 		},
 		"blinklabs-io/ouroboros-mock": {
 			"conventional-commits.yml": "reuseable-conventional-commits.yml",
-			"golangci-lint.yml":        "reuseable-golangci-lint.yml",
-			"nilaway.yml":              "reuseable-nilaway.yml",
+			"go-test.yml":              "reuseable-go-test.yml",
 			"publish.yml":              "reuseable-go-library-release.yml",
 		},
 		"blinklabs-io/bark": {
