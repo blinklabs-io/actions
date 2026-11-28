@@ -329,6 +329,20 @@ func TestOuroborosMockSharedGoCI(t *testing.T) {
 	t.Fatal("ouroboros-mock is missing from repos-config.yaml")
 }
 
+func TestSignTestUsesStandardGoCI(t *testing.T) {
+	for _, repo := range loadRealConfig(t).Repositories {
+		if repo.Name != "blinklabs-io/sign-test" {
+			continue
+		}
+		workflow := findWorkflow(t, repo.Workflows, "go-test.yml")
+		if !strings.Contains(workflow.ReusableWorkflow, "/reuseable-go-test.yml@") || workflow.Params["run-golangci-lint"] != "true" || workflow.Params["run-nilaway"] != "true" {
+			t.Error("sign-test must use the standard shared Go checks")
+		}
+		return
+	}
+	t.Fatal("sign-test is missing from repos-config.yaml")
+}
+
 func TestDingoOperatorGoCI(t *testing.T) {
 	for _, repo := range loadRealConfig(t).Repositories {
 		if repo.Name != "blinklabs-io/dingo-operator" {

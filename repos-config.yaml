@@ -2245,7 +2245,7 @@ repositories:
   - name: blinklabs-io/dns-contracts
     profile: repository-standard
   - name: blinklabs-io/sign-test
-    profile: repository-standard
+    profile: go-ci-standard
   - name: blinklabs-io/docs
     profile: repository-standard
   - name: blinklabs-io/terraform-modules
