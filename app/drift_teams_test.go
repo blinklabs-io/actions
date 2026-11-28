@@ -160,8 +160,11 @@ func TestSharedActionsConfiguration(t *testing.T) {
 		if repo.Name != "blinklabs-io/shared-actions" {
 			continue
 		}
-		if repo.Private == nil || *repo.Private || len(repo.Workflows) != 0 {
-			t.Fatal("bootstrap must be explicitly public without private workflow callers")
+		if repo.Private == nil || *repo.Private {
+			t.Fatal("bootstrap must be explicitly public")
+		}
+		if len(repo.Workflows) != 1 || repo.Workflows[0].ReusableWorkflow != "./.github/workflows/reuseable-conventional-commits.yml" {
+			t.Fatal("bootstrap must use only its local conventional commits workflow")
 		}
 		want := map[string]string{"core": "push", "ops": "admin", "pms": "maintain", "docs": "push"}
 		if len(repo.Teams) != len(want) {
