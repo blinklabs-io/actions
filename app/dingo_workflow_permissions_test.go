@@ -51,8 +51,7 @@ func TestProtocolLibrariesHaveReadOnlyWorkflowPermissions(t *testing.T) {
 		{repo: "blinklabs-io/gouroboros", destination: "conventional-commits.yml"},
 		{repo: "blinklabs-io/gouroboros", destination: "go-test.yml"},
 		{repo: "blinklabs-io/ouroboros-mock", destination: "conventional-commits.yml"},
-		{repo: "blinklabs-io/ouroboros-mock", destination: "golangci-lint.yml"},
-		{repo: "blinklabs-io/ouroboros-mock", destination: "nilaway.yml"},
+		{repo: "blinklabs-io/ouroboros-mock", destination: "go-test.yml"},
 	}
 	cfg := loadRealConfig(t)
 	workflowTemplate, err := newWorkflowTemplate(t)
